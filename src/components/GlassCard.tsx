@@ -31,7 +31,7 @@ export const GlassCard: React.FC<Props> = ({
       className={`
         relative rounded-3xl p-5
         bg-gradient-to-b from-white/[0.08] to-white/[0.02]
-        backdrop-blur-2xl
+        backdrop-blur-xl
         border border-white/[0.12]
         shadow-[0_8px_32px_0_rgba(0,0,0,0.36),inset_0_1px_1px_0_rgba(255,255,255,0.2)]
         transition-[border-color,background-color,box-shadow,transform] duration-300 ease-out

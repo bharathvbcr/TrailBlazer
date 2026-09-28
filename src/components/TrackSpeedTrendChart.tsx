@@ -279,13 +279,13 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
             <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-1.5">
               <span>GPS Speed Trends</span>
               {trackSession.isRecording && (
-                <span className="flex items-center space-x-1 text-[9px] px-1.5 py-0.2 rounded-full bg-rose-500/25 text-rose-300 border border-rose-500/40 font-mono animate-pulse">
+                <span className="flex items-center space-x-1 text-[10px] px-1.5 py-px rounded-full bg-rose-500/25 text-rose-300 border border-rose-500/40 font-mono animate-pulse">
                   <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
                   <span>LIVE</span>
                 </span>
               )}
               {isShowingSample && !trackSession.isRecording && (
-                <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-mono">
+                <span className="text-[10px] px-1.5 py-px rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-mono">
                   DEMO TRACK
                 </span>
               )}
@@ -345,32 +345,32 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
               : 'bg-white/[0.04] border-white/[0.08]'
           }`}
         >
-          <span className="text-[9px] text-slate-400 uppercase font-sans block">Current</span>
+          <span className="text-[10px] text-slate-400 uppercase font-sans block">Current</span>
           <span className={`text-sm font-black ${isCurrentlyOverLimit ? 'text-rose-300' : 'text-white'}`}>
             {currentSpeedConverted.toFixed(1)}
           </span>
-          <span className="text-[9px] text-cyan-400 ml-0.5">{speedUnit}</span>
+          <span className="text-[10px] text-cyan-400 ml-0.5">{speedUnit}</span>
         </div>
 
         {/* Average Speed */}
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.08]">
-          <span className="text-[9px] text-slate-400 uppercase font-sans block">Average</span>
+          <span className="text-[10px] text-slate-400 uppercase font-sans block">Average</span>
           <span className="text-sm font-bold text-cyan-300">{avgSpeed.toFixed(1)}</span>
-          <span className="text-[9px] text-slate-400 ml-0.5">{speedUnit}</span>
+          <span className="text-[10px] text-slate-400 ml-0.5">{speedUnit}</span>
         </div>
 
         {/* Peak Speed */}
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.08]">
-          <span className="text-[9px] text-slate-400 uppercase font-sans block">Peak</span>
+          <span className="text-[10px] text-slate-400 uppercase font-sans block">Peak</span>
           <span className="text-sm font-bold text-emerald-300">{maxSpeed.toFixed(1)}</span>
-          <span className="text-[9px] text-slate-400 ml-0.5">{speedUnit}</span>
+          <span className="text-[10px] text-slate-400 ml-0.5">{speedUnit}</span>
         </div>
 
         {/* Current Pace */}
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.08]">
-          <span className="text-[9px] text-slate-400 uppercase font-sans block">Pace</span>
+          <span className="text-[10px] text-slate-400 uppercase font-sans block">Pace</span>
           <span className="text-xs font-bold text-amber-300 truncate block mt-0.5">{currentPaceFormatted}</span>
-          <span className="text-[8px] text-slate-400 block font-sans">
+          <span className="text-[10px] text-slate-400 block font-sans">
             {speedUnit === 'mph' ? '/mi' : '/km'}
           </span>
         </div>

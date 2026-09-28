@@ -114,7 +114,7 @@ input[type=range]::-moz-range-thumb {
 .animate-alert-glow { animation: alert-glow 1.6s ease-in-out infinite; }
 
 /* Tab content: children of the view root cascade in */
-.tab-enter > * > * {
+.tab-enter > * > *:not(.fixed) {
   animation: rise-in 0.5s var(--ease-out) backwards;
 }
 .tab-enter > * > *:nth-child(1) { animation-delay: 0ms; }

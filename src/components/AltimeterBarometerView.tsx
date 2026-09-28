@@ -14,6 +14,7 @@ import {
   calculateThreeHourBarometricTrend,
 } from '../utils/calculations';
 import { GlassCard } from './GlassCard';
+import { Modal } from './Modal';
 import {
   Gauge,
   Mountain,
@@ -373,7 +374,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
 
             {/* 3-Hour Trend Real-Time Arrow Badge */}
             <div
-              className={`inline-flex items-center space-x-1 px-2 py-0.5 mt-1 rounded-full text-[9px] font-bold border transition-all ${
+              className={`inline-flex items-center space-x-1 px-2 py-0.5 mt-1 rounded-full text-[10px] font-bold border transition-all ${
                 trend3h.trend === 'rising'
                   ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 shadow-[0_0_8px_rgba(52,211,153,0.3)]'
                   : trend3h.trend === 'falling'
@@ -660,7 +661,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
                     )}
                   </span>
                   <span
-                    className={`text-[9px] font-mono block mt-0.5 ${
+                    className={`text-[10px] font-mono block mt-0.5 ${
                       m.deltaFromStart > 0.2
                         ? 'text-emerald-400 font-semibold'
                         : m.deltaFromStart < -0.2
@@ -972,23 +973,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
       )}
 
       {/* QNH Calibration Modal */}
-      {showQnhModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md">
-          <div className="w-full max-w-sm">
-            <GlassCard className="!p-5 border-cyan-500/40">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-base font-bold text-white flex items-center space-x-2">
-                  <Gauge className="w-5 h-5 text-cyan-400" />
-                  <span>Calibrate Sea-Level QNH</span>
-                </h3>
-                <button
-                  onClick={() => setShowQnhModal(false)}
-                  className="text-slate-400 hover:text-white"
-                >
-                  ✕
-                </button>
-              </div>
-
+      <Modal isOpen={showQnhModal} onClose={() => setShowQnhModal(false)} title="Calibrate Sea-Level QNH" size="sm" icon={<Gauge className="w-5 h-5 text-cyan-400" />}>
               <p className="text-xs text-slate-300 mb-4 leading-relaxed">
                 Altimeters measure elevation by comparing station pressure with reference sea-level pressure (QNH). Set the current local QNH from airport reports or weather stations.
               </p>
@@ -1034,10 +1019,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
                   )}
                 </div>
               </div>
-            </GlassCard>
-          </div>
-        </div>
-      )}
+      </Modal>
     </div>
   );
 };

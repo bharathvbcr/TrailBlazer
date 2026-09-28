@@ -119,8 +119,19 @@ export const CameraSightingView: React.FC<Props> = ({
     }
   };
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-between overflow-hidden select-none">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Camera sighting"
+      className="animate-fade-in fixed inset-0 z-50 bg-black flex flex-col items-center justify-between overflow-hidden select-none"
+    >
       {/* Background Video Stream */}
       <video
         ref={videoRef}
@@ -172,6 +183,7 @@ export const CameraSightingView: React.FC<Props> = ({
 
           <button
             onClick={onClose}
+            aria-label="Close camera sighting"
             className="p-2 rounded-full bg-black/60 backdrop-blur-md border border-white/20 text-white hover:bg-white/20 transition-all"
           >
             <X className="w-4 h-4" />
@@ -245,15 +257,15 @@ export const CameraSightingView: React.FC<Props> = ({
         {/* Telemetry Bar */}
         <div className="w-full grid grid-cols-3 gap-2 text-center text-xs font-mono bg-black/65 backdrop-blur-md p-2.5 rounded-2xl border border-white/15 text-white">
           <div>
-            <span className="text-[9px] text-slate-400 uppercase font-sans block">Pitch (Tilt)</span>
+            <span className="text-[10px] text-slate-400 uppercase font-sans block">Pitch (Tilt)</span>
             <span className="text-cyan-300 font-bold">{activePitch > 0 ? `+${activePitch}°` : `${activePitch}°`}</span>
           </div>
           <div>
-            <span className="text-[9px] text-slate-400 uppercase font-sans block">Station Alt</span>
+            <span className="text-[10px] text-slate-400 uppercase font-sans block">Station Alt</span>
             <span className="text-white font-bold">{sensors.barometricAltitude.toFixed(0)}m</span>
           </div>
           <div>
-            <span className="text-[9px] text-slate-400 uppercase font-sans block">QNH Baro</span>
+            <span className="text-[10px] text-slate-400 uppercase font-sans block">QNH Baro</span>
             <span className="text-amber-300 font-bold">{sensors.pressure.toFixed(1)}</span>
           </div>
         </div>

@@ -252,16 +252,16 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
             <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-1.5">
               <span>Elevation Profile</span>
               {trackSession.isRecording ? (
-                <span className="flex items-center space-x-1 text-[9px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 font-mono font-bold animate-pulse">
+                <span className="flex items-center space-x-1 text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 font-mono font-bold animate-pulse">
                   <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-ping" />
                   <span>LIVE RECORDING</span>
                 </span>
               ) : isShowingSample ? (
-                <span className="text-[9px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-medium normal-case">
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-medium normal-case">
                   Sample Trail Preview
                 </span>
               ) : (
-                <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono font-medium normal-case">
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono font-medium normal-case">
                   {chartData.length} pts recorded
                 </span>
               )}
@@ -335,7 +335,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
       <div className="grid grid-cols-4 gap-2 text-center text-xs font-mono mb-3">
         {/* Current Altitude */}
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06]">
-          <span className="text-[9px] text-slate-400 uppercase font-sans block">Current Alt</span>
+          <span className="text-[10px] text-slate-400 uppercase font-sans block">Current Alt</span>
           <span className="text-cyan-300 font-bold text-sm">
             {currentAltValue}{' '}
             <span className="text-[10px] text-slate-400 font-sans">{preferences.altitudeUnit}</span>
@@ -344,7 +344,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
 
         {/* Net Altitude Delta from Start */}
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06]">
-          <span className="text-[9px] text-slate-400 uppercase font-sans block">Net Δ Alt</span>
+          <span className="text-[10px] text-slate-400 uppercase font-sans block">Net Δ Alt</span>
           <span
             className={`font-bold text-sm flex items-center justify-center space-x-0.5 ${
               netAltitudeChange > 0
@@ -368,7 +368,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
 
         {/* Peak Summit */}
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06]">
-          <span className="text-[9px] text-slate-400 uppercase font-sans block">Peak Summit</span>
+          <span className="text-[10px] text-slate-400 uppercase font-sans block">Peak Summit</span>
           <span className="text-amber-300 font-bold text-sm">
             {maxAltitude}{' '}
             <span className="text-[10px] text-slate-400 font-sans">{preferences.altitudeUnit}</span>
@@ -377,7 +377,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
 
         {/* Total Elevation Span / Relief */}
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06]">
-          <span className="text-[9px] text-slate-400 uppercase font-sans block">Elev Span</span>
+          <span className="text-[10px] text-slate-400 uppercase font-sans block">Elev Span</span>
           <span className="text-emerald-300 font-bold text-sm">
             +{totalElevationSpan}{' '}
             <span className="text-[10px] text-slate-400 font-sans">{preferences.altitudeUnit}</span>

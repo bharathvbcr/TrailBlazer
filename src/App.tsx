@@ -335,7 +335,7 @@ export const App: React.FC = () => {
             <div className="min-w-0">
               <h1 className="text-sm font-bold tracking-tight text-white flex items-center gap-1.5 leading-tight">
                 <span>AeroGlass</span>
-                <span className="text-[9px] px-1.5 py-px rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-mono font-medium tracking-wider">
+                <span className="text-[10px] px-1.5 py-px rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-mono font-medium tracking-wider">
                   PRO
                 </span>
               </h1>

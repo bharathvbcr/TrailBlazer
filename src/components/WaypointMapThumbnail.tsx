@@ -442,12 +442,12 @@ export const WaypointMapThumbnail: React.FC<Props> = ({
               className="w-5 h-5 text-cyan-400 transition-transform duration-100 ease-out"
               style={{ transform: `rotate(${-currentHeading}deg)` }}
             />
-            <span className="absolute -top-1.5 text-[8px] font-black text-rose-500 font-mono">N</span>
+            <span className="absolute -top-1.5 text-[10px] font-black text-rose-500 font-mono">N</span>
           </div>
         </div>
 
         {/* Floating Scale Bar (Bottom Left) */}
-        <div className="absolute bottom-2 left-2.5 z-20 pointer-events-none flex flex-col items-start bg-black/60 backdrop-blur-md px-2 py-1 rounded-lg border border-white/10 text-[9px] font-mono text-slate-300">
+        <div className="absolute bottom-2 left-2.5 z-20 pointer-events-none flex flex-col items-start bg-black/60 backdrop-blur-md px-2 py-1 rounded-lg border border-white/10 text-[10px] font-mono text-slate-300">
           <div className="flex items-center space-x-1">
             <div className="h-[2px] bg-cyan-400" style={{ width: `${scaleBarWidthPx}px` }} />
             <span>{scaleBarMeters >= 1000 ? `${(scaleBarMeters / 1000).toFixed(1)} km` : `${scaleBarMeters} m`}</span>

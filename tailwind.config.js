@@ -28,10 +28,20 @@ export default {
         mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
       },
       animation: {
+        pulse: 'soft-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        bounce: 'nudge 1.4s ease-in-out infinite',
         'pulse-slow': 'pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         'float-slow': 'float 8s ease-in-out infinite',
       },
       keyframes: {
+        'soft-pulse': {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0.7' },
+        },
+        nudge: {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(-3px)' },
+        },
         float: {
           '0%, 100%': { transform: 'translateY(0) scale(1)' },
           '50%': { transform: 'translateY(-8px) scale(1.01)' },

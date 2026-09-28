@@ -398,7 +398,7 @@ export const CircularSpeedometerGauge: React.FC<Props> = ({
               <Zap className="w-3.5 h-3.5 fill-cyan-400/30" />
             )}
             <span
-              className={`text-[9px] font-bold uppercase tracking-wider ${
+              className={`text-[10px] font-bold uppercase tracking-wider ${
                 isOverspeed && speedAlertVisual ? 'text-rose-300' : 'text-slate-300'
               }`}
             >
@@ -429,7 +429,7 @@ export const CircularSpeedometerGauge: React.FC<Props> = ({
           {/* Activity State or Overspeed Warning Badge */}
           <div className="mt-1">
             {isOverspeed && speedAlertVisual ? (
-              <span className="text-[8px] font-bold px-2 py-0.5 rounded-full border border-rose-400/50 bg-rose-500/30 text-rose-200 flex items-center space-x-0.5 shadow-[0_0_8px_rgba(244,63,94,0.4)] font-mono">
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border border-rose-400/50 bg-rose-500/30 text-rose-200 flex items-center space-x-0.5 shadow-[0_0_8px_rgba(244,63,94,0.4)] font-mono">
                 <span>LIMIT +{overspeedDelta.toFixed(1)}</span>
               </span>
             ) : (
@@ -470,7 +470,7 @@ export const CircularSpeedometerGauge: React.FC<Props> = ({
       <div className="grid grid-cols-3 gap-2 text-center text-xs font-mono mt-3">
         {/* Peak Speed */}
         <div className="p-2 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-          <span className="text-[9px] text-slate-400 uppercase font-sans block">Peak Velocity</span>
+          <span className="text-[10px] text-slate-400 uppercase font-sans block">Peak Velocity</span>
           <span className="text-sm font-bold text-cyan-300">
             {peakDisplaySpeed.toFixed(1)} {speedUnit}
           </span>
@@ -478,7 +478,7 @@ export const CircularSpeedometerGauge: React.FC<Props> = ({
 
         {/* Pace (Min/km or Min/mi) */}
         <div className="p-2 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-          <span className="text-[9px] text-slate-400 uppercase font-sans block">Current Pace</span>
+          <span className="text-[10px] text-slate-400 uppercase font-sans block">Current Pace</span>
           <span className="text-sm font-bold text-emerald-300">
             {paceFormatted}
           </span>
@@ -486,7 +486,7 @@ export const CircularSpeedometerGauge: React.FC<Props> = ({
 
         {/* GPS Fix / Accuracy */}
         <div className="p-2 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-          <span className="text-[9px] text-slate-400 uppercase font-sans block">GPS Accuracy</span>
+          <span className="text-[10px] text-slate-400 uppercase font-sans block">GPS Accuracy</span>
           <span className="text-sm font-bold text-amber-300 flex items-center justify-center space-x-1">
             <Satellite className="w-3 h-3 text-amber-400" />
             <span>±{gpsAccuracy ?? 8}m</span>

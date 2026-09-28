@@ -1,9 +1,8 @@
-import React, { useMemo, useEffect } from 'react';
+import React, { useMemo } from 'react';
 import { UserPreferences, SensorState, ThemePalette, SpeedUnit } from '../types/sensors';
 import { convertSpeedBetweenUnits } from '../utils/calculations';
-import { GlassCard } from './GlassCard';
+import { Modal } from './Modal';
 import {
-  X,
   Settings,
   Palette,
   Compass,
@@ -113,43 +112,8 @@ export const SettingsModal: React.FC<Props> = ({
     });
   };
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [isOpen, onClose]);
-
-  if (!isOpen) return null;
-
   return (
-    <div
-      className="animate-fade-in fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/75 backdrop-blur-md"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Settings"
-        className="animate-sheet-in w-full max-w-md max-h-[88vh] overflow-y-auto scroll-thin rounded-3xl"
-      >
-        <GlassCard className="!p-5 border-cyan-500/40">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-base font-bold text-white flex items-center space-x-2">
-              <Settings className="w-5 h-5 text-cyan-400" />
-              <span>Sensors & Display Settings</span>
-            </h3>
-            <button
-              onClick={onClose}
-              aria-label="Close"
-              className="w-8 h-8 flex items-center justify-center rounded-full text-slate-400 hover:text-white hover:bg-white/10 shrink-0"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
+    <Modal isOpen={isOpen} onClose={onClose} title="Sensors & Display Settings" icon={<Settings className="w-5 h-5 text-cyan-400" />}>
           <div className="space-y-4 text-xs">
             {/* 1. Material You Liquid Glass Palette */}
             <div>
@@ -560,8 +524,6 @@ export const SettingsModal: React.FC<Props> = ({
               </button>
             </div>
           </div>
-        </GlassCard>
-      </div>
-    </div>
+    </Modal>
   );
 };

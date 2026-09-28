@@ -8,6 +8,7 @@ import {
   generateGpxString,
 } from '../utils/calculations';
 import { GlassCard } from './GlassCard';
+import { Modal } from './Modal';
 import { WaypointMapThumbnail } from './WaypointMapThumbnail';
 import { TrackElevationProfileChart } from './TrackElevationProfileChart';
 import { TrackSpeedTrendChart } from './TrackSpeedTrendChart';
@@ -271,11 +272,11 @@ export const WaypointsNavView: React.FC<Props> = ({
         {/* Live track metrics */}
         <div className="grid grid-cols-4 gap-2 text-center text-xs font-mono my-2">
           <div className="p-2 rounded-xl bg-white/[0.03] border border-white/[0.05]">
-            <span className="text-[9px] text-slate-400 uppercase font-sans block">Duration</span>
+            <span className="text-[10px] text-slate-400 uppercase font-sans block">Duration</span>
             <span className="text-white font-bold">{formatElapsed(elapsedSec)}</span>
           </div>
           <div className="p-2 rounded-xl bg-white/[0.03] border border-white/[0.05]">
-            <span className="text-[9px] text-slate-400 uppercase font-sans block">Distance</span>
+            <span className="text-[10px] text-slate-400 uppercase font-sans block">Distance</span>
             <span className="text-cyan-300 font-bold">
               {trackSession.totalDistance >= 1000
                 ? `${(trackSession.totalDistance / 1000).toFixed(2)} km`
@@ -283,11 +284,11 @@ export const WaypointsNavView: React.FC<Props> = ({
             </span>
           </div>
           <div className="p-2 rounded-xl bg-white/[0.03] border border-white/[0.05]">
-            <span className="text-[9px] text-slate-400 uppercase font-sans block">Ascent</span>
+            <span className="text-[10px] text-slate-400 uppercase font-sans block">Ascent</span>
             <span className="text-emerald-300 font-bold">+{Math.round(trackSession.totalAscent)}m</span>
           </div>
           <div className="p-2 rounded-xl bg-white/[0.03] border border-white/[0.05]">
-            <span className="text-[9px] text-slate-400 uppercase font-sans block">Points</span>
+            <span className="text-[10px] text-slate-400 uppercase font-sans block">Points</span>
             <span className="text-amber-300 font-bold">{trackSession.points.length}</span>
           </div>
         </div>
@@ -563,15 +564,7 @@ export const WaypointsNavView: React.FC<Props> = ({
       )}
 
       {/* Add Waypoint Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
-          <div className="w-full max-w-sm">
-            <GlassCard className="!p-5 border-cyan-500/40">
-              <h3 className="text-base font-bold text-white mb-3 flex items-center space-x-2">
-                <MapPin className="w-5 h-5 text-cyan-400" />
-                <span>Mark Waypoint</span>
-              </h3>
-
+      <Modal isOpen={showAddModal} onClose={() => setShowAddModal(false)} title="Mark Waypoint" size="sm" icon={<MapPin className="w-5 h-5 text-cyan-400" />}>
               <div className="space-y-3 text-xs">
                 <div>
                   <label className="block text-slate-300 mb-1">Waypoint Name</label>
@@ -591,7 +584,9 @@ export const WaypointsNavView: React.FC<Props> = ({
                       <button
                         key={c}
                         onClick={() => setColor(c)}
-                        className={`w-7 h-7 rounded-full border-2 transition-all ${
+                        aria-label={`Color ${c}`}
+                        aria-pressed={color === c}
+                        className={`w-8 h-8 rounded-full border-2 transition-all ${
                           color === c ? 'border-white scale-110' : 'border-transparent'
                         }`}
                         style={{ backgroundColor: c }}
@@ -632,10 +627,7 @@ export const WaypointsNavView: React.FC<Props> = ({
                   </button>
                 </div>
               </div>
-            </GlassCard>
-          </div>
-        </div>
-      )}
+      </Modal>
     </div>
   );
 };

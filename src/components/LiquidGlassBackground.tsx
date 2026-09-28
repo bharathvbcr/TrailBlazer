@@ -63,23 +63,20 @@ export const LiquidGlassBackground: React.FC<Props> = ({ palette }) => {
     >
       {/* Dynamic ambient organic liquid blur orbs */}
       <div
-        className="absolute -top-32 -left-32 w-96 h-96 rounded-full blur-[100px] animate-pulse-slow transition-all duration-1000"
+        className="absolute -top-32 -left-32 w-96 h-96 rounded-full blur-[100px] animate-pulse-slow transition-colors duration-1000 will-change-[opacity,transform]"
         style={{ backgroundColor: orbs.primary }}
       />
       <div
-        className="absolute top-1/3 -right-28 w-80 h-80 rounded-full blur-[90px] animate-float-slow transition-all duration-1000"
+        className="absolute top-1/3 -right-28 w-80 h-80 rounded-full blur-[90px] animate-float-slow transition-colors duration-1000 will-change-[opacity,transform]"
         style={{ backgroundColor: orbs.secondary }}
       />
       <div
-        className="absolute -bottom-24 left-1/4 w-96 h-96 rounded-full blur-[110px] animate-pulse-slow transition-all duration-1000"
+        className="absolute -bottom-24 left-1/4 w-96 h-96 rounded-full blur-[110px] animate-pulse-slow transition-colors duration-1000 will-change-[opacity,transform]"
         style={{ backgroundColor: orbs.accent }}
       />
 
       {/* Subtle fine glass mesh overlay */}
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.1),rgba(255,255,255,0))]" />
-      
-      {/* Liquid refraction line */}
-      <div className="absolute inset-0 opacity-[0.03] bg-[linear-gradient(45deg,#fff_25%,transparent_25%,transparent_75%,#fff_75%,#fff),linear-gradient(45deg,#fff_25%,transparent_25%,transparent_75%,#fff_75%,#fff)] bg-[size:40px_40px]" />
     </div>
   );
 };
