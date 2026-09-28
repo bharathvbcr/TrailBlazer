@@ -5,6 +5,28 @@
 @layer base {
   :root {
     color-scheme: dark;
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-top: env(safe-area-inset-top, 0px);
+  }
+
+  button, [role='button'] {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Consistent, visible keyboard focus across all controls */
+  :focus-visible {
+    outline: 2px solid rgba(56, 189, 248, 0.85);
+    outline-offset: 2px;
+    border-radius: 0.75rem;
+  }
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  ::selection {
+    background: rgba(56, 189, 248, 0.3);
   }
 
   body {
@@ -49,4 +71,76 @@ input[type=range]::-moz-range-thumb {
 /* Glass card active press */
 .active-press:active {
   transform: scale(0.98);
+}
+
+/* ------------------------------------------------------------------ */
+/* Motion system                                                       */
+/* ------------------------------------------------------------------ */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes sheet-in {
+  from { opacity: 0; transform: translateY(32px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes sheet-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(24px) scale(0.98); }
+}
+@keyframes banner-in {
+  from { opacity: 0; transform: translateY(-10px) scaleY(0.9); }
+  to { opacity: 1; transform: translateY(0) scaleY(1); }
+}
+@keyframes alert-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.0), 0 8px 24px rgba(0,0,0,0.4); }
+  50% { box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.35), 0 8px 28px rgba(244, 63, 94, 0.35); }
+}
+
+.animate-fade-in { animation: fade-in 0.25s var(--ease-out) both; }
+.animate-fade-out { animation: fade-out 0.2s ease-in both; }
+.animate-rise-in { animation: rise-in 0.45s var(--ease-out) both; }
+.animate-sheet-in { animation: sheet-in 0.35s var(--ease-out) both; }
+.animate-sheet-out { animation: sheet-out 0.2s ease-in both; }
+.animate-banner-in { animation: banner-in 0.35s var(--ease-out) both; }
+.animate-alert-glow { animation: alert-glow 1.6s ease-in-out infinite; }
+
+/* Tab content: children of the view root cascade in */
+.tab-enter > * > * {
+  animation: rise-in 0.5s var(--ease-out) backwards;
+}
+.tab-enter > * > *:nth-child(1) { animation-delay: 0ms; }
+.tab-enter > * > *:nth-child(2) { animation-delay: 50ms; }
+.tab-enter > * > *:nth-child(3) { animation-delay: 100ms; }
+.tab-enter > * > *:nth-child(4) { animation-delay: 150ms; }
+.tab-enter > * > *:nth-child(5) { animation-delay: 200ms; }
+.tab-enter > * > *:nth-child(6) { animation-delay: 240ms; }
+.tab-enter > * > *:nth-child(n+7) { animation-delay: 280ms; }
+
+/* Thin, unobtrusive scrollbars inside sheets */
+.scroll-thin { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.2) transparent; }
+.scroll-thin::-webkit-scrollbar { width: 6px; }
+.scroll-thin::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 9999px; }
+
+/* Consistent press feedback for buttons (base layer so utilities still win) */
+@layer base {
+  button:not(:disabled) { transition-property: background-color, border-color, color, box-shadow, transform, opacity; transition-duration: 180ms; transition-timing-function: var(--ease-out); }
+  button:not(:disabled):active { transform: scale(0.97); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

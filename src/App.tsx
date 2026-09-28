@@ -23,8 +23,6 @@ import {
   MapPin,
   Settings,
   Sparkles,
-  Camera,
-  Sun,
   Eye,
   AlertTriangle,
 } from 'lucide-react';
@@ -75,6 +73,22 @@ const DEFAULT_WAYPOINTS: Waypoint[] = [
   },
 ];
 
+type TabId = 'compass' | 'altimeter' | 'sensors' | 'waypoints';
+
+const NAV_ITEMS = [
+  { id: 'compass' as const, label: 'Compass', icon: Compass },
+  { id: 'altimeter' as const, label: 'Altimeter', icon: Mountain },
+  { id: 'sensors' as const, label: 'Telemetry', icon: Activity },
+  { id: 'waypoints' as const, label: 'Tracks', icon: MapPin },
+];
+
+const TAB_SUBTITLES: Record<TabId, string> = {
+  compass: 'Heading & navigation',
+  altimeter: 'Altitude & barometer',
+  sensors: 'Live sensor telemetry',
+  waypoints: 'Waypoints & track recorder',
+};
+
 export const App: React.FC = () => {
   // Load preferences from localStorage or default
   const [preferences, setPreferences] = useState<UserPreferences>(() => {
@@ -96,7 +110,7 @@ export const App: React.FC = () => {
     }
   });
 
-  const [activeTab, setActiveTab] = useState<'compass' | 'altimeter' | 'sensors' | 'waypoints'>('compass');
+  const [activeTab, setActiveTab] = useState<TabId>('compass');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCameraSightingOpen, setIsCameraSightingOpen] = useState(false);
   const [isCalibrationOpen, setIsCalibrationOpen] = useState(false);
@@ -312,83 +326,90 @@ export const App: React.FC = () => {
       <LiquidGlassBackground palette={preferences.palette} />
 
       {/* Top Header */}
-      <header className="sticky top-0 z-30 px-4 py-3 bg-[#080b14]/65 backdrop-blur-xl border-b border-white/[0.08] flex items-center justify-between">
-        <div className="flex items-center space-x-2">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center shadow-[0_0_12px_rgba(56,189,248,0.4)] border border-white/20">
-            <Compass className="w-4 h-4 text-white" />
+      <header className="sticky top-0 z-30 px-4 pb-3 pt-[calc(0.75rem+var(--safe-top))] bg-[#080b14]/70 backdrop-blur-xl border-b border-white/[0.08]">
+        <div className="max-w-lg mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center shadow-[0_0_14px_rgba(56,189,248,0.35)] border border-white/20 shrink-0">
+              <Compass className="w-[18px] h-[18px] text-white" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-sm font-bold tracking-tight text-white flex items-center gap-1.5 leading-tight">
+                <span>AeroGlass</span>
+                <span className="text-[9px] px-1.5 py-px rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-mono font-medium tracking-wider">
+                  PRO
+                </span>
+              </h1>
+              <p className="text-[11px] text-slate-400 leading-tight truncate">{TAB_SUBTITLES[activeTab]}</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-sm font-black tracking-tight text-white flex items-center space-x-1.5">
-              <span>AeroGlass</span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-mono font-medium">
-                PRO
-              </span>
-            </h1>
-            <p className="text-[10px] text-slate-400 font-medium">Compass, Altimeter & Barometer</p>
-          </div>
-        </div>
 
-        <div className="flex items-center space-x-1.5">
-          {/* Quick Night Tactical Vision Toggle */}
-          <button
-            onClick={toggleNightTacticalMode}
-            title={preferences.palette === 'tactical_red' ? 'Exit Night Red' : 'Night Vision Red'}
-            className={`p-2 rounded-xl border transition-all ${
-              preferences.palette === 'tactical_red'
-                ? 'bg-rose-600/30 border-rose-500 text-rose-300 shadow-[0_0_12px_rgba(244,63,94,0.4)]'
-                : 'bg-white/10 hover:bg-white/20 border-white/15 text-slate-300'
-            }`}
-          >
-            <Eye className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            {sensors.isSimulationMode && (
+              <button
+                onClick={toggleSimulationMode}
+                title="Exit simulation"
+                className="animate-fade-in flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-[11px] text-cyan-300 font-medium hover:bg-cyan-500/25"
+              >
+                <Sparkles className="w-3 h-3 animate-pulse" />
+                <span>Sim</span>
+              </button>
+            )}
 
-          {sensors.isSimulationMode && (
             <button
-              onClick={toggleSimulationMode}
-              className="flex items-center space-x-1 px-2.5 py-1 rounded-full bg-cyan-500/20 border border-cyan-500/40 text-[10px] text-cyan-300 font-medium animate-pulse"
+              onClick={toggleNightTacticalMode}
+              title={preferences.palette === 'tactical_red' ? 'Exit Night Red' : 'Night Vision Red'}
+              aria-label="Toggle night vision red mode"
+              aria-pressed={preferences.palette === 'tactical_red'}
+              className={`w-9 h-9 flex items-center justify-center rounded-xl border ${
+                preferences.palette === 'tactical_red'
+                  ? 'bg-rose-600/25 border-rose-500/70 text-rose-300 shadow-[0_0_12px_rgba(244,63,94,0.35)]'
+                  : 'bg-white/[0.07] hover:bg-white/[0.14] border-white/[0.12] text-slate-300'
+              }`}
             >
-              <Sparkles className="w-3 h-3" />
-              <span>Sim Active</span>
+              <Eye className="w-4 h-4" />
             </button>
-          )}
 
-          <button
-            onClick={() => {
-              setIsSettingsOpen(true);
-              triggerHaptic(15);
-            }}
-            className="p-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-slate-300 transition-all active:scale-95"
-            title="Settings & Calibration"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
+            <button
+              onClick={() => {
+                setIsSettingsOpen(true);
+                triggerHaptic(15);
+              }}
+              aria-label="Settings and calibration"
+              className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/[0.07] hover:bg-white/[0.14] border border-white/[0.12] text-slate-300"
+              title="Settings & Calibration"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 w-full max-w-lg mx-auto p-4 flex flex-col items-center">
+      <main className="flex-1 w-full max-w-lg mx-auto px-4 pt-4 pb-6 flex flex-col items-center">
         {/* Speed Threshold Warning Alert Banner */}
         {isSpeedExceeded && preferences.speedAlertVisual && (
-          <div className="w-full mb-3 p-3 rounded-2xl bg-gradient-to-r from-rose-950/90 via-rose-900/90 to-red-950/90 border-2 border-rose-500 shadow-[0_0_28px_rgba(244,63,94,0.65)] flex items-center justify-between animate-pulse select-none">
-            <div className="flex items-center space-x-2.5">
-              <div className="p-2 rounded-xl bg-rose-500/30 text-rose-200 border border-rose-400 shrink-0">
-                <AlertTriangle className="w-5 h-5 text-yellow-300 animate-bounce" />
+          <div
+            role="alert"
+            className="animate-banner-in animate-alert-glow origin-top w-full mb-3 p-3 rounded-2xl bg-gradient-to-r from-rose-950/90 to-red-950/90 border border-rose-500/70 flex items-center justify-between gap-2"
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="p-2 rounded-xl bg-rose-500/25 border border-rose-400/60 shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-300" />
               </div>
-              <div>
-                <div className="text-xs font-black uppercase tracking-wider text-rose-200 flex items-center space-x-1.5">
-                  <span>Speed Limit Exceeded!</span>
-                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-rose-500/40 text-rose-100 border border-rose-400/50 font-mono">
+              <div className="min-w-0">
+                <div className="text-xs font-bold uppercase tracking-wider text-rose-100 flex items-center gap-1.5">
+                  <span>Speed limit exceeded</span>
+                  <span className="text-[10px] px-1.5 py-px rounded-full bg-rose-500/40 text-rose-50 border border-rose-400/50 font-mono normal-case tracking-normal">
                     +{speedOvershoot.toFixed(1)} {preferences.speedUnit}
                   </span>
                 </div>
-                <div className="text-[11px] text-slate-200 font-mono mt-0.5">
-                  Current:{' '}
+                <div className="text-[11px] text-slate-300 font-mono mt-0.5 truncate">
                   <span className="font-bold text-white">
                     {currentSpeedInUserUnit.toFixed(1)} {preferences.speedUnit}
-                  </span>{' '}
-                  • Limit:{' '}
+                  </span>
+                  {' / limit '}
                   <span className="font-bold text-amber-300">
-                    {preferences.speedAlertThreshold.toFixed(1)} {preferences.speedUnit}
+                    {preferences.speedAlertThreshold.toFixed(1)}
                   </span>
                 </div>
               </div>
@@ -396,12 +417,13 @@ export const App: React.FC = () => {
 
             <button
               onClick={() => setIsSettingsOpen(true)}
-              className="px-2.5 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 border border-white/20 text-xs font-semibold text-white transition-all ml-2 whitespace-nowrap active:scale-95"
+              className="px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 border border-white/20 text-xs font-semibold text-white whitespace-nowrap"
             >
               Adjust
             </button>
           </div>
         )}
+        <div key={activeTab} className="tab-enter w-full">
         {activeTab === 'compass' && (
           <CompassView
             sensors={sensors}
@@ -457,38 +479,42 @@ export const App: React.FC = () => {
             onUpdatePreferences={updatePreferences}
           />
         )}
+        </div>
       </main>
 
       {/* Floating Liquid Glass Bottom Navigation Bar */}
-      <nav className="fixed bottom-4 inset-x-4 max-w-sm mx-auto z-40">
-        <div className="rounded-full p-1.5 bg-gradient-to-b from-white/[0.14] to-white/[0.04] backdrop-blur-2xl border border-white/20 shadow-[0_12px_36px_rgba(0,0,0,0.6),inset_0_1px_2px_rgba(255,255,255,0.25)] flex items-center justify-around">
-          {[
-            { id: 'compass' as const, label: 'Compass', icon: Compass },
-            { id: 'altimeter' as const, label: 'Altimeter', icon: Mountain },
-            { id: 'sensors' as const, label: 'Telemetry', icon: Activity },
-            { id: 'waypoints' as const, label: 'Tracks', icon: MapPin },
-          ].map(({ id, label, icon: Icon }) => {
+      <nav
+        aria-label="Primary"
+        className="fixed inset-x-4 max-w-sm mx-auto z-40 bottom-[calc(1rem+var(--safe-bottom))]"
+      >
+        <div className="relative rounded-full p-1.5 bg-gradient-to-b from-white/[0.14] to-white/[0.04] backdrop-blur-2xl border border-white/20 shadow-[0_12px_36px_rgba(0,0,0,0.6),inset_0_1px_2px_rgba(255,255,255,0.25)] flex items-center gap-1">
+          {NAV_ITEMS.map(({ id, label, icon: Icon }) => {
             const isActive = activeTab === id;
             return (
               <button
                 key={id}
                 onClick={() => {
+                  if (!isActive) triggerHaptic(15);
                   setActiveTab(id);
-                  triggerHaptic(15);
                 }}
-                className={`relative flex items-center justify-center py-2.5 px-4 rounded-full text-xs font-semibold transition-all duration-300 min-h-[48px] min-w-[48px] ${
+                aria-label={label}
+                aria-current={isActive ? 'page' : undefined}
+                className={`relative flex items-center justify-center rounded-full min-h-[48px] overflow-hidden text-xs font-semibold transition-[flex-grow,color,background-color] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
                   isActive
-                    ? 'text-slate-950 font-bold shadow-[0_2px_12px_rgba(56,189,248,0.4)]'
-                    : 'text-slate-300 hover:text-white'
+                    ? 'flex-[2.4] bg-gradient-to-r from-cyan-400 to-teal-300 text-slate-950 shadow-[0_2px_14px_rgba(56,189,248,0.4)]'
+                    : 'flex-1 text-slate-300 hover:text-white hover:bg-white/[0.08]'
                 }`}
               >
-                {isActive && (
-                  <div className="absolute inset-0 rounded-full bg-gradient-to-r from-cyan-400 to-teal-300 -z-10 animate-fade-in" />
-                )}
-                <div className="flex items-center space-x-1.5">
-                  <Icon className={`w-4 h-4 ${isActive ? 'text-slate-950' : 'text-slate-300'}`} />
-                  {isActive && <span>{label}</span>}
-                </div>
+                <span className="flex items-center gap-1.5 whitespace-nowrap">
+                  <Icon className="w-[18px] h-[18px] shrink-0" />
+                  <span
+                    className={`overflow-hidden transition-[max-width,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                      isActive ? 'max-w-[5rem] opacity-100' : 'max-w-0 opacity-0'
+                    }`}
+                  >
+                    {label}
+                  </span>
+                </span>
               </button>
             );
           })}

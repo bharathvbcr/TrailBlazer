@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { SensorState } from '../types/sensors';
 import { GlassCard } from './GlassCard';
-import { Magnet, CheckCircle2, RotateCcw, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { X, Magnet, CheckCircle2, RotateCcw, AlertTriangle, ShieldCheck } from 'lucide-react';
 
 interface Props {
   isOpen: boolean;
@@ -34,22 +34,35 @@ export const CalibrationModal: React.FC<Props> = ({ isOpen, onClose, sensors }) 
     return () => clearInterval(interval);
   }, [isOpen, sensors.gyroX, sensors.gyroY, sensors.gyroZ]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md select-none">
-      <div className="w-full max-w-sm">
+    <div
+      className="animate-fade-in fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md select-none"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div role="dialog" aria-modal="true" aria-label="Compass calibration" className="animate-sheet-in w-full max-w-sm">
         <GlassCard className="!p-5 border-cyan-500/40 text-center">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-base font-bold text-white flex items-center space-x-2">
               <Magnet className="w-5 h-5 text-cyan-400" />
-              <span>Compass Magnetometer Calibration</span>
+              <span>Compass Calibration</span>
             </h3>
             <button
               onClick={onClose}
-              className="text-slate-400 hover:text-white p-1"
+              aria-label="Close"
+              className="w-8 h-8 flex items-center justify-center rounded-full text-slate-400 hover:text-white hover:bg-white/10 shrink-0"
             >
-              ✕
+              <X className="w-4 h-4" />
             </button>
           </div>
 
