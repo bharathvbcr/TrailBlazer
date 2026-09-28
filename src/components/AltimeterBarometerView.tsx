@@ -14,6 +14,7 @@ import {
   calculateThreeHourBarometricTrend,
 } from '../utils/calculations';
 import { GlassCard } from './GlassCard';
+import { Page, PageHeader, Toolbar, CardHeader, SectionLabel } from './Layout';
 import { Modal } from './Modal';
 import {
   Gauge,
@@ -166,9 +167,15 @@ export const AltimeterBarometerView: React.FC<Props> = ({
   }).join(' ');
 
   return (
-    <div className="flex flex-col items-center w-full max-w-md mx-auto space-y-4 pb-20">
-      {/* Top Unit & Action Bar */}
-      <div className="flex items-center justify-between w-full px-2">
+    <Page>
+      <PageHeader
+        icon={<Mountain className="w-5 h-5 text-cyan-400" />}
+        title="Altimeter"
+        subtitle="Altitude, pressure & weather trend"
+      />
+
+      {/* Units & tools */}
+      <Toolbar>
         <div className="flex items-center space-x-2">
           {/* Pressure unit switcher */}
           <div className="flex bg-white/10 rounded-full p-0.5 border border-white/15 text-[11px] font-medium">
@@ -231,7 +238,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
             <Sliders className="w-3.5 h-3.5" />
           </button>
         </div>
-      </div>
+      </Toolbar>
 
       {/* Main Altimeter & Barometer Liquid Dial */}
       <div className="relative w-80 h-80 flex items-center justify-center select-none my-1">
@@ -411,18 +418,12 @@ export const AltimeterBarometerView: React.FC<Props> = ({
       </div>
 
       {/* Variometer (VSI - Vertical Speed Indicator) & Ascent/Descent Card */}
-      <GlassCard className="w-full !p-3.5">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center space-x-1.5">
-            <Gauge className="w-4 h-4 text-cyan-400" />
-            <span className="text-xs font-bold text-white uppercase tracking-wider">
-              Variometer & Vertical Rate
-            </span>
-          </div>
+      <GlassCard className="w-full !p-4">
+        <CardHeader icon={<Gauge className="text-cyan-400 w-4 h-4 shrink-0" />} title="Variometer & Vertical Rate">
           <span className="text-[11px] font-mono text-slate-400">
             {vsiDisplay.label}
           </span>
-        </div>
+        </CardHeader>
 
         {/* Variometer Vertical Speed Rate readout */}
         <div className="flex items-center justify-between mb-2 p-2 rounded-xl bg-white/[0.03] border border-white/[0.06]">
@@ -470,7 +471,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
       </GlassCard>
 
       {/* Altitude Tare & Calibration Quick Actions */}
-      <div className="flex items-center justify-center space-x-2 w-full px-2">
+      <div className="flex items-center justify-center gap-2 w-full">
         {relativeAltitude !== null ? (
           <button
             onClick={onResetTare}
@@ -510,25 +511,15 @@ export const AltimeterBarometerView: React.FC<Props> = ({
 
       {/* 3-Hour Barometric Trend Analysis Card */}
       <GlassCard className="w-full !p-4 border-cyan-500/30">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center space-x-2">
-            <div className="p-1.5 rounded-xl bg-cyan-500/20 border border-cyan-500/40 text-cyan-300">
-              <History className="w-4 h-4" />
-            </div>
-            <div>
-              <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                3-Hour Barometric Trend Analysis
-              </h3>
-              <span className="text-[10px] text-slate-400 block font-sans">
-                Real-Time Barometric Tendency (WMO Standard)
-              </span>
-            </div>
-          </div>
+        <CardHeader
+          icon={<History className="w-4 h-4 text-cyan-400 shrink-0" />}
+          title="3-Hour Barometric Trend"
+          subtitle="Real-time tendency (WMO standard)"
+        >
           <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/10 border border-white/15 text-cyan-300">
             {trend3h.timeSpanHours}h Window
           </span>
-        </div>
+        </CardHeader>
 
         {/* Hero Arrow Indicator Container */}
         <div
@@ -829,11 +820,8 @@ export const AltimeterBarometerView: React.FC<Props> = ({
       </GlassCard>
 
       {/* Atmospheric Physics & Outdoor Insights Grid */}
-      <GlassCard className="w-full !p-3.5">
-        <div className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-2 flex items-center space-x-1.5">
-          <Info className="w-3.5 h-3.5 text-cyan-400" />
-          <span>Atmospheric Physics & Density</span>
-        </div>
+      <GlassCard className="w-full !p-4">
+        <CardHeader icon={<Info className="w-4 h-4 text-cyan-400 shrink-0" />} title="Atmospheric Physics & Density" />
 
         <div className="grid grid-cols-3 gap-2 text-center">
           <div className="p-2.5 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
@@ -886,15 +874,9 @@ export const AltimeterBarometerView: React.FC<Props> = ({
       {/* Simulator Drawer (Adjust altitude / pressure manually) */}
       {showSimulation && (
         <GlassCard className="w-full !p-4 border-cyan-500/30 bg-cyan-950/20">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center space-x-2">
-              <Sliders className="w-4 h-4 text-cyan-400" />
-              <span className="text-xs font-bold text-cyan-300 uppercase tracking-wider">
-                Pressure & Altitude Simulator
-              </span>
-            </div>
+          <CardHeader icon={<Sliders className="text-cyan-400 w-4 h-4 shrink-0" />} title="Pressure & Altitude Simulator">
             <span className="text-[11px] text-cyan-400 font-mono">Interactive</span>
-          </div>
+          </CardHeader>
 
           <div className="space-y-3 text-xs">
             <div>
@@ -1020,6 +1002,6 @@ export const AltimeterBarometerView: React.FC<Props> = ({
                 </div>
               </div>
       </Modal>
-    </div>
+    </Page>
   );
 };

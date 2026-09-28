@@ -10,6 +10,7 @@ import {
   calculateDistanceMeters,
 } from '../utils/calculations';
 import { GlassCard } from './GlassCard';
+import { Page, PageHeader, Toolbar, CardHeader, SectionLabel } from './Layout';
 import { CircularSpeedometerGauge } from './CircularSpeedometerGauge';
 import {
   Compass,
@@ -102,10 +103,25 @@ export const CompassView: React.FC<Props> = ({
     : `${Math.round(currentHeading).toString().padStart(3, '0')}°`;
 
   return (
-    <div className="flex flex-col items-center w-full max-w-md mx-auto space-y-4 pb-20">
-      {/* Top Status & Mode Bar */}
-      <div className="flex items-center justify-between w-full px-2">
-        <div className="flex items-center space-x-2">
+    <Page>
+      <PageHeader
+        icon={<Compass className="w-5 h-5 text-cyan-400" />}
+        title="Compass"
+        subtitle="Heading, bearing & navigation"
+        actions={
+          <button
+  onClick={onOpenCameraSighting}
+  className="flex items-center space-x-1 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-cyan-500/20 to-blue-500/20 hover:from-cyan-500/30 hover:to-blue-500/30 border border-cyan-400/40 text-cyan-300 shadow-[0_0_10px_rgba(56,189,248,0.2)] transition-all active:scale-95"
+  title="Launch Augmented Reality Camera Sight"
+>
+  <Camera className="w-3.5 h-3.5 text-cyan-400" />
+  <span>AR Sight</span>
+</button>
+        }
+      />
+
+      <Toolbar>
+        <div className="flex items-center gap-2">
           <button
             onClick={() =>
               onUpdatePreferences({
@@ -133,17 +149,7 @@ export const CompassView: React.FC<Props> = ({
           )}
         </div>
 
-        <div className="flex items-center space-x-2">
-          {/* AR Sighting Mode Button */}
-          <button
-            onClick={onOpenCameraSighting}
-            className="flex items-center space-x-1 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-cyan-500/20 to-blue-500/20 hover:from-cyan-500/30 hover:to-blue-500/30 border border-cyan-400/40 text-cyan-300 shadow-[0_0_10px_rgba(56,189,248,0.2)] transition-all active:scale-95"
-            title="Launch Augmented Reality Camera Sight"
-          >
-            <Camera className="w-3.5 h-3.5 text-cyan-400" />
-            <span>AR Sight</span>
-          </button>
-
+        <div className="flex items-center gap-2">
           <button
             onClick={() => setLockedHeading(lockedHeading === null ? Math.round(currentHeading) : null)}
             className={`flex items-center space-x-1 px-2.5 py-1.5 rounded-full text-xs font-medium border transition-all ${
@@ -177,11 +183,11 @@ export const CompassView: React.FC<Props> = ({
             <Sliders className="w-3.5 h-3.5" />
           </button>
         </div>
-      </div>
+      </Toolbar>
 
       {/* Target Navigation Banner if target is set */}
       {activeTarget && targetBearing !== null && (
-        <GlassCard className="w-full !p-3 !rounded-2xl border-cyan-500/30 bg-cyan-950/20">
+        <GlassCard className="w-full !p-4 !rounded-2xl border-cyan-500/30 bg-cyan-950/20">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2.5">
               <div
@@ -488,7 +494,7 @@ export const CompassView: React.FC<Props> = ({
       </div>
 
       {/* Spirit Level & Precision Telemetry Card */}
-      <GlassCard className="w-full !p-3.5">
+      <GlassCard className="w-full !p-4">
         <div className="grid grid-cols-3 gap-2 text-center">
           <div className="p-2 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
             <div className="text-[10px] text-slate-400 uppercase font-medium tracking-wider">Level Status</div>
@@ -547,7 +553,7 @@ export const CompassView: React.FC<Props> = ({
 
       {/* Hardware Permission Prompt on iOS / Browsers */}
       {!sensors.isHardwareOrientationAvailable && !sensors.isSimulationMode && (
-        <GlassCard className="w-full !p-3 border-amber-500/30 bg-amber-500/10">
+        <GlassCard className="w-full !p-4 border-amber-500/30 bg-amber-500/10">
           <div className="flex items-center justify-between">
             <div className="text-xs text-amber-200">
               <div className="font-semibold flex items-center space-x-1">
@@ -571,15 +577,9 @@ export const CompassView: React.FC<Props> = ({
       {/* Interactive Sensor Simulator Controls Drawer (Visible when simulation mode is active) */}
       {sensors.isSimulationMode && (
         <GlassCard className="w-full !p-4 border-cyan-500/30 bg-cyan-950/20">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center space-x-2">
-              <Sliders className="w-4 h-4 text-cyan-400" />
-              <span className="text-xs font-bold text-cyan-300 uppercase tracking-wider">
-                Live Sensor Simulator
-              </span>
-            </div>
+          <CardHeader icon={<Sliders className="text-cyan-400 w-4 h-4 shrink-0" />} title="Live Sensor Simulator">
             <span className="text-[11px] text-cyan-400 font-mono">Interactive Testing</span>
-          </div>
+          </CardHeader>
 
           <div className="space-y-3 text-xs">
             <div>
@@ -644,6 +644,6 @@ export const CompassView: React.FC<Props> = ({
           </div>
         </GlassCard>
       )}
-    </div>
+    </Page>
   );
 };

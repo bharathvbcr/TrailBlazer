@@ -180,7 +180,7 @@ export const WaypointMapThumbnail: React.FC<Props> = ({
         <div className="flex items-center space-x-2">
           <MapIcon className="w-4 h-4 text-cyan-400" />
           <span className="text-xs font-bold text-white uppercase tracking-wider">
-            Position & Target Map
+            Position & Target
           </span>
           {targetWaypoint && (
             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-mono">
@@ -193,7 +193,7 @@ export const WaypointMapThumbnail: React.FC<Props> = ({
           {/* Style Toggle (Dark Tile Map vs Tactical Radar) */}
           <button
             onClick={() => setMapStyle(mapStyle === 'dark_map' ? 'tactical_radar' : 'dark_map')}
-            className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold border transition-all ${
+            className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold border transition-all whitespace-nowrap ${
               mapStyle === 'dark_map'
                 ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300'
                 : 'bg-white/10 border-white/15 text-slate-300'

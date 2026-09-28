@@ -8,6 +8,7 @@ import {
   generateGpxString,
 } from '../utils/calculations';
 import { GlassCard } from './GlassCard';
+import { Page, PageHeader, Toolbar, CardHeader, SectionLabel } from './Layout';
 import { Modal } from './Modal';
 import { WaypointMapThumbnail } from './WaypointMapThumbnail';
 import { TrackElevationProfileChart } from './TrackElevationProfileChart';
@@ -184,28 +185,24 @@ export const WaypointsNavView: React.FC<Props> = ({
   };
 
   return (
-    <div className="flex flex-col items-center w-full max-w-md mx-auto space-y-4 pb-20">
-      {/* Header & Quick Action */}
-      <div className="w-full px-2 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-white tracking-tight flex items-center space-x-2">
-            <MapPin className="w-5 h-5 text-cyan-400" />
-            <span>Waypoints & Map</span>
-          </h2>
-          <p className="text-xs text-slate-400">Position relative to targets, tracks & GPX</p>
-        </div>
-
-        <button
-          onClick={() => {
-            setName(`Mark ${waypoints.length + 1}`);
-            setShowAddModal(true);
-          }}
-          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs transition-all shadow-md active:scale-95"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Mark Here</span>
-        </button>
-      </div>
+    <Page>
+      <PageHeader
+        icon={<MapPin className="w-5 h-5 text-cyan-400" />}
+        title="Tracks"
+        subtitle="Waypoints, map & GPX recorder"
+        actions={
+          <button
+            onClick={() => {
+              setName(`Mark ${waypoints.length + 1}`);
+              setShowAddModal(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs shadow-md"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Mark Here</span>
+          </button>
+        }
+      />
 
       {/* Static Map Thumbnail & Vector Radar Visualization */}
       <WaypointMapThumbnail
@@ -218,15 +215,11 @@ export const WaypointsNavView: React.FC<Props> = ({
       />
 
       {/* Live Track Session Recorder Card */}
-      <GlassCard className={`w-full !p-3.5 transition-all ${trackSession.isRecording ? 'border-rose-500/40 bg-rose-950/20' : ''}`}>
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center space-x-2">
-            <div className={`w-2.5 h-2.5 rounded-full ${trackSession.isRecording ? 'bg-rose-500 animate-ping' : 'bg-slate-500'}`} />
-            <span className="text-xs font-bold text-white uppercase tracking-wider">
-              {trackSession.isRecording ? 'Recording GPX Track' : 'GPX Track Recorder'}
-            </span>
-          </div>
-
+      <GlassCard className={`w-full !p-4 transition-all ${trackSession.isRecording ? 'border-rose-500/40 bg-rose-950/20' : ''}`}>
+        <CardHeader
+          icon={<div className={`w-2.5 h-2.5 rounded-full shrink-0 ${trackSession.isRecording ? 'bg-rose-500 animate-ping' : 'bg-slate-500'}`} />}
+          title={trackSession.isRecording ? 'Recording GPX Track' : 'GPX Track Recorder'}
+        >
           <div className="flex items-center space-x-1.5">
             {/* Quick Mark button: auto captures GPS coordinate & barometric altitude */}
             <button
@@ -259,7 +252,7 @@ export const WaypointsNavView: React.FC<Props> = ({
               )}
             </button>
           </div>
-        </div>
+        </CardHeader>
 
         {/* Quick Mark Status Feedback Banner */}
         {quickMarkFeedback && (
@@ -317,17 +310,11 @@ export const WaypointsNavView: React.FC<Props> = ({
       </GlassCard>
 
       {/* Telemetry Chart Selector & Cards */}
-      <div className="w-full flex items-center justify-between px-1 pt-1 mb-1">
-        <div className="flex items-center space-x-1.5">
-          <Activity className="w-3.5 h-3.5 text-cyan-400" />
-          <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-            Track Telemetry Charts
-          </span>
-        </div>
+      <SectionLabel icon={<Activity className="w-3.5 h-3.5 text-cyan-400" />} hint={
         <div className="flex bg-white/10 rounded-full p-0.5 border border-white/15 text-[10px] font-mono">
           <button
             onClick={() => setTelemetryTab('both')}
-            className={`px-2 py-0.5 rounded-full transition-all ${
+            className={`px-2 py-0.5 rounded-full transition-all whitespace-nowrap ${
               telemetryTab === 'both'
                 ? 'bg-cyan-500 text-slate-950 font-bold shadow'
                 : 'text-slate-300 hover:text-white'
@@ -337,7 +324,7 @@ export const WaypointsNavView: React.FC<Props> = ({
           </button>
           <button
             onClick={() => setTelemetryTab('speed')}
-            className={`px-2 py-0.5 rounded-full transition-all flex items-center space-x-1 ${
+            className={`px-2 py-0.5 rounded-full transition-all whitespace-nowrap flex items-center space-x-1 ${
               telemetryTab === 'speed'
                 ? 'bg-cyan-500 text-slate-950 font-bold shadow'
                 : 'text-slate-300 hover:text-white'
@@ -348,7 +335,7 @@ export const WaypointsNavView: React.FC<Props> = ({
           </button>
           <button
             onClick={() => setTelemetryTab('elevation')}
-            className={`px-2 py-0.5 rounded-full transition-all flex items-center space-x-1 ${
+            className={`px-2 py-0.5 rounded-full transition-all whitespace-nowrap flex items-center space-x-1 ${
               telemetryTab === 'elevation'
                 ? 'bg-cyan-500 text-slate-950 font-bold shadow'
                 : 'text-slate-300 hover:text-white'
@@ -358,7 +345,9 @@ export const WaypointsNavView: React.FC<Props> = ({
             <span>Elevation</span>
           </button>
         </div>
-      </div>
+      }>
+        Telemetry Charts
+      </SectionLabel>
 
       {/* Real-Time GPS Speed Trends Area Chart (Recharts) */}
       {(telemetryTab === 'both' || telemetryTab === 'speed') && (
@@ -386,12 +375,9 @@ export const WaypointsNavView: React.FC<Props> = ({
       )}
 
       {/* Waypoint List Section */}
-      <div className="w-full flex items-center justify-between px-2 pt-1">
-        <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-          Saved Waypoints ({waypoints.length})
-        </span>
-        <span className="text-[10px] text-slate-400">Tap pin to lock onto map & compass</span>
-      </div>
+      <SectionLabel icon={<MapPin className="w-3.5 h-3.5 text-cyan-400" />} hint="Tap pin to target">
+        Saved Waypoints ({waypoints.length})
+      </SectionLabel>
 
       {waypoints.length === 0 ? (
         <GlassCard className="w-full !p-8 text-center">
@@ -442,7 +428,7 @@ export const WaypointsNavView: React.FC<Props> = ({
             return (
               <GlassCard
                 key={wp.id}
-                className={`!p-3.5 transition-all ${
+                className={`!p-4 transition-all ${
                   isTarget ? 'border-cyan-500/60 bg-cyan-950/30' : ''
                 }`}
               >
@@ -628,6 +614,6 @@ export const WaypointsNavView: React.FC<Props> = ({
                 </div>
               </div>
       </Modal>
-    </div>
+    </Page>
   );
 };

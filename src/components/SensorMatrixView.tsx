@@ -3,6 +3,7 @@ import { SensorState, UserPreferences, TrackSession, Waypoint } from '../types/s
 import { formatToDMS } from '../utils/calculations';
 import { useAcousticSensor } from '../hooks/useAcousticSensor';
 import { GlassCard } from './GlassCard';
+import { Page, PageHeader, Toolbar, CardHeader, SectionLabel } from './Layout';
 import { TrackElevationProfileChart } from './TrackElevationProfileChart';
 import {
   Activity,
@@ -58,22 +59,18 @@ export const SensorMatrixView: React.FC<Props> = ({
   const lightInfo = getLightLevelText(sensors.ambientLight);
 
   return (
-    <div className="flex flex-col items-center w-full max-w-md mx-auto space-y-4 pb-20">
-      {/* Header */}
-      <div className="w-full px-2 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-white tracking-tight flex items-center space-x-2">
-            <Activity className="w-5 h-5 text-cyan-400" />
-            <span>Sensor Matrix</span>
-          </h2>
-          <p className="text-xs text-slate-400">Live hardware telemetry, physics & elevation profile</p>
-        </div>
-
-        <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-white/10 border border-white/15 text-[11px] text-emerald-300">
-          <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Active</span>
-        </div>
-      </div>
+    <Page>
+      <PageHeader
+        icon={<Activity className="w-5 h-5 text-cyan-400" />}
+        title="Telemetry"
+        subtitle="Live sensors, physics & elevation profile"
+        actions={
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/10 border border-white/15 text-[11px] text-emerald-300">
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Active</span>
+          </div>
+        }
+      />
 
       {/* 1. Recharts Track Elevation Profile Visualization */}
       <TrackElevationProfileChart
@@ -86,14 +83,7 @@ export const SensorMatrixView: React.FC<Props> = ({
 
       {/* 2. Magnetic Field & Anomaly Detector (Gaussmeter) */}
       <GlassCard className="w-full !p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center space-x-2">
-            <Magnet className="w-4 h-4 text-cyan-400" />
-            <span className="text-xs font-bold text-white uppercase tracking-wider">
-              Magnetic Flux Density
-            </span>
-          </div>
-
+        <CardHeader icon={<Magnet className="text-cyan-400 w-4 h-4 shrink-0" />} title="Magnetic Flux Density">
           <div className="flex items-center space-x-1.5">
             <button
               onClick={onOpenCalibration}
@@ -112,7 +102,7 @@ export const SensorMatrixView: React.FC<Props> = ({
               </span>
             )}
           </div>
-        </div>
+        </CardHeader>
 
         <div className="flex items-baseline justify-between mb-2">
           <div className="text-3xl font-black font-mono text-white">
@@ -145,14 +135,7 @@ export const SensorMatrixView: React.FC<Props> = ({
 
       {/* 3. Kinematics & Accelerometer G-Force */}
       <GlassCard className="w-full !p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center space-x-2">
-            <Zap className="w-4 h-4 text-amber-400" />
-            <span className="text-xs font-bold text-white uppercase tracking-wider">
-              Accelerometer & G-Force
-            </span>
-          </div>
-
+        <CardHeader icon={<Zap className="text-amber-400 w-4 h-4 shrink-0" />} title="Accelerometer & G-Force">
           <div className="flex items-center space-x-2">
             <button
               onClick={() => setPeakG(sensors.gForce)}
@@ -163,7 +146,7 @@ export const SensorMatrixView: React.FC<Props> = ({
               <span>Reset Peak</span>
             </button>
           </div>
-        </div>
+        </CardHeader>
 
         <div className="grid grid-cols-2 gap-3 mb-3">
           <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
@@ -220,14 +203,7 @@ export const SensorMatrixView: React.FC<Props> = ({
 
       {/* 4. Acoustic Sound Level (SPL Decibel Meter) */}
       <GlassCard className="w-full !p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center space-x-2">
-            <Volume2 className="w-4 h-4 text-cyan-400" />
-            <span className="text-xs font-bold text-white uppercase tracking-wider">
-              Acoustic Sound Level (SPL)
-            </span>
-          </div>
-
+        <CardHeader icon={<Volume2 className="text-cyan-400 w-4 h-4 shrink-0" />} title="Acoustic Sound Level (SPL)">
           <button
             onClick={() => setEnableMic(!enableMic)}
             className={`flex items-center space-x-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all ${
@@ -239,7 +215,7 @@ export const SensorMatrixView: React.FC<Props> = ({
             {enableMic ? <Mic className="w-3 h-3 text-cyan-400" /> : <MicOff className="w-3 h-3 text-slate-400" />}
             <span>{enableMic ? 'Monitoring' : 'Enable Mic'}</span>
           </button>
-        </div>
+        </CardHeader>
 
         {enableMic ? (
           <div>
@@ -278,15 +254,9 @@ export const SensorMatrixView: React.FC<Props> = ({
 
       {/* 5. Gyroscope Angular Velocity */}
       <GlassCard className="w-full !p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center space-x-2">
-            <RotateCw className="w-4 h-4 text-emerald-400" />
-            <span className="text-xs font-bold text-white uppercase tracking-wider">
-              Gyroscope Angular Velocity
-            </span>
-          </div>
+        <CardHeader icon={<RotateCw className="text-emerald-400 w-4 h-4 shrink-0" />} title="Gyroscope Angular Velocity">
           <span className="text-[11px] font-mono text-slate-400">deg / sec</span>
-        </div>
+        </CardHeader>
 
         <div className="grid grid-cols-3 gap-2 text-center font-mono">
           <div className="p-2.5 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
@@ -306,17 +276,11 @@ export const SensorMatrixView: React.FC<Props> = ({
 
       {/* 6. Ambient Illumination (Lux) */}
       <GlassCard className="w-full !p-4">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center space-x-2">
-            <Sun className="w-4 h-4 text-amber-400" />
-            <span className="text-xs font-bold text-white uppercase tracking-wider">
-              Ambient Light Sensor
-            </span>
-          </div>
+        <CardHeader icon={<Sun className="text-amber-400 w-4 h-4 shrink-0" />} title="Ambient Light Sensor">
           <span className="text-[11px] font-medium text-amber-300 bg-amber-500/15 px-2 py-0.5 rounded-full border border-amber-500/30">
             {lightInfo.label}
           </span>
-        </div>
+        </CardHeader>
 
         <div className="text-3xl font-black font-mono text-white mb-2">
           {Math.round(sensors.ambientLight)}{' '}
@@ -334,19 +298,13 @@ export const SensorMatrixView: React.FC<Props> = ({
       {/* 7. Geodesy & GPS Satellite Telemetry */}
       {sensors.latitude !== null && sensors.longitude !== null && (
         <GlassCard className="w-full !p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center space-x-2">
-              <Locate className="w-4 h-4 text-cyan-400" />
-              <span className="text-xs font-bold text-white uppercase tracking-wider">
-                Geodesy & GPS Navigation
-              </span>
-            </div>
+          <CardHeader icon={<Locate className="text-cyan-400 w-4 h-4 shrink-0" />} title="Geodesy & GPS Navigation">
             {sensors.gpsAccuracy !== null && (
               <span className="text-[11px] font-mono text-cyan-300">
                 ±{sensors.gpsAccuracy}m precision
               </span>
             )}
-          </div>
+          </CardHeader>
 
           <div className="space-y-2 text-xs font-mono">
             <div className="p-2.5 rounded-2xl bg-white/[0.04] border border-white/[0.06] flex items-center justify-between">
@@ -387,6 +345,6 @@ export const SensorMatrixView: React.FC<Props> = ({
           </div>
         </GlassCard>
       )}
-    </div>
+    </Page>
   );
 };

@@ -12,6 +12,7 @@ import {
 import { TrackSession, TrackPoint, UserPreferences, SensorState, Waypoint } from '../types/sensors';
 import { convertAltitude, calculateDistanceMeters } from '../utils/calculations';
 import { GlassCard } from './GlassCard';
+import { CardHeader } from './Layout';
 import {
   Mountain,
   TrendingUp,
@@ -243,13 +244,10 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
   return (
     <GlassCard className="w-full !p-4">
       {/* Header and Toggle Controls */}
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center space-x-2">
-          <div className="p-1.5 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 shadow-[0_0_12px_rgba(56,189,248,0.25)]">
-            <Mountain className="w-4 h-4" />
-          </div>
-          <div>
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-1.5">
+      <CardHeader
+        icon={<Mountain className="w-4 h-4 text-cyan-400 shrink-0" />}
+        title={
+          <span className="flex flex-wrap items-center gap-1.5">
               <span>Elevation Profile</span>
               {trackSession.isRecording ? (
                 <span className="flex items-center space-x-1 text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 font-mono font-bold animate-pulse">
@@ -265,14 +263,10 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
                   {chartData.length} pts recorded
                 </span>
               )}
-            </h3>
-            <p className="text-[10px] text-slate-400 font-mono">
-              Altitude variations over session duration
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center space-x-1.5">
+          </span>
+        }
+        subtitle="Altitude variations over session duration"
+      >
           {/* Quick Mark button */}
           {onAddWaypoint && sensors && (
             <button
@@ -328,8 +322,8 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
               <span>Distance</span>
             </button>
           </div>
-        </div>
-      </div>
+        
+      </CardHeader>
 
       {/* Profile Overview Metric Strip */}
       <div className="grid grid-cols-4 gap-2 text-center text-xs font-mono mb-3">

@@ -12,6 +12,7 @@ import {
 import { TrackSession, TrackPoint, UserPreferences, SensorState, SpeedUnit } from '../types/sensors';
 import { convertSpeed, convertSpeedBetweenUnits, calculateDistanceMeters } from '../utils/calculations';
 import { GlassCard } from './GlassCard';
+import { CardHeader } from './Layout';
 import {
   Gauge,
   Zap,
@@ -270,13 +271,10 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
   return (
     <GlassCard className="w-full !p-4">
       {/* Header and Toggle Controls */}
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center space-x-2">
-          <div className="p-1.5 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 shadow-[0_0_12px_rgba(56,189,248,0.25)]">
-            <Gauge className="w-4 h-4" />
-          </div>
-          <div>
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-1.5">
+      <CardHeader
+        icon={<Gauge className="w-4 h-4 text-cyan-400 shrink-0" />}
+        title={
+          <span className="flex flex-wrap items-center gap-1.5">
               <span>GPS Speed Trends</span>
               {trackSession.isRecording && (
                 <span className="flex items-center space-x-1 text-[10px] px-1.5 py-px rounded-full bg-rose-500/25 text-rose-300 border border-rose-500/40 font-mono animate-pulse">
@@ -289,15 +287,10 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
                   DEMO TRACK
                 </span>
               )}
-            </h3>
-            <span className="text-[10px] text-slate-400 font-sans block">
-              Velocity telemetry profile over recording timeline
-            </span>
-          </div>
-        </div>
-
-        {/* View mode toggle (Duration vs Distance) & Sim Controls */}
-        <div className="flex items-center space-x-1.5">
+          </span>
+        }
+        subtitle="Velocity telemetry profile over recording timeline"
+      >
           <div className="flex bg-white/10 rounded-full p-0.5 border border-white/15 text-[10px] font-mono">
             <button
               onClick={() => setViewMode('duration')}
@@ -332,8 +325,8 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
           >
             <Sliders className="w-3 h-3" />
           </button>
-        </div>
-      </div>
+        
+      </CardHeader>
 
       {/* Speed Telemetry Metric Cards */}
       <div className="grid grid-cols-4 gap-2 text-center text-xs font-mono mb-3">

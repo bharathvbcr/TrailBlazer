@@ -82,13 +82,6 @@ const NAV_ITEMS = [
   { id: 'waypoints' as const, label: 'Tracks', icon: MapPin },
 ];
 
-const TAB_SUBTITLES: Record<TabId, string> = {
-  compass: 'Heading & navigation',
-  altimeter: 'Altitude & barometer',
-  sensors: 'Live sensor telemetry',
-  waypoints: 'Waypoints & track recorder',
-};
-
 export const App: React.FC = () => {
   // Load preferences from localStorage or default
   const [preferences, setPreferences] = useState<UserPreferences>(() => {
@@ -339,7 +332,7 @@ export const App: React.FC = () => {
                   PRO
                 </span>
               </h1>
-              <p className="text-[11px] text-slate-400 leading-tight truncate">{TAB_SUBTITLES[activeTab]}</p>
+              <p className="text-[11px] text-slate-400 leading-tight truncate">Precision outdoor sensors</p>
             </div>
           </div>
 

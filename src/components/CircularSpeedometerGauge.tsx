@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { AltitudeUnit, SpeedUnit } from '../types/sensors';
 import { convertSpeedBetweenUnits } from '../utils/calculations';
 import { GlassCard } from './GlassCard';
+import { CardHeader } from './Layout';
 import {
   Gauge,
   Zap,
@@ -154,24 +155,16 @@ export const CircularSpeedometerGauge: React.FC<Props> = ({
   return (
     <GlassCard className="w-full !p-4">
       {/* Top Header & Unit Selector */}
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center space-x-2">
-          <div className="p-1.5 rounded-xl bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 shadow-[0_0_12px_rgba(56,189,248,0.25)]">
-            <Gauge className="w-4 h-4" />
-          </div>
-          <div>
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-1.5">
-              <span>GPS Speedometer</span>
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
-            </h3>
-            <span className="text-[10px] text-slate-400 block font-sans">
-              Real-Time Velocity • Satellite Telemetry
-            </span>
-          </div>
-        </div>
-
-        {/* Speed Unit Selector Pills */}
-        <div className="flex items-center space-x-1.5">
+      <CardHeader
+        icon={<Gauge className="w-4 h-4 text-cyan-400 shrink-0" />}
+        title={
+          <span className="flex items-center gap-1.5">
+            <span>GPS Speedometer</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+          </span>
+        }
+        subtitle="Real-time velocity • Satellite telemetry"
+      >
           <div className="flex bg-white/10 rounded-full p-0.5 border border-white/15 text-[10px] font-mono">
             {(['km/h', 'mph', 'kt', 'm/s'] as const).map((unit) => (
               <button
@@ -199,8 +192,8 @@ export const CircularSpeedometerGauge: React.FC<Props> = ({
           >
             <Sliders className="w-3 h-3" />
           </button>
-        </div>
-      </div>
+      </CardHeader>
+
 
       {/* Main Circular Speedometer Gauge Dial Container */}
       <div className="relative w-64 h-64 mx-auto flex items-center justify-center select-none my-1">
