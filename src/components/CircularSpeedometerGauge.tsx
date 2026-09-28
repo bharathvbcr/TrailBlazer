@@ -435,7 +435,7 @@ export const CircularSpeedometerGauge: React.FC<Props> = ({
 
         {/* Rotating Speedometer Pointer Needle */}
         <div
-          className="absolute inset-0 pointer-events-none transition-transform duration-200 ease-out flex items-center justify-center"
+          className="absolute inset-0 z-10 pointer-events-none transition-transform duration-200 ease-out flex items-center justify-center"
           style={{ transform: `rotate(${needleAngle}deg)` }}
         >
           <div className="relative w-full h-full flex items-center justify-center">
@@ -445,14 +445,6 @@ export const CircularSpeedometerGauge: React.FC<Props> = ({
                 isOverspeed && speedAlertVisual
                   ? 'bg-gradient-to-t from-rose-500 via-rose-400 to-white shadow-[0_0_16px_#f43f5e]'
                   : 'bg-gradient-to-t from-cyan-400 via-cyan-300 to-white shadow-[0_0_12px_#38bdf8]'
-              }`}
-            />
-            {/* Needle center cap hub */}
-            <div
-              className={`w-4 h-4 rounded-full border-2 border-white shadow-[0_0_8px_#38bdf8] z-30 transition-all ${
-                isOverspeed && speedAlertVisual
-                  ? 'bg-rose-500 shadow-[0_0_10px_#f43f5e]'
-                  : 'bg-cyan-400 shadow-[0_0_8px_#38bdf8]'
               }`}
             />
           </div>

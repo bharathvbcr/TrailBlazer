@@ -113,7 +113,7 @@ export const SettingsModal: React.FC<Props> = ({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Sensors & Display Settings" icon={<Settings className="w-5 h-5 text-cyan-400" />}>
+    <Modal isOpen={isOpen} onClose={onClose} title="Settings" icon={<Settings className="w-5 h-5 text-cyan-400" />}>
           <div className="space-y-4 text-xs">
             {/* 1. Material You Liquid Glass Palette */}
             <div>
@@ -310,13 +310,13 @@ export const SettingsModal: React.FC<Props> = ({
                         <button
                           key={preset.label}
                           onClick={() => onUpdatePreferences({ speedAlertThreshold: preset.val })}
-                          className={`py-1 px-1.5 rounded-lg border text-[10px] font-mono transition-all truncate ${
+                          className={`py-1.5 px-1 rounded-lg border text-[10px] font-mono transition-all leading-tight ${
                             Math.abs(preferences.speedAlertThreshold - preset.val) < 0.5
                               ? 'bg-cyan-500/25 border-cyan-400 text-cyan-200 font-bold shadow-sm'
                               : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300'
                           }`}
                         >
-                          {preset.label} ({preset.val})
+                          {preset.label} <span className="opacity-70">{preset.val}</span>
                         </button>
                       ))}
                     </div>

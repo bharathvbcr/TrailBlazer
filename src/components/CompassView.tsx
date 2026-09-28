@@ -10,7 +10,7 @@ import {
   calculateDistanceMeters,
 } from '../utils/calculations';
 import { GlassCard } from './GlassCard';
-import { Page, PageHeader, Toolbar, CardHeader, SectionLabel } from './Layout';
+import { Page, PageHeader, Toolbar, CardHeader, SectionLabel, Stat } from './Layout';
 import { CircularSpeedometerGauge } from './CircularSpeedometerGauge';
 import {
   Compass,
@@ -495,44 +495,27 @@ export const CompassView: React.FC<Props> = ({
 
       {/* Spirit Level & Precision Telemetry Card */}
       <GlassCard className="w-full !p-4">
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div className="p-2 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
-            <div className="text-[10px] text-slate-400 uppercase font-medium tracking-wider">Level Status</div>
-            <div className="text-sm font-bold flex items-center justify-center space-x-1 mt-0.5">
-              {isLevel ? (
-                <>
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="text-emerald-300 font-mono">LEVEL (0°)</span>
-                </>
-              ) : (
-                <span className="text-amber-300 font-mono">
-                  {Math.max(Math.abs(sensors.pitch), Math.abs(sensors.roll)).toFixed(1)}° TILT
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="p-2 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
-            <div className="text-[10px] text-slate-400 uppercase font-medium tracking-wider">Sun Bearing</div>
-            <div className="text-sm font-bold text-amber-300 font-mono flex items-center justify-center space-x-1 mt-0.5">
-              <Sun className="w-3.5 h-3.5 text-amber-400" />
-              <span>{sensors.sunAzimuth}°</span>
-            </div>
-          </div>
-
-          <div
+        <div className="grid grid-cols-3 gap-2">
+          <Stat
+            label="Level"
+            tone={isLevel ? 'emerald' : 'amber'}
+            icon={isLevel ? <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" /> : undefined}
+            value={isLevel ? 'Flat' : `${Math.max(Math.abs(sensors.pitch), Math.abs(sensors.roll)).toFixed(1)}°`}
+          />
+          <Stat
+            label="Sun"
+            tone="amber"
+            icon={<Sun className="w-3 h-3 text-amber-400 shrink-0" />}
+            value={`${sensors.sunAzimuth}°`}
+          />
+          <Stat
+            label="Mag"
+            icon={<Magnet className="w-3 h-3 text-cyan-400 shrink-0" />}
+            value={sensors.magneticFlux}
+            unit="µT"
             onClick={onOpenCalibration}
-            className="p-2 rounded-2xl bg-white/[0.04] border border-white/[0.06] cursor-pointer hover:bg-white/[0.08] transition-all"
             title="Tap to run Figure-8 calibration"
-          >
-            <div className="text-[10px] text-slate-400 uppercase font-medium tracking-wider flex items-center justify-center space-x-1">
-              <Magnet className="w-3 h-3 text-cyan-400" />
-              <span>Mag Field</span>
-            </div>
-            <div className="text-sm font-bold text-cyan-300 font-mono mt-0.5">
-              {sensors.magneticFlux} µT
-            </div>
-          </div>
+          />
         </div>
       </GlassCard>
 

@@ -63,7 +63,7 @@ export const SensorMatrixView: React.FC<Props> = ({
       <PageHeader
         icon={<Activity className="w-5 h-5 text-cyan-400" />}
         title="Telemetry"
-        subtitle="Live sensors, physics & elevation profile"
+        subtitle="Live sensors & elevation"
         actions={
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/10 border border-white/15 text-[11px] text-emerald-300">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
@@ -135,7 +135,7 @@ export const SensorMatrixView: React.FC<Props> = ({
 
       {/* 3. Kinematics & Accelerometer G-Force */}
       <GlassCard className="w-full !p-4">
-        <CardHeader icon={<Zap className="text-amber-400 w-4 h-4 shrink-0" />} title="Accelerometer & G-Force">
+        <CardHeader icon={<Zap className="text-amber-400 w-4 h-4 shrink-0" />} title="Accelerometer & G‑Force">
           <div className="flex items-center space-x-2">
             <button
               onClick={() => setPeakG(sensors.gForce)}

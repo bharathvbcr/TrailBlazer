@@ -531,7 +531,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
               : 'bg-gradient-to-r from-cyan-950/40 via-slate-900/20 to-transparent border-cyan-500/30 shadow-[0_0_20px_rgba(56,189,248,0.1)]'
           }`}
         >
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3">
             {/* Left: Large Glowing Arrow Indicator & Status */}
             <div className="flex items-center space-x-3.5">
               <div
@@ -566,6 +566,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
                   >
                     {trend3h.trend}
                   </span>
+                  {trend3h.subCategory.replace('_', ' ').toLowerCase() !== trend3h.trend && (
                   <span
                     className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                       trend3h.trend === 'rising'
@@ -577,6 +578,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
                   >
                     {trend3h.subCategory.replace('_', ' ').toUpperCase()}
                   </span>
+                  )}
                 </div>
 
                 <div className="text-[11px] text-slate-300 mt-0.5">
@@ -589,33 +591,37 @@ export const AltimeterBarometerView: React.FC<Props> = ({
               </div>
             </div>
 
-            {/* Right: Pressure Delta Readout */}
-            <div className="text-right">
-              <span className="text-[10px] text-slate-400 uppercase font-mono block">3-Hour Net ΔP</span>
-              <div
-                className={`text-base font-black font-mono ${
-                  trend3h.trend === 'rising'
-                    ? 'text-emerald-300'
-                    : trend3h.trend === 'falling'
-                    ? 'text-rose-300'
-                    : 'text-cyan-200'
-                }`}
-              >
-                {trend3h.deltaHpa3h > 0 ? '+' : trend3h.deltaHpa3h < 0 ? '-' : '±'}
-                {deltaPressureConverted.value.toFixed(preferences.pressureUnit === 'inHg' ? 3 : 2)}{' '}
-                {deltaPressureConverted.label}
+            {/* Pressure delta readout */}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="p-2 rounded-xl bg-black/20 border border-white/[0.06] text-center min-w-0">
+                <span className="text-[10px] text-slate-400 uppercase block truncate">3h ΔP</span>
+                <span className={`text-sm font-black font-mono whitespace-nowrap ${trend3h.trend === 'rising' ? 'text-emerald-300' : trend3h.trend === 'falling' ? 'text-rose-300' : 'text-cyan-200'}`}>
+                  {trend3h.deltaHpa3h > 0 ? '+' : trend3h.deltaHpa3h < 0 ? '-' : '±'}
+                  {deltaPressureConverted.value.toFixed(preferences.pressureUnit === 'inHg' ? 3 : 2)}
+                </span>
+                <span className="text-[10px] text-slate-400 block">{deltaPressureConverted.label}</span>
               </div>
-              <span className="text-[10px] font-mono text-slate-400 block">
-                ({trend3h.deltaHpa3h > 0 ? '+' : ''}{trend3h.deltaHpa3h.toFixed(1)} hPa •{' '}
-                {trend3h.ratePerHour > 0 ? '+' : ''}{trend3h.ratePerHour.toFixed(2)} hPa/h)
-              </span>
+              <div className="p-2 rounded-xl bg-black/20 border border-white/[0.06] text-center min-w-0">
+                <span className="text-[10px] text-slate-400 uppercase block truncate">Change</span>
+                <span className="text-sm font-bold font-mono text-slate-100 whitespace-nowrap">
+                  {trend3h.deltaHpa3h > 0 ? '+' : ''}{trend3h.deltaHpa3h.toFixed(1)}
+                </span>
+                <span className="text-[10px] text-slate-400 block">hPa</span>
+              </div>
+              <div className="p-2 rounded-xl bg-black/20 border border-white/[0.06] text-center min-w-0">
+                <span className="text-[10px] text-slate-400 uppercase block truncate">Rate</span>
+                <span className="text-sm font-bold font-mono text-slate-100 whitespace-nowrap">
+                  {trend3h.ratePerHour > 0 ? '+' : ''}{trend3h.ratePerHour.toFixed(2)}
+                </span>
+                <span className="text-[10px] text-slate-400 block">hPa/h</span>
+              </div>
             </div>
           </div>
         </div>
 
         {/* 3-Hour Progression Milestone Steps (T-3h -> T-2h -> T-1h -> Now) */}
         <div className="mt-3 pt-3 border-t border-white/[0.08]">
-          <div className="flex items-center justify-between text-[11px] text-slate-300 mb-2">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px] text-slate-300 mb-2">
             <span className="font-semibold flex items-center space-x-1">
               <Clock className="w-3.5 h-3.5 text-cyan-400" />
               <span>Hourly Pressure Progression</span>

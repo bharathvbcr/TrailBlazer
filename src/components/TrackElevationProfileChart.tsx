@@ -330,7 +330,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
         {/* Current Altitude */}
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06]">
           <span className="text-[10px] text-slate-400 uppercase font-sans block">Current Alt</span>
-          <span className="text-cyan-300 font-bold text-sm">
+          <span className="text-cyan-300 font-bold text-sm whitespace-nowrap">
             {currentAltValue}{' '}
             <span className="text-[10px] text-slate-400 font-sans">{preferences.altitudeUnit}</span>
           </span>
@@ -340,7 +340,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06]">
           <span className="text-[10px] text-slate-400 uppercase font-sans block">Net Δ Alt</span>
           <span
-            className={`font-bold text-sm flex items-center justify-center space-x-0.5 ${
+            className={`font-bold text-sm flex items-center justify-center space-x-0.5 whitespace-nowrap ${
               netAltitudeChange > 0
                 ? 'text-emerald-400'
                 : netAltitudeChange < 0
@@ -363,7 +363,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
         {/* Peak Summit */}
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06]">
           <span className="text-[10px] text-slate-400 uppercase font-sans block">Peak Summit</span>
-          <span className="text-amber-300 font-bold text-sm">
+          <span className="text-amber-300 font-bold text-sm whitespace-nowrap">
             {maxAltitude}{' '}
             <span className="text-[10px] text-slate-400 font-sans">{preferences.altitudeUnit}</span>
           </span>
@@ -372,7 +372,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
         {/* Total Elevation Span / Relief */}
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06]">
           <span className="text-[10px] text-slate-400 uppercase font-sans block">Elev Span</span>
-          <span className="text-emerald-300 font-bold text-sm">
+          <span className="text-emerald-300 font-bold text-sm whitespace-nowrap">
             +{totalElevationSpan}{' '}
             <span className="text-[10px] text-slate-400 font-sans">{preferences.altitudeUnit}</span>
           </span>
@@ -395,7 +395,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart
               data={chartData}
-              margin={{ top: 12, right: 12, left: -16, bottom: 0 }}
+              margin={{ top: 12, right: 12, left: 0, bottom: 0 }}
             >
               <defs>
                 <linearGradient id="elevationLiquidGrad" x1="0" y1="0" x2="0" y2="1">
@@ -429,6 +429,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
               {/* Y-Axis: Elevation */}
               <YAxis
                 domain={['auto', 'auto']}
+                width={38}
                 stroke="rgba(255, 255, 255, 0.3)"
                 tick={{ fill: 'rgba(255, 255, 255, 0.55)', fontSize: 10, fontFamily: 'monospace' }}
                 tickLine={{ stroke: 'rgba(255, 255, 255, 0.2)' }}
@@ -483,7 +484,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
 
                         <div className="flex items-center justify-between">
                           <span className="text-slate-400 font-sans">Elevation:</span>
-                          <span className="text-white font-bold text-sm">
+                          <span className="text-white font-bold text-sm whitespace-nowrap">
                             {data.altitude} {data.altitudeUnit}
                           </span>
                         </div>

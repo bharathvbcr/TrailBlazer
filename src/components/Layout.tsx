@@ -68,3 +68,44 @@ export const SectionLabel: React.FC<{ children: React.ReactNode; icon?: React.Re
     {hint && <div className="text-[11px] text-slate-400">{hint}</div>}
   </div>
 );
+
+const TONES = {
+  cyan: 'text-cyan-300',
+  amber: 'text-amber-300',
+  emerald: 'text-emerald-300',
+  rose: 'text-rose-300',
+  slate: 'text-slate-100',
+} as const;
+
+interface StatProps {
+  label: string;
+  value: React.ReactNode;
+  unit?: string;
+  icon?: React.ReactNode;
+  tone?: keyof typeof TONES;
+  onClick?: () => void;
+  title?: string;
+}
+
+/** Compact metric tile: one-line label, non-wrapping value with optional unit. */
+export const Stat: React.FC<StatProps> = ({ label, value, unit, icon, tone = 'cyan', onClick, title }) => {
+  const Tag = onClick ? 'button' : 'div';
+  return (
+    <Tag
+      onClick={onClick}
+      title={title}
+      className={`min-w-0 p-2.5 rounded-2xl bg-white/[0.04] border border-white/[0.06] text-center flex flex-col items-center justify-center gap-0.5 ${
+        onClick ? 'hover:bg-white/[0.08] cursor-pointer' : ''
+      }`}
+    >
+      <span className="w-full truncate text-[10px] text-slate-400 uppercase font-medium tracking-wide flex items-center justify-center gap-1">
+        {icon}
+        <span className="truncate">{label}</span>
+      </span>
+      <span className={`text-sm font-bold font-mono whitespace-nowrap ${TONES[tone]}`}>
+        {value}
+        {unit && <span className="ml-1 text-[10px] font-medium text-slate-400">{unit}</span>}
+      </span>
+    </Tag>
+  );
+};

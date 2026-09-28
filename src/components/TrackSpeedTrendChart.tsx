@@ -289,7 +289,7 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
               )}
           </span>
         }
-        subtitle="Velocity telemetry profile over recording timeline"
+        subtitle={`Velocity over recording timeline (${speedUnit})`}
       >
           <div className="flex bg-white/10 rounded-full p-0.5 border border-white/15 text-[10px] font-mono">
             <button
@@ -389,7 +389,7 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart
             data={chartData}
-            margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+            margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
           >
             <defs>
               <linearGradient id="speedAreaGrad" x1="0" y1="0" x2="0" y2="1">
@@ -414,7 +414,7 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
               tick={{ fontSize: 9, fill: 'rgba(255,255,255,0.5)', fontFamily: 'monospace' }}
               tickLine={{ stroke: 'rgba(255,255,255,0.15)' }}
               domain={[0, (dataMax: number) => Math.max(Math.ceil((dataMax + 2) / 5) * 5, thresholdSpeed + 5)]}
-              unit={` ${speedUnit}`}
+              width={34}
             />
 
             <Tooltip

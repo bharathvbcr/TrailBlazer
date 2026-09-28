@@ -146,6 +146,11 @@ export const App: React.FC = () => {
     }
   }, [preferences]);
 
+  // Expose palette to CSS so night palettes can tint the whole UI (not just the background)
+  useEffect(() => {
+    document.documentElement.dataset.palette = preferences.palette;
+  }, [preferences.palette]);
+
   // Persist waypoints
   useEffect(() => {
     try {

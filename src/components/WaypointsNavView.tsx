@@ -189,7 +189,7 @@ export const WaypointsNavView: React.FC<Props> = ({
       <PageHeader
         icon={<MapPin className="w-5 h-5 text-cyan-400" />}
         title="Tracks"
-        subtitle="Waypoints, map & GPX recorder"
+        subtitle="Waypoints & GPX recorder"
         actions={
           <button
             onClick={() => {
@@ -483,7 +483,8 @@ export const WaypointsNavView: React.FC<Props> = ({
 
                   <button
                     onClick={() => onDeleteWaypoint(wp.id)}
-                    className="p-1 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-white/10 transition-all ml-2"
+                    aria-label="Delete waypoint"
+                    className="p-2 -m-1 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-white/10 transition-all ml-2"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -491,11 +492,11 @@ export const WaypointsNavView: React.FC<Props> = ({
 
                 {/* Distance & Bearing HUD Bar */}
                 {distMeters !== null && bearingDeg !== null && (
-                  <div className="mt-3 pt-2.5 border-t border-white/[0.08] flex items-center justify-between">
-                    <div className="flex items-center space-x-3 text-xs">
+                  <div className="mt-3 pt-2.5 border-t border-white/[0.08] flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
                       <div>
                         <span className="text-[10px] text-slate-400 uppercase block">Distance</span>
-                        <span className="font-mono font-bold text-white">
+                        <span className="font-mono font-bold text-white whitespace-nowrap">
                           {distMeters >= 1000
                             ? `${(distMeters / 1000).toFixed(2)} km`
                             : `${Math.round(distMeters)} m`}
@@ -513,7 +514,7 @@ export const WaypointsNavView: React.FC<Props> = ({
                       {elevDiffConverted !== null && (
                         <div>
                           <span className="text-[10px] text-slate-400 uppercase block">Elev Delta</span>
-                          <span className={`font-mono text-xs font-semibold ${elevDiff! >= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                          <span className={`font-mono text-xs font-semibold whitespace-nowrap ${elevDiff! >= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
                             {elevDiff! >= 0 ? `+${elevDiffConverted.value.toFixed(0)}` : elevDiffConverted.value.toFixed(0)} {elevDiffConverted.label}
                           </span>
                         </div>
@@ -534,7 +535,7 @@ export const WaypointsNavView: React.FC<Props> = ({
                           onClick={() => {
                             onSelectTarget(wp.id);
                           }}
-                          className="flex items-center space-x-1 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-slate-200 text-xs font-semibold transition-all active:scale-95"
+                          className="flex items-center space-x-1 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-slate-200 text-xs font-semibold whitespace-nowrap shrink-0"
                         >
                           <MapIcon className="w-3.5 h-3.5 text-cyan-400" />
                           <span>Focus Map</span>

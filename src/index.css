@@ -144,3 +144,9 @@ input[type=range]::-moz-range-thumb {
     scroll-behavior: auto !important;
   }
 }
+
+/* Night palettes: tint the entire UI so no cyan/blue light leaks through and
+   dark adaptation is preserved. Applied on <html> so portals and fixed layers are covered. */
+html { transition: filter 0.5s var(--ease-out); }
+html[data-palette='tactical_red'] { filter: sepia(1) hue-rotate(-52deg) saturate(3.2) brightness(0.9); }
+html[data-palette='phosphor_green'] { filter: sepia(1) hue-rotate(50deg) saturate(2.6) brightness(0.9); }
