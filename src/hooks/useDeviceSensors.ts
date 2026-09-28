@@ -88,11 +88,22 @@ export function useDeviceSensors(preferences: UserPreferences) {
 
   // Trigger haptic feedback
   const triggerHaptic = useCallback((pattern: number | number[]) => {
-    if (!preferences.hapticsEnabled || typeof navigator === 'undefined' || !navigator.vibrate) return;
+    if (!preferences.hapticsEnabled) return;
     try {
-      navigator.vibrate(pattern);
+      const bridge = (window as unknown as { AndroidBridge?: { vibrate: (duration: number) => void } }).AndroidBridge;
+      if (bridge && typeof bridge.vibrate === 'function') {
+        const duration = Array.isArray(pattern) ? (pattern[0] || 40) : pattern;
+        bridge.vibrate(duration);
+      }
     } catch {
       // ignore
+    }
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      try {
+        navigator.vibrate(pattern);
+      } catch {
+        // ignore
+      }
     }
   }, [preferences.hapticsEnabled]);
 
