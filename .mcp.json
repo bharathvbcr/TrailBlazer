@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "devcouncil": {
+      "args": [
+        "mcp"
+      ],
+      "command": "/Users/bharath/.local/bin/devcouncil",
+      "env": {
+        "DEVCOUNCIL_PROJECT_ROOT": "/Users/bharath/Code/apps/TrailBlazer"
+      }
+    },
+    "devmap": {
+      "args": [
+        "--root",
+        "/Users/bharath/Code/apps/TrailBlazer",
+        "mcp"
+      ],
+      "command": "devmap",
+      "type": "stdio"
+    }
+  }
+}

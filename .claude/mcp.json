@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "devmap": {
+      "args": [
+        "--root",
+        "/Users/bharath/Code/apps/TrailBlazer",
+        "mcp"
+      ],
+      "command": "devmap",
+      "type": "stdio"
+    }
+  }
+}
