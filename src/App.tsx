@@ -705,6 +705,7 @@ export const App: React.FC = () => {
         onClose={() => setIsSettingsOpen(false)}
         preferences={preferences}
         sensors={sensors}
+        locationEnabled={locationEnabled}
         onUpdatePreferences={updatePreferences}
         onToggleSimulation={toggleSimulationMode}
         onOpenCalibration={() => setIsCalibrationOpen(true)}

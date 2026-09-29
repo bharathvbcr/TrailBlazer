@@ -112,6 +112,7 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
 
     isHardwareOrientationAvailable: false,
     isHardwareMotionAvailable: false,
+    isHardwareGyroAvailable: false,
     isGpsAvailable: false,
     isSimulationMode: false,
     wakeLockActive: false,
@@ -409,7 +410,7 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
         const iosHeading = (event as unknown as { webkitCompassHeading: number }).webkitCompassHeading;
         if (!isNaN(iosHeading)) {
           rawHeading = iosHeading;
-          accuracy = (event as unknown as { webkitCompassAccuracy?: number }).webkitCompassAccuracy ?? 1;
+          accuracy = (event as unknown as { webkitCompassAccuracy?: number }).webkitCompassAccuracy ?? null;
         }
       } else if (event.alpha !== null && !isNaN(event.alpha)) {
         rawHeading = (360 - event.alpha) % 360;
@@ -486,6 +487,7 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
       if (!acc || acc.x === null || acc.y === null || acc.z === null) return;
       hasMotionData = true;
       const rot = event.rotationRate;
+      const hasGyro = !!rot && rot.alpha !== null && rot.beta !== null && rot.gamma !== null;
 
       const ax = acc?.x ?? 0;
       const ay = acc?.y ?? 0;
@@ -502,9 +504,14 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
           accelY: Math.round(ay * 100) / 100,
           accelZ: Math.round(az * 100) / 100,
           gForce: Math.round(gForce * 100) / 100,
-          gyroX: Math.round((rot?.alpha ?? 0) * 10) / 10,
-          gyroY: Math.round((rot?.beta ?? 0) * 10) / 10,
-          gyroZ: Math.round((rot?.gamma ?? 0) * 10) / 10,
+          ...(hasGyro
+            ? {
+                gyroX: Math.round(rot!.alpha! * 10) / 10,
+                gyroY: Math.round(rot!.beta! * 10) / 10,
+                gyroZ: Math.round(rot!.gamma! * 10) / 10,
+                isHardwareGyroAvailable: true,
+              }
+            : {}),
           isHardwareMotionAvailable: true,
         };
       });
@@ -519,7 +526,7 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
         setSensors((prev) => ({ ...prev, isHardwareOrientationAvailable: false }));
       }
       if (!hasMotionData) {
-        setSensors((prev) => ({ ...prev, isHardwareMotionAvailable: false }));
+        setSensors((prev) => ({ ...prev, isHardwareMotionAvailable: false, isHardwareGyroAvailable: false }));
       }
     }, 2000);
 

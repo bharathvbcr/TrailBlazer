@@ -20,6 +20,7 @@ interface Props {
   onClose: () => void;
   preferences: UserPreferences;
   sensors: SensorState;
+  locationEnabled: boolean;
   onUpdatePreferences: (prefs: Partial<UserPreferences>) => void;
   onToggleSimulation: () => void;
   onOpenCalibration: () => void;
@@ -39,6 +40,7 @@ export const SettingsModal: React.FC<Props> = ({
   onClose,
   preferences,
   sensors,
+  locationEnabled,
   onUpdatePreferences,
   onToggleSimulation,
   onOpenCalibration,
@@ -94,6 +96,40 @@ export const SettingsModal: React.FC<Props> = ({
       default: return 160;
     }
   }, [preferences.speedUnit]);
+
+  const sim = sensors.isSimulationMode;
+  const diagnostics: Array<{ label: string; value: string; ok?: boolean; warn?: boolean }> = [
+    sensors.isHardwareOrientationAvailable
+      ? { label: 'Compass / orientation', value: 'Active', ok: true }
+      : { label: 'Compass / orientation', value: sim ? 'Simulated' : 'Unavailable', warn: sim },
+    sensors.isHardwareMotionAvailable
+      ? { label: 'Accelerometer', value: 'Active', ok: true }
+      : { label: 'Accelerometer', value: 'Unavailable' },
+    sensors.isHardwareGyroAvailable
+      ? { label: 'Gyroscope', value: 'Active', ok: true }
+      : { label: 'Gyroscope', value: 'Unavailable' },
+    sensors.magneticFlux !== null
+      ? { label: 'Magnetometer', value: 'Active', ok: true }
+      : { label: 'Magnetometer', value: 'Unavailable' },
+    sensors.ambientLight !== null
+      ? { label: 'Light sensor', value: 'Active', ok: true }
+      : { label: 'Light sensor', value: 'Unavailable' },
+    sensors.pressureSource === 'sensor'
+      ? { label: 'Barometer', value: 'Device sensor', ok: true }
+      : sensors.pressureSource === 'manual'
+      ? { label: 'Barometer', value: 'Manual entry', warn: true }
+      : sensors.pressureSource === 'simulated'
+      ? { label: 'Barometer', value: 'Simulated', warn: true }
+      : { label: 'Barometer', value: 'No reading' },
+    sim && sensors.latitude !== null && !sensors.isGpsAvailable
+      ? { label: 'GPS', value: 'Simulated', warn: true }
+      : !locationEnabled && !sim
+      ? { label: 'GPS', value: 'Off (not enabled)', warn: true }
+      : sensors.latitude !== null
+      ? { label: 'GPS', value: sensors.gpsAccuracy !== null ? `Fix ±${sensors.gpsAccuracy} m${sim ? ' (sim)' : ''}` : 'Fix', ok: !sim, warn: sim }
+      : { label: 'GPS', value: 'Searching…', warn: true },
+    { label: 'Screen wake lock', value: sensors.wakeLockActive ? 'Active' : 'Inactive', ok: sensors.wakeLockActive },
+  ];
 
   const handleSpeedUnitChange = (newUnit: SpeedUnit) => {
     const convertedThreshold = convertSpeedBetweenUnits(
@@ -493,30 +529,12 @@ export const SettingsModal: React.FC<Props> = ({
                 <span>Sensor Diagnostics</span>
               </div>
               <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] space-y-1.5 font-mono text-[11px]">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Orientation (Magnetometer/Gyro):</span>
-                  <span className={sensors.isHardwareOrientationAvailable ? 'text-emerald-400' : 'text-amber-400'}>
-                    {sensors.isHardwareOrientationAvailable ? 'Active' : 'Fallback / Simulated'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Accelerometer (G-Force):</span>
-                  <span className={sensors.isHardwareMotionAvailable ? 'text-emerald-400' : 'text-amber-400'}>
-                    {sensors.isHardwareMotionAvailable ? 'Active' : 'Fallback / Simulated'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">GPS Satellite Positioning:</span>
-                  <span className={sensors.isGpsAvailable ? 'text-emerald-400' : 'text-amber-400'}>
-                    {sensors.isGpsAvailable ? 'Locked' : 'Acquiring'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Screen WakeLock:</span>
-                  <span className={sensors.wakeLockActive ? 'text-emerald-400' : 'text-slate-400'}>
-                    {sensors.wakeLockActive ? 'Active (Awake)' : 'Inactive'}
-                  </span>
-                </div>
+                {diagnostics.map((row) => (
+                  <div key={row.label} className="flex justify-between gap-3">
+                    <span className="text-slate-400">{row.label}</span>
+                    <span className={`text-right ${row.ok ? 'text-emerald-400' : row.warn ? 'text-amber-400' : 'text-slate-500'}`}>{row.value}</span>
+                  </div>
+                ))}
               </div>
             </div>
 

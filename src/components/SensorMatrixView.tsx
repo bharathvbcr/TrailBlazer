@@ -43,13 +43,14 @@ export const SensorMatrixView: React.FC<Props> = ({
   onSetupSensors,
 }) => {
   const compact = preferences.compactTelemetry;
-  const [peakG, setPeakG] = useState<number>(1.0);
+  // Highest G actually observed this session (null until motion data arrives)
+  const [peakG, setPeakG] = useState<number | null>(null);
   const [enableMic, setEnableMic] = useState<boolean>(false);
 
   const { state: acoustic, startListening, stopListening, resetPeak: resetPeakAcoustic } = useAcousticSensor(enableMic && !compact);
 
   // Track peak G
-  if (sensors.gForce > peakG) {
+  if (sensors.isHardwareMotionAvailable && (peakG === null || sensors.gForce > peakG)) {
     setPeakG(sensors.gForce);
   }
 
@@ -191,7 +192,7 @@ export const SensorMatrixView: React.FC<Props> = ({
           <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
             <span className="text-[11px] text-slate-400 uppercase tracking-wider block">Peak G Recorded</span>
             <div className="text-2xl font-black font-mono text-cyan-300 mt-0.5">
-              {peakG.toFixed(2)} <span className="text-xs font-sans text-slate-400">G</span>
+              {peakG !== null ? peakG.toFixed(2) : '—'} <span className="text-xs font-sans text-slate-400">G</span>
             </div>
           </div>
         </div>
@@ -306,7 +307,7 @@ export const SensorMatrixView: React.FC<Props> = ({
           <span className="text-[11px] font-mono text-slate-400">deg / sec</span>
         </CardHeader>
 
-        {motionLive ? (
+        {sensors.isHardwareGyroAvailable ? (
           <>
 
         <div className="grid grid-cols-3 gap-2 text-center font-mono">

@@ -11,7 +11,7 @@ interface Props {
 
 export const CalibrationModal: React.FC<Props> = ({ isOpen, onClose, sensors }) => {
   const [progress, setProgress] = useState(0);
-  const motionLive = sensors.isHardwareMotionAvailable;
+  const motionLive = sensors.isHardwareGyroAvailable;
   const isComplete = progress >= 100;
 
   // Progress comes only from real device rotation reported by the gyroscope
@@ -89,7 +89,7 @@ export const CalibrationModal: React.FC<Props> = ({ isOpen, onClose, sensors }) 
           <div className="flex justify-between items-center text-xs font-mono mb-4 text-slate-300">
             <span>Motion detected</span>
             <span className={isComplete ? 'text-emerald-400 font-bold' : motionLive ? 'text-cyan-400' : 'text-slate-500'}>
-              {motionLive ? `${Math.round(progress)}%` : 'No motion sensor'}
+              {motionLive ? `${Math.round(progress)}%` : 'No gyroscope'}
             </span>
           </div>
 

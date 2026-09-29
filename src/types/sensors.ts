@@ -98,6 +98,7 @@ export interface SensorState {
   // Hardware Status
   isHardwareOrientationAvailable: boolean;
   isHardwareMotionAvailable: boolean;
+  isHardwareGyroAvailable: boolean;
   isGpsAvailable: boolean;
   isSimulationMode: boolean;
   wakeLockActive: boolean;
