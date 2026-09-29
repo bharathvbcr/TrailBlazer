@@ -60,7 +60,7 @@ export const SectionLabel: React.FC<{ children: React.ReactNode; icon?: React.Re
   icon,
   hint,
 }) => (
-  <div className="w-full px-1 pt-1 flex items-center justify-between gap-3">
+  <div className="w-full px-1 pt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
     <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-300">
       {icon}
       <span>{children}</span>
@@ -98,13 +98,13 @@ export const Stat: React.FC<StatProps> = ({ label, value, unit, icon, tone = 'cy
         onClick ? 'hover:bg-white/[0.08] cursor-pointer' : ''
       }`}
     >
-      <span className="w-full truncate text-[10px] text-slate-400 uppercase font-medium tracking-wide flex items-center justify-center gap-1">
+      <span className="w-full truncate text-[11px] text-slate-400 uppercase font-medium tracking-wide flex items-center justify-center gap-1">
         {icon}
         <span className="truncate">{label}</span>
       </span>
       <span className={`text-sm font-bold font-mono whitespace-nowrap ${TONES[tone]}`}>
         {value}
-        {unit && <span className="ml-1 text-[10px] font-medium text-slate-400">{unit}</span>}
+        {unit && <span className="ml-1 text-[11px] font-medium text-slate-400">{unit}</span>}
       </span>
     </Tag>
   );

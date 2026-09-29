@@ -277,13 +277,13 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
           <span className="flex flex-wrap items-center gap-1.5">
               <span>GPS Speed Trends</span>
               {trackSession.isRecording && (
-                <span className="flex items-center space-x-1 text-[10px] px-1.5 py-px rounded-full bg-rose-500/25 text-rose-300 border border-rose-500/40 font-mono animate-pulse">
+                <span className="flex items-center space-x-1 text-[11px] px-1.5 py-px rounded-full bg-rose-500/25 text-rose-300 border border-rose-500/40 font-mono animate-pulse">
                   <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
                   <span>LIVE</span>
                 </span>
               )}
               {isShowingSample && !trackSession.isRecording && (
-                <span className="text-[10px] px-1.5 py-px rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-mono">
+                <span className="text-[11px] px-1.5 py-px rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-mono">
                   DEMO TRACK
                 </span>
               )}
@@ -291,7 +291,7 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
         }
         subtitle={`Velocity over recording timeline (${speedUnit})`}
       >
-          <div className="flex bg-white/10 rounded-full p-0.5 border border-white/15 text-[10px] font-mono">
+          <div className="flex bg-white/10 rounded-full p-0.5 border border-white/15 text-[11px] font-mono">
             <button
               onClick={() => setViewMode('duration')}
               className={`px-2 py-0.5 rounded-full transition-all ${
@@ -329,7 +329,7 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
       </CardHeader>
 
       {/* Speed Telemetry Metric Cards */}
-      <div className="grid grid-cols-4 gap-2 text-center text-xs font-mono mb-3">
+      <div className="grid grid-cols-2 min-[380px]:grid-cols-4 gap-2 text-center text-xs font-mono mb-3">
         {/* Current Speed */}
         <div
           className={`p-2 rounded-xl border transition-all ${
@@ -338,32 +338,32 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
               : 'bg-white/[0.04] border-white/[0.08]'
           }`}
         >
-          <span className="text-[10px] text-slate-400 uppercase font-sans block">Current</span>
+          <span className="text-[11px] text-slate-400 uppercase font-sans block">Current</span>
           <span className={`text-sm font-black ${isCurrentlyOverLimit ? 'text-rose-300' : 'text-white'}`}>
             {currentSpeedConverted.toFixed(1)}
           </span>
-          <span className="text-[10px] text-cyan-400 ml-0.5">{speedUnit}</span>
+          <span className="text-[11px] text-cyan-400 ml-0.5">{speedUnit}</span>
         </div>
 
         {/* Average Speed */}
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.08]">
-          <span className="text-[10px] text-slate-400 uppercase font-sans block">Average</span>
+          <span className="text-[11px] text-slate-400 uppercase font-sans block">Average</span>
           <span className="text-sm font-bold text-cyan-300">{avgSpeed.toFixed(1)}</span>
-          <span className="text-[10px] text-slate-400 ml-0.5">{speedUnit}</span>
+          <span className="text-[11px] text-slate-400 ml-0.5">{speedUnit}</span>
         </div>
 
         {/* Peak Speed */}
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.08]">
-          <span className="text-[10px] text-slate-400 uppercase font-sans block">Peak</span>
+          <span className="text-[11px] text-slate-400 uppercase font-sans block">Peak</span>
           <span className="text-sm font-bold text-emerald-300">{maxSpeed.toFixed(1)}</span>
-          <span className="text-[10px] text-slate-400 ml-0.5">{speedUnit}</span>
+          <span className="text-[11px] text-slate-400 ml-0.5">{speedUnit}</span>
         </div>
 
         {/* Current Pace */}
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.08]">
-          <span className="text-[10px] text-slate-400 uppercase font-sans block">Pace</span>
+          <span className="text-[11px] text-slate-400 uppercase font-sans block">Pace</span>
           <span className="text-xs font-bold text-amber-300 truncate block mt-0.5">{currentPaceFormatted}</span>
-          <span className="text-[10px] text-slate-400 block font-sans">
+          <span className="text-[11px] text-slate-400 block font-sans">
             {speedUnit === 'mph' ? '/mi' : '/km'}
           </span>
         </div>
@@ -378,7 +378,7 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
               Speed Limit ({thresholdSpeed} {speedUnit}) Exceeded by +{(currentSpeedConverted - thresholdSpeed).toFixed(1)} {speedUnit}!
             </span>
           </div>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/40 text-white font-mono font-bold">
+          <span className="text-[11px] px-1.5 py-0.5 rounded bg-rose-500/40 text-white font-mono font-bold">
             OVERSPEED
           </span>
         </div>
@@ -423,7 +423,7 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
                   const data = payload[0].payload;
                   return (
                     <div className="p-2.5 rounded-xl bg-slate-900/90 backdrop-blur-md border border-white/20 shadow-xl text-xs font-mono space-y-1 z-50">
-                      <div className="flex items-center justify-between space-x-3 text-slate-400 text-[10px] pb-1 border-b border-white/10">
+                      <div className="flex items-center justify-between space-x-3 text-slate-400 text-[11px] pb-1 border-b border-white/10">
                         <span>Point #{data.index}</span>
                         <span>{data.durationLabel} ({data.distance} {data.distanceUnit})</span>
                       </div>
@@ -445,7 +445,7 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
                         <span className="text-emerald-300">{data.altitude} {data.altitudeUnit}</span>
                       </div>
                       {isAlertEnabled && (
-                        <div className="flex items-center justify-between space-x-3 text-[10px] pt-1 border-t border-white/10">
+                        <div className="flex items-center justify-between space-x-3 text-[11px] pt-1 border-t border-white/10">
                           <span>Limit Status:</span>
                           <span className={data.isOverLimit ? 'text-rose-400 font-bold' : 'text-emerald-400'}>
                             {data.isOverLimit ? `OVERSPEED (+${(data.speed - thresholdSpeed).toFixed(1)})` : 'UNDER LIMIT'}
@@ -511,8 +511,8 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
       {/* Speed Unit Pills & Demo Controls Footer */}
       <div className="flex items-center justify-between pt-2 border-t border-white/[0.08] text-xs">
         <div className="flex items-center space-x-1.5">
-          <span className="text-[10px] text-slate-400 font-mono">Unit:</span>
-          <div className="flex bg-white/10 rounded-lg p-0.5 border border-white/10 text-[10px] font-mono">
+          <span className="text-[11px] text-slate-400 font-mono">Unit:</span>
+          <div className="flex bg-white/10 rounded-lg p-0.5 border border-white/10 text-[11px] font-mono">
             {(['km/h', 'mph', 'kt', 'm/s'] as const).map((unit) => (
               <button
                 key={unit}
@@ -533,7 +533,7 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
           {hasLiveSession && (
             <button
               onClick={() => setForceSampleData(!forceSampleData)}
-              className="text-[10px] text-slate-400 hover:text-cyan-300 transition-colors flex items-center space-x-1"
+              className="text-[11px] text-slate-400 hover:text-cyan-300 transition-colors flex items-center space-x-1"
             >
               <Sparkles className="w-3 h-3 text-cyan-400" />
               <span>{forceSampleData ? 'Show Live Recording' : 'Preview Demo'}</span>
@@ -543,7 +543,7 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
           {!trackSession.isRecording && onToggleTrackRecording && (
             <button
               onClick={onToggleTrackRecording}
-              className="px-2.5 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-200 text-[10px] font-bold transition-all active:scale-95"
+              className="px-2.5 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-200 text-[11px] font-bold transition-all active:scale-95"
             >
               Start Recording
             </button>
@@ -579,7 +579,7 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
               className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-cyan-400"
             />
 
-            <div className="flex items-center justify-between text-[10px]">
+            <div className="flex items-center justify-between text-[11px]">
               <span className="text-slate-400">Presets:</span>
               <div className="flex space-x-1">
                 {[

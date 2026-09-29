@@ -1,21 +1,16 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { SensorState, UserPreferences, Waypoint } from '../types/sensors';
 import {
   calculateBearingDegrees,
   calculateDistanceMeters,
   getCardinalDirection,
 } from '../utils/calculations';
-import {
-  Camera,
-  X,
-  Crosshair,
-  Lock,
-  Unlock,
-  AlertTriangle,
-  RotateCcw,
-  Volume2,
-  VolumeX,
-} from 'lucide-react';
+import { Camera, X, Crosshair, Lock, Unlock, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+
+const TAPE_SPAN = 90; // degrees visible across the azimuth tape
+const CARDINALS: Record<number, string> = { 0: 'N', 45: 'NE', 90: 'E', 135: 'SE', 180: 'S', 225: 'SW', 270: 'W', 315: 'NW' };
+const formatDistance = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)}km` : `${Math.round(m)}m`);
+const signedDelta = (a: number, b: number) => ((a - b + 540) % 360) - 180;
 
 interface Props {
   sensors: SensorState;
@@ -31,7 +26,9 @@ export const CameraSightingView: React.FC<Props> = ({
   onClose,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [isStarting, setIsStarting] = useState(true);
+  const [attempt, setAttempt] = useState(0);
+  const [hudOnly, setHudOnly] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isFrozen, setIsFrozen] = useState<boolean>(false);
   const [frozenHeading, setFrozenHeading] = useState<number | null>(null);
@@ -66,46 +63,48 @@ export const CameraSightingView: React.FC<Props> = ({
     targetAngleDiff = ((targetBearing - activeHeading + 540) % 360) - 180;
   }
 
-  // Request rear camera stream
+  // Request rear camera stream (re-runs on retry). `cancelled` guards against a
+  // late getUserMedia resolution after the view has been closed.
   useEffect(() => {
+    let cancelled = false;
     let currentStream: MediaStream | null = null;
+    setCameraError(null);
+    setIsStarting(true);
 
     async function initCamera() {
       try {
         if (!navigator.mediaDevices?.getUserMedia) {
           throw new Error('Camera not supported in this browser.');
         }
-
         const mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
           audio: false,
         });
-
+        if (cancelled) {
+          mediaStream.getTracks().forEach((t) => t.stop());
+          return;
+        }
         currentStream = mediaStream;
-        setStream(mediaStream);
-
         if (videoRef.current) {
           videoRef.current.srcObject = mediaStream;
           videoRef.current.play().catch(() => {});
         }
       } catch (err: unknown) {
+        if (cancelled) return;
         console.warn('Camera initiation failed:', err);
         setCameraError(err instanceof Error ? err.message : 'Camera access denied');
+      } finally {
+        if (!cancelled) setIsStarting(false);
       }
     }
 
     initCamera();
 
     return () => {
-      if (currentStream) {
-        currentStream.getTracks().forEach((track) => track.stop());
-      }
+      cancelled = true;
+      currentStream?.getTracks().forEach((track) => track.stop());
     };
-  }, []);
+  }, [attempt]);
 
   const handleToggleFreeze = () => {
     if (!isFrozen) {
@@ -141,41 +140,52 @@ export const CameraSightingView: React.FC<Props> = ({
         className="absolute inset-0 w-full h-full object-cover"
       />
 
-      {/* Fallback if camera is unavailable */}
-      {cameraError && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-slate-950/80 backdrop-blur-md z-10">
-          <div className="w-14 h-14 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center mb-3">
+      {/* Camera starting / unavailable states */}
+      {isStarting && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black">
+          <div className="flex items-center gap-2 text-xs text-slate-300 animate-fade-in">
+            <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
+            <span>Starting camera…</span>
+          </div>
+        </div>
+      )}
+      {cameraError && !hudOnly && (
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center p-6 text-center bg-slate-950/90 backdrop-blur-md animate-fade-in">
+          <div className="w-14 h-14 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center mb-3">
             <Camera className="w-7 h-7" />
           </div>
-          <h3 className="text-base font-bold text-white mb-1">Optical Viewfinder Simulated</h3>
-          <p className="text-xs text-slate-400 max-w-xs mb-4">
-            Camera permission was restricted or camera is absent. The tactical HUD remains fully responsive with orientation sensors.
+          <h3 className="text-base font-bold text-white mb-1">Camera unavailable</h3>
+          <p className="text-xs text-slate-400 max-w-xs mb-1">{cameraError}</p>
+          <p className="text-xs text-slate-500 max-w-xs mb-5">
+            You can still use the sighting HUD with orientation sensors, or allow camera access and retry.
           </p>
-          <div className="flex space-x-2">
-            <button
-              onClick={() => setCameraError(null)}
-              className="px-4 py-2 rounded-xl bg-white/10 text-white text-xs font-semibold"
-            >
+          <div className="flex gap-2">
+            <button onClick={() => setAttempt((n) => n + 1)} className="px-4 py-2.5 rounded-xl bg-cyan-500 text-slate-950 text-xs font-bold">
+              Retry camera
+            </button>
+            <button onClick={() => setHudOnly(true)} className="px-4 py-2.5 rounded-xl bg-white/10 border border-white/15 text-white text-xs font-semibold">
               Continue with HUD
             </button>
           </div>
+          <button onClick={onClose} className="mt-4 text-xs text-slate-400 hover:text-white underline underline-offset-4">
+            Close
+          </button>
         </div>
       )}
 
       {/* Camera Vignette / Glass Reflection Overlay */}
       <div className="absolute inset-0 pointer-events-none bg-radial-[circle_at_center,transparent_40%,rgba(0,0,0,0.5)_90%,rgba(0,0,0,0.8)_100%]" />
 
-      {/* Top HUD Tape (Bearing Banner) */}
-      <div className="relative z-20 w-full pt-4 px-4 flex flex-col items-center">
-        {/* Top Control Bar */}
-        <div className="w-full flex items-center justify-between mb-2">
-          <div className="flex items-center space-x-2">
-            <div className="flex items-center space-x-1.5 px-3 py-1 rounded-full bg-black/50 backdrop-blur-md border border-cyan-400/30 text-cyan-300 text-xs font-mono">
+      {/* Top HUD: controls + scrolling azimuth tape */}
+      <div className="relative z-20 w-full px-4 pt-[calc(1rem+var(--safe-top))] flex flex-col items-center">
+        <div className="w-full flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/50 backdrop-blur-md border border-cyan-400/30 text-cyan-300 text-xs font-mono">
               <Crosshair className="w-3.5 h-3.5 text-cyan-400" />
-              <span className="font-bold">AR SIGHTING HUD</span>
+              <span className="font-bold">AR SIGHT</span>
             </div>
             {isFrozen && (
-              <span className="px-2 py-0.5 rounded-full bg-rose-500/30 border border-rose-500/50 text-rose-300 text-[10px] font-bold tracking-wider animate-pulse">
+              <span className="animate-fade-in px-2 py-1 rounded-full bg-rose-500/30 border border-rose-500/50 text-rose-200 text-[11px] font-bold tracking-wider">
                 HOLD
               </span>
             )}
@@ -184,32 +194,65 @@ export const CameraSightingView: React.FC<Props> = ({
           <button
             onClick={onClose}
             aria-label="Close camera sighting"
-            className="p-2 rounded-full bg-black/60 backdrop-blur-md border border-white/20 text-white hover:bg-white/20 transition-all"
+            className="w-10 h-10 flex items-center justify-center rounded-full bg-black/60 backdrop-blur-md border border-white/20 text-white hover:bg-white/20"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Live Azimuth Tape */}
-        <div className="relative w-72 h-14 rounded-2xl bg-black/60 backdrop-blur-md border border-cyan-400/30 overflow-hidden shadow-[0_0_15px_rgba(56,189,248,0.2)] flex flex-col items-center justify-center">
-          {/* Central reticle pointer marker */}
-          <div className="absolute top-0 w-2 h-2 border-l border-r border-b border-cyan-400 z-20" />
-          <div className="absolute bottom-0 w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-b-[5px] border-b-cyan-400 z-20" />
+        <div
+          role="img"
+          aria-label={`Heading ${Math.round(activeHeading)} degrees ${getCardinalDirection(activeHeading)}`}
+          className="relative w-full max-w-xs rounded-2xl bg-black/60 backdrop-blur-md border border-cyan-400/30 overflow-hidden shadow-[0_0_15px_rgba(56,189,248,0.2)]"
+        >
+          {/* Scrolling ticks */}
+          <div className="relative h-9 border-b border-white/10 [mask-image:linear-gradient(to_right,transparent,black_18%,black_82%,transparent)]">
+            {Array.from({ length: TAPE_SPAN / 5 + 1 }, (_, i) => {
+              const base = Math.round((activeHeading - TAPE_SPAN / 2) / 5) * 5;
+              const deg = ((base + i * 5) % 360 + 360) % 360;
+              const delta = signedDelta(deg, activeHeading);
+              if (Math.abs(delta) > TAPE_SPAN / 2) return null;
+              const major = deg % 15 === 0;
+              const label = CARDINALS[deg] ?? (deg % 15 === 0 ? String(deg) : null);
+              return (
+                <div
+                  key={i}
+                  className="absolute top-0 -translate-x-1/2 flex flex-col items-center"
+                  style={{ left: `${50 + (delta / TAPE_SPAN) * 100}%` }}
+                >
+                  <div className={`w-px ${major ? 'h-3 bg-cyan-300' : 'h-1.5 bg-white/40'}`} />
+                  {label && (
+                    <span className={`mt-0.5 text-[11px] font-mono leading-none ${CARDINALS[deg] ? 'text-white font-bold' : 'text-slate-400'}`}>
+                      {label}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
 
-          {/* Heading Readout */}
-          <div className="flex items-baseline space-x-1.5 font-mono text-cyan-300">
-            <span className="text-xl font-black">{Math.round(activeHeading).toString().padStart(3, '0')}°</span>
-            <span className="text-xs font-bold text-white font-sans">{getCardinalDirection(activeHeading)}</span>
+            {/* Target bearing pip */}
+            {activeTarget && targetAngleDiff !== null && Math.abs(targetAngleDiff) <= TAPE_SPAN / 2 && (
+              <div
+                className="absolute bottom-0.5 -translate-x-1/2 w-2 h-2 rounded-full border border-white"
+                style={{ left: `${50 + (targetAngleDiff / TAPE_SPAN) * 100}%`, backgroundColor: activeTarget.color }}
+              />
+            )}
+            {/* Fixed centre marker */}
+            <div className="absolute inset-y-0 left-1/2 w-px bg-cyan-400 shadow-[0_0_6px_#38bdf8]" />
           </div>
 
-          <div className="text-[10px] text-slate-400 font-mono">
-            {preferences.northMode === 'true' ? 'True North' : 'Magnetic'}
+          <div className="flex items-baseline justify-center gap-2 py-1.5 font-mono">
+            <span className="text-xl font-black text-cyan-300 tabular-nums">
+              {Math.round(activeHeading).toString().padStart(3, '0')}°
+            </span>
+            <span className="text-xs font-bold text-white font-sans">{getCardinalDirection(activeHeading)}</span>
+            <span className="text-[11px] text-slate-400">{preferences.northMode === 'true' ? 'True' : 'Mag'}</span>
           </div>
         </div>
       </div>
 
       {/* Center Tactical Sighting Reticle & Artificial Horizon */}
-      <div className="relative z-20 w-80 h-80 flex items-center justify-center pointer-events-none">
+      <div className="relative z-20 w-72 h-72 flex items-center justify-center pointer-events-none">
         {/* Roll Tilt Horizon Line */}
         <div
           className="absolute w-64 h-[1px] bg-cyan-400/40 transition-transform duration-100 ease-out"
@@ -242,31 +285,49 @@ export const CameraSightingView: React.FC<Props> = ({
             }}
           >
             <div
-              className="w-3.5 h-3.5 rounded-full border border-white shadow-[0_0_10px_currentColor] animate-bounce"
+              className="w-3.5 h-3.5 rounded-full border border-white shadow-[0_0_10px_currentColor]"
               style={{ backgroundColor: activeTarget.color }}
             />
-            <span className="text-[10px] font-bold text-white bg-black/70 px-1.5 py-0.5 rounded border border-white/20 mt-1 whitespace-nowrap">
-              {activeTarget.name} ({(targetDistance! >= 1000 ? `${(targetDistance! / 1000).toFixed(1)}km` : `${Math.round(targetDistance!)}m`)})
+            <span className="text-[11px] font-bold text-white bg-black/70 px-1.5 py-0.5 rounded border border-white/20 mt-1 whitespace-nowrap">
+              {activeTarget.name} ({formatDistance(targetDistance!)})
             </span>
           </div>
         )}
       </div>
 
+      {/* Off-screen target hint */}
+      {activeTarget && targetAngleDiff !== null && Math.abs(targetAngleDiff) >= 40 && (
+        <div
+          className={`absolute z-20 top-1/2 -translate-y-1/2 ${targetAngleDiff < 0 ? 'left-2' : 'right-2'} pointer-events-none animate-fade-in`}
+        >
+          <div className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-black/65 backdrop-blur-md border border-white/20 text-white">
+            {targetAngleDiff < 0 && <ChevronLeft className="w-4 h-4 text-cyan-300" />}
+            <div className="text-center leading-tight">
+              <div className="text-[11px] font-bold max-w-[6rem] truncate">{activeTarget.name}</div>
+              <div className="text-[11px] font-mono text-cyan-300">
+                {Math.abs(Math.round(targetAngleDiff))}° · {formatDistance(targetDistance!)}
+              </div>
+            </div>
+            {targetAngleDiff > 0 && <ChevronRight className="w-4 h-4 text-cyan-300" />}
+          </div>
+        </div>
+      )}
+
       {/* Bottom Telemetry Card & Hold Button */}
-      <div className="relative z-20 w-full max-w-sm px-4 pb-6 flex flex-col items-center space-y-3">
+      <div className="relative z-20 w-full max-w-sm px-4 pb-[calc(1.5rem+var(--safe-bottom))] flex flex-col items-center space-y-3">
         {/* Telemetry Bar */}
         <div className="w-full grid grid-cols-3 gap-2 text-center text-xs font-mono bg-black/65 backdrop-blur-md p-2.5 rounded-2xl border border-white/15 text-white">
           <div>
-            <span className="text-[10px] text-slate-400 uppercase font-sans block">Pitch (Tilt)</span>
+            <span className="text-[11px] text-slate-400 uppercase font-sans block">Pitch</span>
             <span className="text-cyan-300 font-bold">{activePitch > 0 ? `+${activePitch}°` : `${activePitch}°`}</span>
           </div>
           <div>
-            <span className="text-[10px] text-slate-400 uppercase font-sans block">Station Alt</span>
+            <span className="text-[11px] text-slate-400 uppercase font-sans block">Altitude</span>
             <span className="text-white font-bold">{sensors.barometricAltitude.toFixed(0)}m</span>
           </div>
           <div>
-            <span className="text-[10px] text-slate-400 uppercase font-sans block">QNH Baro</span>
-            <span className="text-amber-300 font-bold">{sensors.pressure.toFixed(1)}</span>
+            <span className="text-[11px] text-slate-400 uppercase font-sans block">Pressure</span>
+            <span className="text-amber-300 font-bold">{sensors.pressure.toFixed(1)} <span className="text-[11px] text-slate-400">hPa</span></span>
           </div>
         </div>
 
@@ -274,7 +335,7 @@ export const CameraSightingView: React.FC<Props> = ({
         <div className="w-full flex items-center justify-center space-x-3">
           <button
             onClick={handleToggleFreeze}
-            className={`flex-1 py-3 px-4 rounded-2xl font-bold text-xs flex items-center justify-center space-x-2 shadow-lg transition-all active:scale-95 ${
+            className={`flex-1 py-3.5 px-4 rounded-2xl font-bold text-sm flex items-center justify-center space-x-2 shadow-lg ${
               isFrozen
                 ? 'bg-rose-500 hover:bg-rose-400 text-white shadow-rose-500/30'
                 : 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-cyan-500/30'

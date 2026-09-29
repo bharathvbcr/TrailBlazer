@@ -333,7 +333,7 @@ export const App: React.FC = () => {
             <div className="min-w-0">
               <h1 className="text-sm font-bold tracking-tight text-white flex items-center gap-1.5 leading-tight">
                 <span>AeroGlass</span>
-                <span className="text-[10px] px-1.5 py-px rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-mono font-medium tracking-wider">
+                <span className="text-[11px] px-1.5 py-px rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-mono font-medium tracking-wider">
                   PRO
                 </span>
               </h1>
@@ -397,7 +397,7 @@ export const App: React.FC = () => {
               <div className="min-w-0">
                 <div className="text-xs font-bold uppercase tracking-wider text-rose-100 flex items-center gap-1.5">
                   <span>Speed limit exceeded</span>
-                  <span className="text-[10px] px-1.5 py-px rounded-full bg-rose-500/40 text-rose-50 border border-rose-400/50 font-mono normal-case tracking-normal">
+                  <span className="text-[11px] px-1.5 py-px rounded-full bg-rose-500/40 text-rose-50 border border-rose-400/50 font-mono normal-case tracking-normal">
                     +{speedOvershoot.toFixed(1)} {preferences.speedUnit}
                   </span>
                 </div>

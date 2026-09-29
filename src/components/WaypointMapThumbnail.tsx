@@ -183,7 +183,7 @@ export const WaypointMapThumbnail: React.FC<Props> = ({
             Position & Target
           </span>
           {targetWaypoint && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-mono">
+            <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-mono">
               Target Locked
             </span>
           )}
@@ -193,7 +193,7 @@ export const WaypointMapThumbnail: React.FC<Props> = ({
           {/* Style Toggle (Dark Tile Map vs Tactical Radar) */}
           <button
             onClick={() => setMapStyle(mapStyle === 'dark_map' ? 'tactical_radar' : 'dark_map')}
-            className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold border transition-all whitespace-nowrap ${
+            className={`px-2 py-0.5 rounded-lg text-[11px] font-semibold border transition-all whitespace-nowrap ${
               mapStyle === 'dark_map'
                 ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300'
                 : 'bg-white/10 border-white/15 text-slate-300'
@@ -442,12 +442,12 @@ export const WaypointMapThumbnail: React.FC<Props> = ({
               className="w-5 h-5 text-cyan-400 transition-transform duration-100 ease-out"
               style={{ transform: `rotate(${-currentHeading}deg)` }}
             />
-            <span className="absolute -top-1.5 text-[10px] font-black text-rose-500 font-mono">N</span>
+            <span className="absolute -top-1.5 text-[11px] font-black text-rose-500 font-mono">N</span>
           </div>
         </div>
 
         {/* Floating Scale Bar (Bottom Left) */}
-        <div className="absolute bottom-2 left-2.5 z-20 pointer-events-none flex flex-col items-start bg-black/60 backdrop-blur-md px-2 py-1 rounded-lg border border-white/10 text-[10px] font-mono text-slate-300">
+        <div className="absolute bottom-2 left-2.5 z-20 pointer-events-none flex flex-col items-start bg-black/60 backdrop-blur-md px-2 py-1 rounded-lg border border-white/10 text-[11px] font-mono text-slate-300">
           <div className="flex items-center space-x-1">
             <div className="h-[2px] bg-cyan-400" style={{ width: `${scaleBarWidthPx}px` }} />
             <span>{scaleBarMeters >= 1000 ? `${(scaleBarMeters / 1000).toFixed(1)} km` : `${scaleBarMeters} m`}</span>
@@ -456,7 +456,7 @@ export const WaypointMapThumbnail: React.FC<Props> = ({
 
         {/* Floating Target Telemetry Capsule (Bottom Right) */}
         {targetWaypoint && targetDistMeters !== null && (
-          <div className="absolute bottom-2 right-2.5 z-20 flex items-center space-x-2 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-xl border border-cyan-500/40 text-[10px] font-mono text-cyan-300">
+          <div className="absolute bottom-2 right-2.5 z-20 flex items-center space-x-2 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-xl border border-cyan-500/40 text-[11px] font-mono text-cyan-300">
             <span>{Math.round(targetBearingDeg!)}° {getCardinalDirection(targetBearingDeg!)}</span>
             <span>•</span>
             <span className="font-bold text-white">

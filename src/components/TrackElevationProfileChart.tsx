@@ -250,16 +250,16 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
           <span className="flex flex-wrap items-center gap-1.5">
               <span>Elevation Profile</span>
               {trackSession.isRecording ? (
-                <span className="flex items-center space-x-1 text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 font-mono font-bold animate-pulse">
+                <span className="flex items-center space-x-1 text-[11px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 font-mono font-bold animate-pulse">
                   <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-ping" />
                   <span>LIVE RECORDING</span>
                 </span>
               ) : isShowingSample ? (
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-medium normal-case">
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-medium normal-case">
                   Sample Trail Preview
                 </span>
               ) : (
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono font-medium normal-case">
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono font-medium normal-case">
                   {chartData.length} pts recorded
                 </span>
               )}
@@ -287,7 +287,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
                 setQuickMarkSaved(true);
                 setTimeout(() => setQuickMarkSaved(false), 2500);
               }}
-              className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-200 text-[10px] font-bold transition-all active:scale-95 shadow"
+              className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-200 text-[11px] font-bold transition-all active:scale-95 shadow"
               title="Automatically capture current elevation as waypoint"
             >
               {quickMarkSaved ? <Check className="w-3 h-3 text-emerald-400" /> : <MapPin className="w-3 h-3 text-cyan-400" />}
@@ -296,7 +296,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
           )}
 
           {/* X-Axis switcher: Duration vs Distance */}
-          <div className="flex items-center space-x-1 bg-white/10 rounded-lg p-0.5 border border-white/10 text-[10px] font-medium">
+          <div className="flex items-center space-x-1 bg-white/10 rounded-lg p-0.5 border border-white/10 text-[11px] font-medium">
             <button
               onClick={() => setViewMode('duration')}
               className={`px-2 py-0.5 rounded-md transition-all flex items-center space-x-1 ${
@@ -326,19 +326,19 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
       </CardHeader>
 
       {/* Profile Overview Metric Strip */}
-      <div className="grid grid-cols-4 gap-2 text-center text-xs font-mono mb-3">
+      <div className="grid grid-cols-2 min-[380px]:grid-cols-4 gap-2 text-center text-xs font-mono mb-3">
         {/* Current Altitude */}
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06]">
-          <span className="text-[10px] text-slate-400 uppercase font-sans block">Current Alt</span>
+          <span className="text-[11px] text-slate-400 uppercase font-sans block">Current Alt</span>
           <span className="text-cyan-300 font-bold text-sm whitespace-nowrap">
             {currentAltValue}{' '}
-            <span className="text-[10px] text-slate-400 font-sans">{preferences.altitudeUnit}</span>
+            <span className="text-[11px] text-slate-400 font-sans">{preferences.altitudeUnit}</span>
           </span>
         </div>
 
         {/* Net Altitude Delta from Start */}
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06]">
-          <span className="text-[10px] text-slate-400 uppercase font-sans block">Net Δ Alt</span>
+          <span className="text-[11px] text-slate-400 uppercase font-sans block">Net Δ Alt</span>
           <span
             className={`font-bold text-sm flex items-center justify-center space-x-0.5 whitespace-nowrap ${
               netAltitudeChange > 0
@@ -355,26 +355,26 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
             ) : null}
             <span>
               {netAltitudeChange >= 0 ? `+${netAltitudeChange}` : netAltitudeChange}{' '}
-              <span className="text-[10px] text-slate-400 font-sans">{preferences.altitudeUnit}</span>
+              <span className="text-[11px] text-slate-400 font-sans">{preferences.altitudeUnit}</span>
             </span>
           </span>
         </div>
 
         {/* Peak Summit */}
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06]">
-          <span className="text-[10px] text-slate-400 uppercase font-sans block">Peak Summit</span>
+          <span className="text-[11px] text-slate-400 uppercase font-sans block">Peak Summit</span>
           <span className="text-amber-300 font-bold text-sm whitespace-nowrap">
             {maxAltitude}{' '}
-            <span className="text-[10px] text-slate-400 font-sans">{preferences.altitudeUnit}</span>
+            <span className="text-[11px] text-slate-400 font-sans">{preferences.altitudeUnit}</span>
           </span>
         </div>
 
         {/* Total Elevation Span / Relief */}
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06]">
-          <span className="text-[10px] text-slate-400 uppercase font-sans block">Elev Span</span>
+          <span className="text-[11px] text-slate-400 uppercase font-sans block">Elev Span</span>
           <span className="text-emerald-300 font-bold text-sm whitespace-nowrap">
             +{totalElevationSpan}{' '}
-            <span className="text-[10px] text-slate-400 font-sans">{preferences.altitudeUnit}</span>
+            <span className="text-[11px] text-slate-400 font-sans">{preferences.altitudeUnit}</span>
           </span>
         </div>
       </div>
@@ -473,7 +473,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
                     return (
                       <div className="p-3 rounded-2xl bg-black/85 backdrop-blur-xl border border-white/20 shadow-[0_8px_30px_rgba(0,0,0,0.8)] text-xs font-mono space-y-1.5 z-50 min-w-[200px]">
                         <div className="flex items-center justify-between border-b border-white/10 pb-1">
-                          <span className="text-[10px] uppercase font-sans text-slate-400">
+                          <span className="text-[11px] uppercase font-sans text-slate-400">
                             Point #{data.index}
                           </span>
                           <span className="text-cyan-300 font-bold flex items-center space-x-1">
@@ -554,7 +554,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
           {hasLiveSession && (
             <button
               onClick={() => setForceSampleData(!forceSampleData)}
-              className="text-[10px] text-cyan-300 hover:text-cyan-200 underline font-sans"
+              className="text-[11px] text-cyan-300 hover:text-cyan-200 underline font-sans"
             >
               {forceSampleData ? 'Switch to My Track' : 'View Sample Hike'}
             </button>
@@ -563,7 +563,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
           {!trackSession.isRecording && onToggleTrackRecording && (
             <button
               onClick={onToggleTrackRecording}
-              className="flex items-center space-x-1 px-2.5 py-0.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[10px] font-bold transition-all"
+              className="flex items-center space-x-1 px-2.5 py-0.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[11px] font-bold transition-all"
             >
               <Play className="w-2.5 h-2.5 fill-current" />
               <span>Start Track</span>

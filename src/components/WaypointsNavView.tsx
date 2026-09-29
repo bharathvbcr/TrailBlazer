@@ -263,13 +263,13 @@ export const WaypointsNavView: React.FC<Props> = ({
         )}
 
         {/* Live track metrics */}
-        <div className="grid grid-cols-4 gap-2 text-center text-xs font-mono my-2">
+        <div className="grid grid-cols-2 min-[380px]:grid-cols-4 gap-2 text-center text-xs font-mono my-2">
           <div className="p-2 rounded-xl bg-white/[0.03] border border-white/[0.05]">
-            <span className="text-[10px] text-slate-400 uppercase font-sans block">Duration</span>
+            <span className="text-[11px] text-slate-400 uppercase font-sans block">Duration</span>
             <span className="text-white font-bold">{formatElapsed(elapsedSec)}</span>
           </div>
           <div className="p-2 rounded-xl bg-white/[0.03] border border-white/[0.05]">
-            <span className="text-[10px] text-slate-400 uppercase font-sans block">Distance</span>
+            <span className="text-[11px] text-slate-400 uppercase font-sans block">Distance</span>
             <span className="text-cyan-300 font-bold">
               {trackSession.totalDistance >= 1000
                 ? `${(trackSession.totalDistance / 1000).toFixed(2)} km`
@@ -277,11 +277,11 @@ export const WaypointsNavView: React.FC<Props> = ({
             </span>
           </div>
           <div className="p-2 rounded-xl bg-white/[0.03] border border-white/[0.05]">
-            <span className="text-[10px] text-slate-400 uppercase font-sans block">Ascent</span>
+            <span className="text-[11px] text-slate-400 uppercase font-sans block">Ascent</span>
             <span className="text-emerald-300 font-bold">+{Math.round(trackSession.totalAscent)}m</span>
           </div>
           <div className="p-2 rounded-xl bg-white/[0.03] border border-white/[0.05]">
-            <span className="text-[10px] text-slate-400 uppercase font-sans block">Points</span>
+            <span className="text-[11px] text-slate-400 uppercase font-sans block">Points</span>
             <span className="text-amber-300 font-bold">{trackSession.points.length}</span>
           </div>
         </div>
@@ -311,7 +311,7 @@ export const WaypointsNavView: React.FC<Props> = ({
 
       {/* Telemetry Chart Selector & Cards */}
       <SectionLabel icon={<Activity className="w-3.5 h-3.5 text-cyan-400" />} hint={
-        <div className="flex bg-white/10 rounded-full p-0.5 border border-white/15 text-[10px] font-mono">
+        <div className="flex bg-white/10 rounded-full p-0.5 border border-white/15 text-[11px] font-mono">
           <button
             onClick={() => setTelemetryTab('both')}
             className={`px-2 py-0.5 rounded-full transition-all whitespace-nowrap ${
@@ -445,7 +445,7 @@ export const WaypointsNavView: React.FC<Props> = ({
                       <div className="flex items-center space-x-2">
                         <span className="text-sm font-bold text-white">{wp.name}</span>
                         {isTarget && (
-                          <span className="text-[10px] font-bold text-cyan-300 bg-cyan-500/20 px-2 py-0.5 rounded-full border border-cyan-500/40">
+                          <span className="text-[11px] font-bold text-cyan-300 bg-cyan-500/20 px-2 py-0.5 rounded-full border border-cyan-500/40">
                             TARGET LOCKED
                           </span>
                         )}
@@ -495,7 +495,7 @@ export const WaypointsNavView: React.FC<Props> = ({
                   <div className="mt-3 pt-2.5 border-t border-white/[0.08] flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
                       <div>
-                        <span className="text-[10px] text-slate-400 uppercase block">Distance</span>
+                        <span className="text-[11px] text-slate-400 uppercase block">Distance</span>
                         <span className="font-mono font-bold text-white whitespace-nowrap">
                           {distMeters >= 1000
                             ? `${(distMeters / 1000).toFixed(2)} km`
@@ -504,16 +504,16 @@ export const WaypointsNavView: React.FC<Props> = ({
                       </div>
 
                       <div>
-                        <span className="text-[10px] text-slate-400 uppercase block">Bearing</span>
+                        <span className="text-[11px] text-slate-400 uppercase block">Bearing</span>
                         <span className="font-mono font-bold text-cyan-400 flex items-center space-x-0.5">
                           <span>{Math.round(bearingDeg).toString().padStart(3, '0')}°</span>
-                          <span className="text-[10px] font-sans">({getCardinalDirection(bearingDeg)})</span>
+                          <span className="text-[11px] font-sans">({getCardinalDirection(bearingDeg)})</span>
                         </span>
                       </div>
 
                       {elevDiffConverted !== null && (
                         <div>
-                          <span className="text-[10px] text-slate-400 uppercase block">Elev Delta</span>
+                          <span className="text-[11px] text-slate-400 uppercase block">Elev Delta</span>
                           <span className={`font-mono text-xs font-semibold whitespace-nowrap ${elevDiff! >= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
                             {elevDiff! >= 0 ? `+${elevDiffConverted.value.toFixed(0)}` : elevDiffConverted.value.toFixed(0)} {elevDiffConverted.label}
                           </span>

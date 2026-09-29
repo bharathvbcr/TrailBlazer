@@ -35,7 +35,7 @@ export const CalibrationModal: React.FC<Props> = ({ isOpen, onClose, sensors }) 
   }, [isOpen, sensors.gyroX, sensors.gyroY, sensors.gyroZ]);
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Compass Calibration" size="sm" icon={<Magnet className="w-5 h-5 text-cyan-400" />}>
+    <Modal isOpen={isOpen} onClose={onClose} title="Calibration" size="sm" icon={<Magnet className="w-5 h-5 text-cyan-400" />}>
       <div className="text-center">
           <p className="text-xs text-slate-300 mb-4 leading-relaxed">
             Move your device in a smooth <strong>Figure-8 pattern</strong> through the air to calibrate the 3-axis Hall effect magnetometer sensors and eliminate magnetic bias.

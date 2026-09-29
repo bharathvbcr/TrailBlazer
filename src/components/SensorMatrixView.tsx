@@ -87,7 +87,7 @@ export const SensorMatrixView: React.FC<Props> = ({
           <div className="flex items-center space-x-1.5">
             <button
               onClick={onOpenCalibration}
-              className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/10 hover:bg-white/20 border border-white/15 text-slate-200 transition-all"
+              className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-white/10 hover:bg-white/20 border border-white/15 text-slate-200 transition-all"
             >
               Calibrate
             </button>
@@ -140,7 +140,7 @@ export const SensorMatrixView: React.FC<Props> = ({
             <button
               onClick={() => setPeakG(sensors.gForce)}
               title="Reset Peak G"
-              className="text-[10px] text-slate-400 hover:text-slate-200 flex items-center space-x-1"
+              className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center space-x-1"
             >
               <RotateCcw className="w-2.5 h-2.5" />
               <span>Reset Peak</span>
@@ -150,14 +150,14 @@ export const SensorMatrixView: React.FC<Props> = ({
 
         <div className="grid grid-cols-2 gap-3 mb-3">
           <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
-            <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Current G-Force</span>
+            <span className="text-[11px] text-slate-400 uppercase tracking-wider block">Current G-Force</span>
             <div className="text-2xl font-black font-mono text-amber-300 mt-0.5">
               {sensors.gForce.toFixed(2)} <span className="text-xs font-sans text-slate-400">G</span>
             </div>
           </div>
 
           <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
-            <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Peak G Recorded</span>
+            <span className="text-[11px] text-slate-400 uppercase tracking-wider block">Peak G Recorded</span>
             <div className="text-2xl font-black font-mono text-cyan-300 mt-0.5">
               {peakG.toFixed(2)} <span className="text-xs font-sans text-slate-400">G</span>
             </div>
@@ -260,15 +260,15 @@ export const SensorMatrixView: React.FC<Props> = ({
 
         <div className="grid grid-cols-3 gap-2 text-center font-mono">
           <div className="p-2.5 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
-            <span className="text-[10px] text-slate-400 uppercase font-sans block">Yaw (α)</span>
+            <span className="text-[11px] text-slate-400 uppercase font-sans block">Yaw (α)</span>
             <span className="text-base font-bold text-white mt-0.5 block">{sensors.gyroX.toFixed(1)}°/s</span>
           </div>
           <div className="p-2.5 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
-            <span className="text-[10px] text-slate-400 uppercase font-sans block">Pitch (β)</span>
+            <span className="text-[11px] text-slate-400 uppercase font-sans block">Pitch (β)</span>
             <span className="text-base font-bold text-white mt-0.5 block">{sensors.gyroY.toFixed(1)}°/s</span>
           </div>
           <div className="p-2.5 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
-            <span className="text-[10px] text-slate-400 uppercase font-sans block">Roll (γ)</span>
+            <span className="text-[11px] text-slate-400 uppercase font-sans block">Roll (γ)</span>
             <span className="text-base font-bold text-white mt-0.5 block">{sensors.gyroZ.toFixed(1)}°/s</span>
           </div>
         </div>
@@ -323,21 +323,21 @@ export const SensorMatrixView: React.FC<Props> = ({
 
             <div className="grid grid-cols-2 gap-2 pt-1 font-sans">
               <div className="p-2.5 rounded-2xl bg-white/[0.04] border border-white/[0.06] text-center">
-                <span className="text-[10px] text-slate-400 uppercase block">Ground Speed</span>
+                <span className="text-[11px] text-slate-400 uppercase block">Ground Speed</span>
                 <span className="text-base font-bold font-mono text-cyan-300 mt-0.5 block">
                   {((sensors.gpsSpeed ?? 0) * 3.6).toFixed(1)} km/h
                 </span>
-                <span className="text-[10px] text-slate-400 font-mono">
+                <span className="text-[11px] text-slate-400 font-mono">
                   {((sensors.gpsSpeed ?? 0) * 2.237).toFixed(1)} mph
                 </span>
               </div>
 
               <div className="p-2.5 rounded-2xl bg-white/[0.04] border border-white/[0.06] text-center">
-                <span className="text-[10px] text-slate-400 uppercase block">Solar Position</span>
+                <span className="text-[11px] text-slate-400 uppercase block">Solar Position</span>
                 <span className="text-base font-bold font-mono text-amber-300 mt-0.5 block">
                   {sensors.sunAzimuth}° Az
                 </span>
-                <span className="text-[10px] text-slate-400 font-mono">
+                <span className="text-[11px] text-slate-400 font-mono">
                   {sensors.sunElevation}° Elevation
                 </span>
               </div>

@@ -302,7 +302,7 @@ export const SettingsModal: React.FC<Props> = ({
 
                   {/* Quick Presets */}
                   <div>
-                    <span className="text-[10px] text-slate-400 uppercase font-mono block mb-1">
+                    <span className="text-[11px] text-slate-400 uppercase font-mono block mb-1">
                       Quick Presets:
                     </span>
                     <div className="grid grid-cols-3 gap-1.5">
@@ -310,7 +310,7 @@ export const SettingsModal: React.FC<Props> = ({
                         <button
                           key={preset.label}
                           onClick={() => onUpdatePreferences({ speedAlertThreshold: preset.val })}
-                          className={`py-1.5 px-1 rounded-lg border text-[10px] font-mono transition-all leading-tight ${
+                          className={`py-1.5 px-1 rounded-lg border text-[11px] font-mono transition-all leading-tight ${
                             Math.abs(preferences.speedAlertThreshold - preset.val) < 0.5
                               ? 'bg-cyan-500/25 border-cyan-400 text-cyan-200 font-bold shadow-sm'
                               : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300'
@@ -324,7 +324,7 @@ export const SettingsModal: React.FC<Props> = ({
 
                   {/* Alert Modalities (Haptic, Visual, Audio) */}
                   <div className="pt-2 border-t border-white/[0.06] space-y-2">
-                    <span className="text-[10px] text-slate-400 uppercase font-mono block">
+                    <span className="text-[11px] text-slate-400 uppercase font-mono block">
                       Alert Modalities:
                     </span>
 
@@ -333,7 +333,7 @@ export const SettingsModal: React.FC<Props> = ({
                         <Vibrate className="w-3.5 h-3.5 text-emerald-400" />
                         <div>
                           <div className="text-slate-300 text-xs">Haptic Warning Pulse</div>
-                          <div className="text-[10px] text-slate-400">Rhythmic vibration alert when exceeding limit</div>
+                          <div className="text-[11px] text-slate-400">Rhythmic vibration alert when exceeding limit</div>
                         </div>
                       </div>
                       <input
@@ -349,7 +349,7 @@ export const SettingsModal: React.FC<Props> = ({
                         <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
                         <div>
                           <div className="text-slate-300 text-xs">Visual Alert Banner & Flashing HUD</div>
-                          <div className="text-[10px] text-slate-400">Pulsing red glow & on-screen overspeed banner</div>
+                          <div className="text-[11px] text-slate-400">Pulsing red glow & on-screen overspeed banner</div>
                         </div>
                       </div>
                       <input
@@ -365,7 +365,7 @@ export const SettingsModal: React.FC<Props> = ({
                         <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
                         <div>
                           <div className="text-slate-300 text-xs">Acoustic Warning Tone</div>
-                          <div className="text-[10px] text-slate-400">Dual-tone audio beep on speed breach</div>
+                          <div className="text-[11px] text-slate-400">Dual-tone audio beep on speed breach</div>
                         </div>
                       </div>
                       <input

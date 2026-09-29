@@ -132,7 +132,7 @@ export const CompassView: React.FC<Props> = ({
           >
             <Compass className="w-3.5 h-3.5 text-cyan-400" />
             <span>{preferences.northMode === 'true' ? 'True North' : 'Magnetic'}</span>
-            <span className="text-[10px] text-cyan-300 opacity-80">
+            <span className="text-[11px] text-cyan-300 opacity-80">
               ({sensors.declination >= 0 ? `+${sensors.declination}°` : `${sensors.declination}°`})
             </span>
           </button>

@@ -349,7 +349,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
           {/* Altitude Category Icon */}
           <div className="flex items-center space-x-1 text-cyan-400 mb-0.5">
             <Mountain className="w-3.5 h-3.5" />
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-300">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-300">
               Altitude
             </span>
           </div>
@@ -368,7 +368,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
               {relativeAltitude! >= 0 ? `+${relativeDisplay.value.toFixed(1)}` : relativeDisplay.value.toFixed(1)} {relativeDisplay.label} (Tare)
             </div>
           ) : (
-            <div className="text-[10px] text-slate-400 font-mono my-0.5">
+            <div className="text-[11px] text-slate-400 font-mono my-0.5">
               QNH: {qnhConverted.value.toFixed(1)} {qnhConverted.label}
             </div>
           )}
@@ -381,7 +381,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
 
             {/* 3-Hour Trend Real-Time Arrow Badge */}
             <div
-              className={`inline-flex items-center space-x-1 px-2 py-0.5 mt-1 rounded-full text-[10px] font-bold border transition-all ${
+              className={`inline-flex items-center space-x-1 px-2 py-0.5 mt-1 rounded-full text-[11px] font-bold border transition-all ${
                 trend3h.trend === 'rising'
                   ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 shadow-[0_0_8px_rgba(52,211,153,0.3)]'
                   : trend3h.trend === 'falling'
@@ -442,7 +442,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
               </div>
             )}
             <div>
-              <span className="text-[10px] text-slate-400 uppercase block">Climb / Sink Rate</span>
+              <span className="text-[11px] text-slate-400 uppercase block">Climb / Sink Rate</span>
               <span className={`text-base font-black font-mono ${
                 sensors.verticalSpeed > 0.1 ? 'text-emerald-400' : sensors.verticalSpeed < -0.1 ? 'text-amber-400' : 'text-slate-300'
               }`}>
@@ -452,7 +452,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
           </div>
 
           <div className="text-right text-xs font-mono">
-            <span className="text-[10px] text-slate-400 uppercase font-sans block">In m/s</span>
+            <span className="text-[11px] text-slate-400 uppercase font-sans block">In m/s</span>
             <span className="text-slate-200 font-bold">{sensors.verticalSpeed >= 0 ? `+${sensors.verticalSpeed}` : sensors.verticalSpeed} m/s</span>
           </div>
         </div>
@@ -460,11 +460,11 @@ export const AltimeterBarometerView: React.FC<Props> = ({
         {/* Session Ascent & Descent accumulators */}
         <div className="grid grid-cols-2 gap-2 text-center text-xs font-mono pt-1">
           <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-            <span className="text-[10px] text-emerald-300/80 uppercase font-sans block">Session Ascent Gain</span>
+            <span className="text-[11px] text-emerald-300/80 uppercase font-sans block">Session Ascent Gain</span>
             <span className="text-sm font-bold text-emerald-300">+{ascentDisplay.value.toFixed(0)} {ascentDisplay.label}</span>
           </div>
           <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20">
-            <span className="text-[10px] text-rose-300/80 uppercase font-sans block">Session Descent Loss</span>
+            <span className="text-[11px] text-rose-300/80 uppercase font-sans block">Session Descent Loss</span>
             <span className="text-sm font-bold text-rose-300">-{descentDisplay.value.toFixed(0)} {descentDisplay.label}</span>
           </div>
         </div>
@@ -516,7 +516,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
           title="3-Hour Barometric Trend"
           subtitle="Real-time tendency (WMO standard)"
         >
-          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/10 border border-white/15 text-cyan-300">
+          <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-white/10 border border-white/15 text-cyan-300">
             {trend3h.timeSpanHours}h Window
           </span>
         </CardHeader>
@@ -568,7 +568,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
                   </span>
                   {trend3h.subCategory.replace('_', ' ').toLowerCase() !== trend3h.trend && (
                   <span
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                    className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${
                       trend3h.trend === 'rising'
                         ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
                         : trend3h.trend === 'falling'
@@ -594,26 +594,26 @@ export const AltimeterBarometerView: React.FC<Props> = ({
             {/* Pressure delta readout */}
             <div className="grid grid-cols-3 gap-2">
               <div className="p-2 rounded-xl bg-black/20 border border-white/[0.06] text-center min-w-0">
-                <span className="text-[10px] text-slate-400 uppercase block truncate">3h ΔP</span>
+                <span className="text-[11px] text-slate-400 uppercase block truncate">3h ΔP</span>
                 <span className={`text-sm font-black font-mono whitespace-nowrap ${trend3h.trend === 'rising' ? 'text-emerald-300' : trend3h.trend === 'falling' ? 'text-rose-300' : 'text-cyan-200'}`}>
                   {trend3h.deltaHpa3h > 0 ? '+' : trend3h.deltaHpa3h < 0 ? '-' : '±'}
                   {deltaPressureConverted.value.toFixed(preferences.pressureUnit === 'inHg' ? 3 : 2)}
                 </span>
-                <span className="text-[10px] text-slate-400 block">{deltaPressureConverted.label}</span>
+                <span className="text-[11px] text-slate-400 block">{deltaPressureConverted.label}</span>
               </div>
               <div className="p-2 rounded-xl bg-black/20 border border-white/[0.06] text-center min-w-0">
-                <span className="text-[10px] text-slate-400 uppercase block truncate">Change</span>
+                <span className="text-[11px] text-slate-400 uppercase block truncate">Change</span>
                 <span className="text-sm font-bold font-mono text-slate-100 whitespace-nowrap">
                   {trend3h.deltaHpa3h > 0 ? '+' : ''}{trend3h.deltaHpa3h.toFixed(1)}
                 </span>
-                <span className="text-[10px] text-slate-400 block">hPa</span>
+                <span className="text-[11px] text-slate-400 block">hPa</span>
               </div>
               <div className="p-2 rounded-xl bg-black/20 border border-white/[0.06] text-center min-w-0">
-                <span className="text-[10px] text-slate-400 uppercase block truncate">Rate</span>
+                <span className="text-[11px] text-slate-400 uppercase block truncate">Rate</span>
                 <span className="text-sm font-bold font-mono text-slate-100 whitespace-nowrap">
                   {trend3h.ratePerHour > 0 ? '+' : ''}{trend3h.ratePerHour.toFixed(2)}
                 </span>
-                <span className="text-[10px] text-slate-400 block">hPa/h</span>
+                <span className="text-[11px] text-slate-400 block">hPa/h</span>
               </div>
             </div>
           </div>
@@ -626,7 +626,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
               <Clock className="w-3.5 h-3.5 text-cyan-400" />
               <span>Hourly Pressure Progression</span>
             </span>
-            <span className="text-[10px] text-slate-400 font-mono">
+            <span className="text-[11px] text-slate-400 font-mono">
               Base: {pressure3hAgoConverted.value.toFixed(preferences.pressureUnit === 'inHg' ? 2 : 1)}{' '}
               {pressure3hAgoConverted.label}
             </span>
@@ -646,7 +646,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
                   }`}
                 >
                   <span
-                    className={`text-[10px] font-bold block uppercase tracking-wider ${
+                    className={`text-[11px] font-bold block uppercase tracking-wider ${
                       isCurrent ? 'text-cyan-300' : 'text-slate-400'
                     }`}
                   >
@@ -658,7 +658,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
                     )}
                   </span>
                   <span
-                    className={`text-[10px] font-mono block mt-0.5 ${
+                    className={`text-[11px] font-mono block mt-0.5 ${
                       m.deltaFromStart > 0.2
                         ? 'text-emerald-400 font-semibold'
                         : m.deltaFromStart < -0.2
@@ -695,12 +695,12 @@ export const AltimeterBarometerView: React.FC<Props> = ({
 
         {/* Interactive 3-Hour Trend Quick Presets */}
         {onSimulateTrendScenario && (
-          <div className="mt-3 pt-2.5 border-t border-white/[0.08] flex items-center justify-between">
-            <span className="text-[10px] text-slate-400 uppercase font-mono">Test 3h Trend:</span>
+          <div className="mt-3 pt-2.5 border-t border-white/[0.08] flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[11px] text-slate-400 uppercase font-mono">Test 3h Trend:</span>
             <div className="flex space-x-1.5">
               <button
                 onClick={() => onSimulateTrendScenario('rising')}
-                className={`px-2.5 py-1 rounded-lg border text-[10px] font-semibold flex items-center space-x-1 transition-all ${
+                className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold flex items-center space-x-1 transition-all ${
                   trend3h.trend === 'rising'
                     ? 'bg-emerald-500/30 border-emerald-400 text-emerald-200 font-bold shadow-[0_0_8px_rgba(52,211,153,0.3)]'
                     : 'bg-white/10 hover:bg-white/20 border-white/15 text-slate-300'
@@ -711,7 +711,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
               </button>
               <button
                 onClick={() => onSimulateTrendScenario('steady')}
-                className={`px-2.5 py-1 rounded-lg border text-[10px] font-semibold flex items-center space-x-1 transition-all ${
+                className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold flex items-center space-x-1 transition-all ${
                   trend3h.trend === 'steady'
                     ? 'bg-cyan-500/30 border-cyan-400 text-cyan-200 font-bold shadow-[0_0_8px_rgba(56,189,248,0.3)]'
                     : 'bg-white/10 hover:bg-white/20 border-white/15 text-slate-300'
@@ -722,7 +722,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
               </button>
               <button
                 onClick={() => onSimulateTrendScenario('falling')}
-                className={`px-2.5 py-1 rounded-lg border text-[10px] font-semibold flex items-center space-x-1 transition-all ${
+                className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold flex items-center space-x-1 transition-all ${
                   trend3h.trend === 'falling'
                     ? 'bg-rose-500/30 border-rose-400 text-rose-200 font-bold shadow-[0_0_8px_rgba(244,63,94,0.3)]'
                     : 'bg-white/10 hover:bg-white/20 border-white/15 text-slate-300'
@@ -757,7 +757,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
           </div>
 
           <div className="text-right">
-            <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Station Pressure</span>
+            <span className="text-[11px] text-slate-400 uppercase tracking-wider block">Station Pressure</span>
             <span className="text-sm font-bold font-mono text-cyan-400">
               {sensors.pressure.toFixed(1)} hPa
             </span>
@@ -777,7 +777,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
 
         {/* 3-Hour History Interactive SVG Sparkline */}
         <div className="mt-3 pt-3 border-t border-white/[0.08]">
-          <div className="flex justify-between items-center text-[10px] text-slate-400 mb-1">
+          <div className="flex justify-between items-center text-[11px] text-slate-400 mb-1">
             <span>Barometric Trend (Recent Hours)</span>
             <span className="font-mono text-cyan-400">
               {hoveredPoint ? `${hoveredPoint.pressure.toFixed(1)} hPa • ${hoveredPoint.altitude.toFixed(0)}m` : `${history.length} snapshots`}
@@ -831,36 +831,36 @@ export const AltimeterBarometerView: React.FC<Props> = ({
 
         <div className="grid grid-cols-3 gap-2 text-center">
           <div className="p-2.5 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
-            <div className="flex items-center justify-center space-x-1 text-[10px] text-slate-400">
+            <div className="flex items-center justify-center space-x-1 text-[11px] text-slate-400">
               <Coffee className="w-3 h-3 text-amber-400" />
               <span>Boil Temp</span>
             </div>
             <div className="text-sm font-bold text-amber-300 font-mono mt-0.5">
               {boilingPoint.celsius}°C
             </div>
-            <div className="text-[10px] text-slate-400 font-mono">{boilingPoint.fahrenheit}°F</div>
+            <div className="text-[11px] text-slate-400 font-mono">{boilingPoint.fahrenheit}°F</div>
           </div>
 
           <div className="p-2.5 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
-            <div className="flex items-center justify-center space-x-1 text-[10px] text-slate-400">
+            <div className="flex items-center justify-center space-x-1 text-[11px] text-slate-400">
               <Wind className="w-3 h-3 text-cyan-400" />
               <span>Air Density</span>
             </div>
             <div className="text-sm font-bold text-cyan-300 font-mono mt-0.5">
               {airDensity}
             </div>
-            <div className="text-[10px] text-slate-400">kg / m³</div>
+            <div className="text-[11px] text-slate-400">kg / m³</div>
           </div>
 
           <div className="p-2.5 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
-            <div className="flex items-center justify-center space-x-1 text-[10px] text-slate-400">
+            <div className="flex items-center justify-center space-x-1 text-[11px] text-slate-400">
               <Sparkles className="w-3 h-3 text-emerald-400" />
               <span>Density Alt</span>
             </div>
             <div className="text-sm font-bold text-emerald-300 font-mono mt-0.5">
               {densityAltitudeFt}
             </div>
-            <div className="text-[10px] text-slate-400">ft (ISA)</div>
+            <div className="text-[11px] text-slate-400">ft (ISA)</div>
           </div>
         </div>
 
@@ -906,19 +906,19 @@ export const AltimeterBarometerView: React.FC<Props> = ({
               <div className="flex space-x-1.5">
                 <button
                   onClick={() => onSetManualPressure(980)}
-                  className="px-2 py-1 rounded-lg bg-rose-500/20 border border-rose-500/40 text-[10px] text-rose-300"
+                  className="px-2 py-1 rounded-lg bg-rose-500/20 border border-rose-500/40 text-[11px] text-rose-300"
                 >
                   Storm (980 hPa)
                 </button>
                 <button
                   onClick={() => onSetManualPressure(1013.25)}
-                  className="px-2 py-1 rounded-lg bg-white/10 border border-white/20 text-[10px] text-slate-300"
+                  className="px-2 py-1 rounded-lg bg-white/10 border border-white/20 text-[11px] text-slate-300"
                 >
                   Sea Level (1013 hPa)
                 </button>
                 <button
                   onClick={() => onSetManualPressure(1030)}
-                  className="px-2 py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-[10px] text-emerald-300"
+                  className="px-2 py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-[11px] text-emerald-300"
                 >
                   High (1030 hPa)
                 </button>
@@ -929,26 +929,26 @@ export const AltimeterBarometerView: React.FC<Props> = ({
               <div className="pt-2 border-t border-cyan-500/20">
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-[11px] text-slate-300 font-semibold">3-Hour Barometric Tendency:</span>
-                  <span className="text-[10px] font-mono text-cyan-300 uppercase">{trend3h.trend}</span>
+                  <span className="text-[11px] font-mono text-cyan-300 uppercase">{trend3h.trend}</span>
                 </div>
                 <div className="grid grid-cols-3 gap-1.5">
                   <button
                     onClick={() => onSimulateTrendScenario('rising')}
-                    className="py-1.5 px-2 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-[10px] font-semibold text-emerald-300 flex items-center justify-center space-x-1"
+                    className="py-1.5 px-2 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-[11px] font-semibold text-emerald-300 flex items-center justify-center space-x-1"
                   >
                     <ArrowUp className="w-3 h-3" />
                     <span>Rising</span>
                   </button>
                   <button
                     onClick={() => onSimulateTrendScenario('steady')}
-                    className="py-1.5 px-2 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-[10px] font-semibold text-slate-200 flex items-center justify-center space-x-1"
+                    className="py-1.5 px-2 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-[11px] font-semibold text-slate-200 flex items-center justify-center space-x-1"
                   >
                     <MoveRight className="w-3 h-3 text-cyan-400" />
                     <span>Steady</span>
                   </button>
                   <button
                     onClick={() => onSimulateTrendScenario('falling')}
-                    className="py-1.5 px-2 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-[10px] font-semibold text-rose-300 flex items-center justify-center space-x-1"
+                    className="py-1.5 px-2 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-[11px] font-semibold text-rose-300 flex items-center justify-center space-x-1"
                   >
                     <ArrowDown className="w-3 h-3" />
                     <span>Falling</span>
