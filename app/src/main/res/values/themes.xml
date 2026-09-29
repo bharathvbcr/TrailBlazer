@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Window theme only; all in-app colour comes from TrailTheme (Compose). -->
     <style name="Theme.TrailBlazer" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#080b14</item>
-        <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">#0E1512</item>
     </style>
 </resources>

@@ -31,3 +31,4 @@ plugins {
 
 rootProject.name = "TrailBlazer"
 include(":app")
+include(":core")

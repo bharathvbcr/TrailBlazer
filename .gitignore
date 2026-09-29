@@ -47,6 +47,7 @@ Thumbs.db
 .kotlin
 /local.properties
 /build
+build/
 /captures
 .externalNativeBuild
 .cxx
