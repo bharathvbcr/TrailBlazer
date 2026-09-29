@@ -36,6 +36,12 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     touch-action: manipulation;
+    /* horizontal swipes switch tabs; don't let them trigger browser back/forward or overscroll glow */
+    overscroll-behavior-x: none;
+  }
+
+  html {
+    overscroll-behavior-x: none;
   }
 }
 
@@ -112,6 +118,17 @@ input[type=range]::-moz-range-thumb {
 .animate-sheet-out { animation: sheet-out 0.2s ease-in both; }
 .animate-banner-in { animation: banner-in 0.35s var(--ease-out) both; }
 .animate-alert-glow { animation: alert-glow 1.6s ease-in-out infinite; }
+
+@keyframes slide-from-right {
+  from { opacity: 0; transform: translateX(28px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes slide-from-left {
+  from { opacity: 0; transform: translateX(-28px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.tab-from-right { animation: slide-from-right 0.35s var(--ease-out) backwards; }
+.tab-from-left { animation: slide-from-left 0.35s var(--ease-out) backwards; }
 
 /* Tab content: children of the view root cascade in */
 .tab-enter > * > *:not(.fixed) {

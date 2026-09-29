@@ -25,7 +25,8 @@ const INITIAL_HISTORY: PressureHistoryPoint[] = [
   { timestamp: Date.now(), pressure: 1013.25, altitude: 134 },
 ];
 
-export function useDeviceSensors(preferences: UserPreferences) {
+export function useDeviceSensors(preferences: UserPreferences, options: { locationEnabled?: boolean } = {}) {
+  const locationEnabled = options.locationEnabled ?? true;
   const [sensors, setSensors] = useState<SensorState>({
     heading: 0,
     pitch: 0,
@@ -466,8 +467,9 @@ export function useDeviceSensors(preferences: UserPreferences) {
     };
   }, [triggerHaptic, preferences.audioFeedbackEnabled]);
 
-  // GPS Geolocation Watcher
+  // GPS Geolocation Watcher (deferred until the user has opted in)
   useEffect(() => {
+    if (!locationEnabled) return;
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       setSensors((prev) => ({ ...prev, isGpsAvailable: false }));
       return;
@@ -513,7 +515,7 @@ export function useDeviceSensors(preferences: UserPreferences) {
     return () => {
       navigator.geolocation.clearWatch(watchId);
     };
-  }, []);
+  }, [locationEnabled]);
 
   // Variometer computation (Vertical Speed Derivative)
   useEffect(() => {

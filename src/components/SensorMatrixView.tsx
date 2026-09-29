@@ -14,11 +14,12 @@ import {
   RotateCw,
   Locate,
   AlertCircle,
-  ShieldCheck,
   RotateCcw,
   Mic,
   MicOff,
   Volume2,
+  Rows3,
+  Rows4,
 } from 'lucide-react';
 
 interface Props {
@@ -27,6 +28,7 @@ interface Props {
   trackSession: TrackSession;
   onOpenCalibration: () => void;
   onAddWaypoint?: (wp: Omit<Waypoint, 'id' | 'timestamp'>) => void;
+  onUpdatePreferences: (prefs: Partial<UserPreferences>) => void;
 }
 
 export const SensorMatrixView: React.FC<Props> = ({
@@ -35,11 +37,13 @@ export const SensorMatrixView: React.FC<Props> = ({
   trackSession,
   onOpenCalibration,
   onAddWaypoint,
+  onUpdatePreferences,
 }) => {
+  const compact = preferences.compactTelemetry;
   const [peakG, setPeakG] = useState<number>(1.0);
   const [enableMic, setEnableMic] = useState<boolean>(false);
 
-  const { state: acoustic, startListening, stopListening, resetPeak: resetPeakAcoustic } = useAcousticSensor(enableMic);
+  const { state: acoustic, startListening, stopListening, resetPeak: resetPeakAcoustic } = useAcousticSensor(enableMic && !compact);
 
   // Track peak G
   if (sensors.gForce > peakG) {
@@ -65,10 +69,19 @@ export const SensorMatrixView: React.FC<Props> = ({
         title="Telemetry"
         subtitle="Live sensors & elevation"
         actions={
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/10 border border-white/15 text-[11px] text-emerald-300">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Active</span>
-          </div>
+          <button
+            onClick={() => onUpdatePreferences({ compactTelemetry: !compact })}
+            aria-pressed={compact}
+            title={compact ? 'Show all sensor cards' : 'Show fewer cards'}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-semibold ${
+              compact
+                ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300'
+                : 'bg-white/10 hover:bg-white/15 border-white/15 text-slate-300'
+            }`}
+          >
+            {compact ? <Rows3 className="w-3.5 h-3.5" /> : <Rows4 className="w-3.5 h-3.5" />}
+            <span>{compact ? 'Compact' : 'Full'}</span>
+          </button>
         }
       />
 
@@ -201,6 +214,15 @@ export const SensorMatrixView: React.FC<Props> = ({
         </div>
       </GlassCard>
 
+      {compact ? (
+        <button
+          onClick={() => onUpdatePreferences({ compactTelemetry: false })}
+          className="w-full py-3 rounded-2xl border border-dashed border-white/15 text-xs text-slate-400 hover:text-white hover:bg-white/[0.05]"
+        >
+          Compact view · Sound, gyroscope &amp; light hidden — <span className="text-cyan-300 font-semibold">Show all</span>
+        </button>
+      ) : (
+        <>
       {/* 4. Acoustic Sound Level (SPL Decibel Meter) */}
       <GlassCard className="w-full !p-4">
         <CardHeader icon={<Volume2 className="text-cyan-400 w-4 h-4 shrink-0" />} title="Acoustic Sound Level (SPL)">
@@ -294,6 +316,9 @@ export const SensorMatrixView: React.FC<Props> = ({
           />
         </div>
       </GlassCard>
+
+        </>
+      )}
 
       {/* 7. Geodesy & GPS Satellite Telemetry */}
       {sensors.latitude !== null && sensors.longitude !== null && (

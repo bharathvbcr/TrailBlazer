@@ -16,6 +16,7 @@ import { WaypointsNavView } from './components/WaypointsNavView';
 import { SettingsModal } from './components/SettingsModal';
 import { CameraSightingView } from './components/CameraSightingView';
 import { CalibrationModal } from './components/CalibrationModal';
+import { OnboardingModal } from './components/OnboardingModal';
 import { useToast } from './components/Toast';
 import {
   Compass,
@@ -30,6 +31,24 @@ import {
 
 const STORAGE_PREFS_KEY = 'aeroglass_user_prefs';
 const STORAGE_WAYPOINTS_KEY = 'aeroglass_waypoints';
+const STORAGE_TAB_KEY = 'aeroglass_last_tab';
+const STORAGE_ONBOARDED_KEY = 'aeroglass_onboarded';
+const STORAGE_LOCATION_KEY = 'aeroglass_location';
+
+const readStorage = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+const writeStorage = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // ignore
+  }
+};
 
 const DEFAULT_PREFERENCES: UserPreferences = {
   pressureUnit: 'hPa',
@@ -43,6 +62,7 @@ const DEFAULT_PREFERENCES: UserPreferences = {
   audioVariometerEnabled: false,
   wakeLockEnabled: false,
   targetWaypointId: null,
+  compactTelemetry: false,
 
   speedAlertEnabled: true,
   speedAlertThreshold: 25,
@@ -105,7 +125,23 @@ export const App: React.FC = () => {
     }
   });
 
-  const [activeTab, setActiveTab] = useState<TabId>('compass');
+  const [activeTab, setActiveTabState] = useState<TabId>(() => {
+    const saved = readStorage(STORAGE_TAB_KEY);
+    return NAV_ITEMS.some((n) => n.id === saved) ? (saved as TabId) : 'compass';
+  });
+  const [tabDirection, setTabDirection] = useState<'next' | 'prev'>('next');
+
+  const setActiveTab = (id: TabId) => {
+    if (id === activeTab) return;
+    const order = NAV_ITEMS.map((n) => n.id);
+    setTabDirection(order.indexOf(id) > order.indexOf(activeTab) ? 'next' : 'prev');
+    setActiveTabState(id);
+    writeStorage(STORAGE_TAB_KEY, id);
+  };
+
+  // First-run sensor setup + opt-in location (GPS prompt is deferred until the user agrees)
+  const [locationEnabled, setLocationEnabled] = useState(() => readStorage(STORAGE_LOCATION_KEY) === 'on');
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(() => readStorage(STORAGE_ONBOARDED_KEY) === null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCameraSightingOpen, setIsCameraSightingOpen] = useState(false);
   const [isCalibrationOpen, setIsCalibrationOpen] = useState(false);
@@ -137,7 +173,7 @@ export const App: React.FC = () => {
     setSimulatedTrendScenario,
     requestOrientationPermission,
     triggerHaptic,
-  } = useDeviceSensors(preferences);
+  } = useDeviceSensors(preferences, { locationEnabled });
 
   // Persist preferences
   useEffect(() => {
@@ -250,6 +286,75 @@ export const App: React.FC = () => {
     }
   };
 
+  const finishOnboarding = () => {
+    writeStorage(STORAGE_ONBOARDED_KEY, '1');
+    setIsOnboardingOpen(false);
+  };
+
+  const handleEnableSensors = async () => {
+    const motion = await requestOrientationPermission();
+    writeStorage(STORAGE_LOCATION_KEY, 'on');
+    setLocationEnabled(true);
+    finishOnboarding();
+    toast(
+      motion
+        ? { message: 'Sensors enabled. Allow location if your browser asks.', tone: 'success' }
+        : { message: 'Motion access was denied. You can retry from the compass tab.', tone: 'error' }
+    );
+    return { motion };
+  };
+
+  const handleUseSimulator = () => {
+    if (!sensors.isSimulationMode) toggleSimulationMode();
+    finishOnboarding();
+    toast({ message: 'Simulator on. Enable real sensors any time from the GPS chip.', tone: 'info' });
+  };
+
+  // If location access was already granted in a previous version/session, skip the prompt
+  useEffect(() => {
+    if (locationEnabled || !navigator.permissions?.query) return;
+    let cancelled = false;
+    navigator.permissions
+      .query({ name: 'geolocation' as PermissionName })
+      .then((status) => {
+        if (cancelled || status.state !== 'granted') return;
+        writeStorage(STORAGE_LOCATION_KEY, 'on');
+        writeStorage(STORAGE_ONBOARDED_KEY, '1');
+        setLocationEnabled(true);
+        setIsOnboardingOpen(false);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Swipe left/right on the content area to move between tabs
+  const swipe = useRef<{ x: number; y: number; ok: boolean } | null>(null);
+  const onTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    const target = e.target as Element;
+    // Don't hijack gestures meant for dials, charts, sliders or scrollable strips
+    const blocked = target.closest('svg, input, select, textarea, canvas, .recharts-wrapper, [data-no-swipe]');
+    swipe.current = e.touches.length === 1 && e.currentTarget.contains(target) && !blocked ? { x: t.clientX, y: t.clientY, ok: true } : null;
+  };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const start = swipe.current;
+    swipe.current = null;
+    if (!start?.ok) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.8) return;
+    const order = NAV_ITEMS.map((n) => n.id);
+    const next = order[order.indexOf(activeTab) + (dx < 0 ? 1 : -1)];
+    if (next) {
+      setActiveTab(next);
+      triggerHaptic(12);
+    }
+  };
+
   const updatePreferences = (partial: Partial<UserPreferences>) => {
     setPreferences((prev) => ({ ...prev, ...partial }));
   };
@@ -302,8 +407,10 @@ export const App: React.FC = () => {
   };
 
   const gpsStatus =
-    sensors.latitude === null
-      ? { dot: 'bg-slate-500', label: 'No GPS fix' }
+    !locationEnabled
+      ? { dot: 'bg-amber-400', label: 'Enable GPS' }
+      : sensors.latitude === null
+      ? { dot: 'bg-slate-500', label: 'Searching for GPS…' }
       : sensors.gpsAccuracy === null
       ? { dot: 'bg-amber-400', label: 'GPS fix' }
       : {
@@ -368,10 +475,15 @@ export const App: React.FC = () => {
                   PRO
                 </span>
               </h1>
-              <p className="text-[11px] text-slate-400 leading-tight truncate flex items-center gap-1.5" title="GPS status">
+              <button
+                onClick={() => !locationEnabled && setIsOnboardingOpen(true)}
+                disabled={locationEnabled}
+                title={locationEnabled ? 'GPS status' : 'Set up sensors'}
+                className="text-[11px] text-slate-400 leading-tight truncate flex items-center gap-1.5 disabled:cursor-default enabled:hover:text-cyan-300"
+              >
                 <span className={`inline-block w-1.5 h-1.5 rounded-full ${gpsStatus.dot}`} />
                 <span>{gpsStatus.label}</span>
-              </p>
+              </button>
             </div>
           </div>
 
@@ -417,7 +529,11 @@ export const App: React.FC = () => {
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 w-full max-w-lg mx-auto px-4 pt-4 pb-6 flex flex-col items-center">
+      <main
+        className="flex-1 w-full max-w-lg mx-auto px-4 pt-4 pb-6 flex flex-col items-center"
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+      >
         {/* Speed Threshold Warning Alert Banner */}
         {isSpeedExceeded && preferences.speedAlertVisual && (
           <div
@@ -455,7 +571,7 @@ export const App: React.FC = () => {
             </button>
           </div>
         )}
-        <div key={activeTab} className="tab-enter w-full">
+        <div key={activeTab} className={`tab-enter ${tabDirection === 'next' ? 'tab-from-right' : 'tab-from-left'} w-full`}>
         {activeTab === 'compass' && (
           <CompassView
             sensors={sensors}
@@ -493,6 +609,7 @@ export const App: React.FC = () => {
             trackSession={trackSession}
             onOpenCalibration={() => setIsCalibrationOpen(true)}
             onAddWaypoint={handleAddWaypoint}
+            onUpdatePreferences={updatePreferences}
           />
         )}
 
@@ -568,6 +685,14 @@ export const App: React.FC = () => {
         isOpen={isCalibrationOpen}
         onClose={() => setIsCalibrationOpen(false)}
         sensors={sensors}
+      />
+
+      <OnboardingModal
+        isOpen={isOnboardingOpen}
+        onSkip={finishOnboarding}
+        onEnable={handleEnableSensors}
+        onUseSimulator={handleUseSimulator}
+        locationEnabled={locationEnabled}
       />
 
       {/* Settings Modal */}

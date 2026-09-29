@@ -145,6 +145,7 @@ export interface UserPreferences {
   audioVariometerEnabled: boolean;
   wakeLockEnabled: boolean;
   targetWaypointId: string | null;
+  compactTelemetry: boolean; // hide lower-priority sensor cards on the Telemetry tab
 
   // User-configurable speed threshold alert
   speedAlertEnabled: boolean;
