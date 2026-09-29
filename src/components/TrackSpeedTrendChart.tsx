@@ -24,29 +24,12 @@ import {
 interface Props {
   trackSession: TrackSession;
   preferences: UserPreferences;
-  currentSpeedMs: number;
+  currentSpeedMs: number | null;
   sensors?: SensorState;
   onSetSimulationSpeed?: (speedMs: number) => void;
   onToggleTrackRecording?: () => void;
   onUpdatePreferences?: (prefs: Partial<UserPreferences>) => void;
 }
-
-// High-fidelity sample speed telemetry for immediate visualization when user hasn't recorded yet
-const SAMPLE_SPEED_TRACK: TrackPoint[] = [
-  { latitude: 37.7710, longitude: -122.4280, altitude: 48, pressure: 1007.5, heading: 45, speed: 0.8, timestamp: Date.now() - 3600000 },
-  { latitude: 37.7722, longitude: -122.4255, altitude: 72, pressure: 1004.6, heading: 48, speed: 1.4, timestamp: Date.now() - 3300000 },
-  { latitude: 37.7738, longitude: -122.4230, altitude: 115, pressure: 999.5, heading: 42, speed: 2.6, timestamp: Date.now() - 3000000 },
-  { latitude: 37.7755, longitude: -122.4202, altitude: 168, pressure: 993.2, heading: 38, speed: 4.2, timestamp: Date.now() - 2700000 },
-  { latitude: 37.7770, longitude: -122.4175, altitude: 224, pressure: 986.6, heading: 32, speed: 6.8, timestamp: Date.now() - 2400000 },
-  { latitude: 37.7788, longitude: -122.4148, altitude: 286, pressure: 979.3, heading: 28, speed: 9.5, timestamp: Date.now() - 2100000 },
-  { latitude: 37.7802, longitude: -122.4125, altitude: 342, pressure: 972.7, heading: 25, speed: 11.2, timestamp: Date.now() - 1800000 }, // Peak velocity burst
-  { latitude: 37.7815, longitude: -122.4105, altitude: 328, pressure: 974.4, heading: 60, speed: 8.4, timestamp: Date.now() - 1500000 },
-  { latitude: 37.7828, longitude: -122.4075, altitude: 275, pressure: 980.6, heading: 75, speed: 7.1, timestamp: Date.now() - 1200000 },
-  { latitude: 37.7842, longitude: -122.4045, altitude: 210, pressure: 988.2, heading: 82, speed: 5.6, timestamp: Date.now() - 900000 },
-  { latitude: 37.7856, longitude: -122.4015, altitude: 154, pressure: 994.9, heading: 88, speed: 3.8, timestamp: Date.now() - 600000 },
-  { latitude: 37.7870, longitude: -122.3985, altitude: 98, pressure: 1001.6, heading: 92, speed: 2.1, timestamp: Date.now() - 300000 },
-  { latitude: 37.7885, longitude: -122.3955, altitude: 54, pressure: 1006.8, heading: 96, speed: 1.1, timestamp: Date.now() },
-];
 
 export const TrackSpeedTrendChart: React.FC<Props> = ({
   trackSession,
@@ -58,22 +41,18 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
   onUpdatePreferences,
 }) => {
   const [viewMode, setViewMode] = useState<'duration' | 'distance'>('duration');
-  const [forceSampleData, setForceSampleData] = useState<boolean>(false);
   const [showSimDrawer, setShowSimDrawer] = useState<boolean>(false);
 
   // Active speed unit
   const speedUnit = preferences.speedUnit;
 
-  // Determine whether to use live session data or sample preview
+  // Only real recorded data is ever charted
   const hasLiveSession = trackSession.isRecording || trackSession.points.length > 0;
-  const isShowingSample = !hasLiveSession || forceSampleData;
 
   // Real-time live points array:
   // If actively recording, append the current real-time telemetry point so the profile responds instantly
   const rawPoints = useMemo(() => {
-    if (isShowingSample) {
-      return SAMPLE_SPEED_TRACK;
-    }
+    if (!hasLiveSession) return [] as TrackPoint[];
 
     const points = [...trackSession.points];
 
@@ -81,13 +60,13 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
     if (trackSession.isRecording) {
       const now = Date.now();
       const last = points[points.length - 1];
-      if (!last || now - last.timestamp >= 400) {
+      if (sensors && sensors.latitude !== null && sensors.longitude !== null && (!last || now - last.timestamp >= 400)) {
         points.push({
-          latitude: sensors?.latitude ?? 37.7749,
-          longitude: sensors?.longitude ?? -122.4194,
-          altitude: sensors?.barometricAltitude ?? 0,
-          pressure: sensors?.pressure ?? 1013.25,
-          heading: sensors ? (preferences.northMode === 'true' ? sensors.trueHeading : sensors.heading) : 0,
+          latitude: sensors.latitude,
+          longitude: sensors.longitude,
+          altitude: sensors.barometricAltitude,
+          pressure: sensors.pressure,
+          heading: sensors.isHardwareOrientationAvailable || sensors.isSimulationMode ? (preferences.northMode === 'true' ? sensors.trueHeading : sensors.heading) : null,
           speed: currentSpeedMs,
           timestamp: now,
         });
@@ -96,7 +75,7 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
 
     return points;
   }, [
-    isShowingSample,
+    hasLiveSession,
     trackSession.isRecording,
     trackSession.points,
     sensors,
@@ -106,11 +85,8 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
 
   // Session start time
   const sessionStartTime = useMemo(() => {
-    if (isShowingSample) {
-      return SAMPLE_SPEED_TRACK[0].timestamp;
-    }
     return trackSession.startTime || (rawPoints[0] ? rawPoints[0].timestamp : Date.now());
-  }, [isShowingSample, trackSession.startTime, rawPoints]);
+  }, [trackSession.startTime, rawPoints]);
 
   // Speed threshold in active unit
   const thresholdSpeed = preferences.speedAlertThreshold;
@@ -120,9 +96,10 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
   const chartData = useMemo(() => {
     let cumulativeDistanceMeters = 0;
 
-    return rawPoints.map((pt, idx) => {
+    const withSpeed = rawPoints.filter((p): p is TrackPoint & { speed: number } => p.speed !== null);
+    return withSpeed.map((pt, idx) => {
       if (idx > 0) {
-        const prev = rawPoints[idx - 1];
+        const prev = withSpeed[idx - 1];
         const dist = calculateDistanceMeters(prev.latitude, prev.longitude, pt.latitude, pt.longitude);
         cumulativeDistanceMeters += dist;
       }
@@ -168,7 +145,7 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
         speedUnit: speedConverted.label,
         pace: paceFormatted,
         paceUnit: speedUnit === 'mph' ? 'min/mi' : 'min/km',
-        altitude: Math.round(pt.altitude),
+        altitude: pt.altitude !== null ? Math.round(pt.altitude) : null,
         altitudeUnit: preferences.altitudeUnit === 'ft' ? 'ft' : 'm',
         isOverLimit,
       };
@@ -177,7 +154,8 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
 
   // Statistical calculations
   const speeds = chartData.map((d) => d.speed);
-  const currentSpeedConverted = convertSpeed(currentSpeedMs, speedUnit).value;
+  const hasSpeed = currentSpeedMs !== null;
+  const currentSpeedConverted = convertSpeed(currentSpeedMs ?? 0, speedUnit).value;
   const maxSpeed = speeds.length > 0 ? Math.max(...speeds) : 0;
   const minSpeed = speeds.length > 0 ? Math.min(...speeds) : 0;
   const avgSpeed = speeds.length > 0
@@ -186,11 +164,11 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
 
   // Overspeed statistics
   const overspeedPointsCount = isAlertEnabled ? chartData.filter((d) => d.speed > thresholdSpeed).length : 0;
-  const isCurrentlyOverLimit = isAlertEnabled && currentSpeedConverted > thresholdSpeed;
+  const isCurrentlyOverLimit = isAlertEnabled && hasSpeed && currentSpeedConverted > thresholdSpeed;
 
   // Pace for current speed
   const currentPaceFormatted = useMemo(() => {
-    if (currentSpeedMs < 0.3) return '—';
+    if (currentSpeedMs === null || currentSpeedMs < 0.3) return '—';
     const metersPerUnit = speedUnit === 'mph' ? 1609.34 : 1000;
     const paceSec = metersPerUnit / currentSpeedMs;
     if (paceSec > 3600) return '—';
@@ -262,6 +240,25 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
     }
   };
 
+  if (!hasLiveSession) {
+    return (
+      <GlassCard className="w-full !p-4">
+        <CardHeader icon={<Gauge className="w-4 h-4 text-cyan-400 shrink-0" />} title="GPS Speed Trends" subtitle={`Velocity over recording timeline (${speedUnit})`} />
+        <p className="text-xs text-slate-400 leading-relaxed">
+          No track recorded yet. Start recording and your real speed profile will build here as you move.
+        </p>
+        {onToggleTrackRecording && (
+          <button
+            onClick={onToggleTrackRecording}
+            className="mt-3 px-3 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold"
+          >
+            Start Recording
+          </button>
+        )}
+      </GlassCard>
+    );
+  }
+
   return (
     <GlassCard className="w-full !p-4">
       {/* Header and Toggle Controls */}
@@ -274,11 +271,6 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
                 <span className="flex items-center space-x-1 text-[11px] px-1.5 py-px rounded-full bg-rose-500/25 text-rose-300 border border-rose-500/40 font-mono animate-pulse">
                   <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
                   <span>LIVE</span>
-                </span>
-              )}
-              {isShowingSample && !trackSession.isRecording && (
-                <span className="text-[11px] px-1.5 py-px rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-mono">
-                  DEMO TRACK
                 </span>
               )}
           </span>
@@ -334,7 +326,7 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
         >
           <span className="text-[11px] text-slate-400 uppercase font-sans block">Current</span>
           <span className={`text-sm font-black ${isCurrentlyOverLimit ? 'text-rose-300' : 'text-white'}`}>
-            {currentSpeedConverted.toFixed(1)}
+            {hasSpeed ? currentSpeedConverted.toFixed(1) : '—'}
           </span>
           <span className="text-[11px] text-cyan-400 ml-0.5">{speedUnit}</span>
         </div>
@@ -342,14 +334,14 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
         {/* Average Speed */}
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.08]">
           <span className="text-[11px] text-slate-400 uppercase font-sans block">Average</span>
-          <span className="text-sm font-bold text-cyan-300">{avgSpeed.toFixed(1)}</span>
+          <span className="text-sm font-bold text-cyan-300">{speeds.length ? avgSpeed.toFixed(1) : '—'}</span>
           <span className="text-[11px] text-slate-400 ml-0.5">{speedUnit}</span>
         </div>
 
         {/* Peak Speed */}
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.08]">
           <span className="text-[11px] text-slate-400 uppercase font-sans block">Peak</span>
-          <span className="text-sm font-bold text-emerald-300">{maxSpeed.toFixed(1)}</span>
+          <span className="text-sm font-bold text-emerald-300">{speeds.length ? maxSpeed.toFixed(1) : '—'}</span>
           <span className="text-[11px] text-slate-400 ml-0.5">{speedUnit}</span>
         </div>
 
@@ -524,16 +516,6 @@ export const TrackSpeedTrendChart: React.FC<Props> = ({
         </div>
 
         <div className="flex items-center space-x-1.5">
-          {hasLiveSession && (
-            <button
-              onClick={() => setForceSampleData(!forceSampleData)}
-              className="text-[11px] text-slate-400 hover:text-cyan-300 transition-colors flex items-center space-x-1"
-            >
-              <Sparkles className="w-3 h-3 text-cyan-400" />
-              <span>{forceSampleData ? 'Show Live Recording' : 'Preview Demo'}</span>
-            </button>
-          )}
-
           {!trackSession.isRecording && onToggleTrackRecording && (
             <button
               onClick={onToggleTrackRecording}

@@ -59,6 +59,8 @@ export const CompassView: React.FC<Props> = ({
   onSetSimulationSpeed,
 }) => {
   const [lockedHeading, setLockedHeading] = useState<number | null>(null);
+  // Real (or simulated) orientation data is flowing; otherwise every heading-derived value would be invented
+  const live = sensors.isHardwareOrientationAvailable || sensors.isSimulationMode;
 
   // Active heading depending on user preference (True North vs Magnetic North)
   const currentHeading = preferences.northMode === 'true' ? sensors.trueHeading : sensors.heading;
@@ -92,15 +94,14 @@ export const CompassView: React.FC<Props> = ({
   }
 
   // Spirit level calculations (Pitch & Roll)
-  const isLevel = Math.abs(sensors.pitch) < 1.0 && Math.abs(sensors.roll) < 1.0;
+  const isLevel = live && Math.abs(sensors.pitch) < 1.0 && Math.abs(sensors.roll) < 1.0;
   const bubbleX = Math.max(-32, Math.min(32, (sensors.roll / 15) * 32));
   const bubbleY = Math.max(-32, Math.min(32, (sensors.pitch / 15) * 32));
 
-  // Sun relative position on dial
-  const sunRelativeAngle = (sensors.sunAzimuth - currentHeading + 360) % 360;
-
   // Format heading display
-  const headingDisplay = preferences.headingUnit === 'mils'
+  const headingDisplay = !live
+    ? '---°'
+    : preferences.headingUnit === 'mils'
     ? `${Math.round((currentHeading / 360) * 6400)} MIL`
     : `${Math.round(currentHeading).toString().padStart(3, '0')}°`;
 
@@ -130,12 +131,16 @@ export const CompassView: React.FC<Props> = ({
                 northMode: preferences.northMode === 'true' ? 'magnetic' : 'true',
               })
             }
-            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 hover:bg-white/20 border border-white/15 transition-all text-slate-200"
+            disabled={sensors.declination === null}
+            title={sensors.declination === null ? 'True North needs a GPS position to look up magnetic declination' : 'Toggle True / Magnetic North'}
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 hover:bg-white/20 border border-white/15 transition-all text-slate-200 disabled:opacity-60"
           >
             <Compass className="w-3.5 h-3.5 text-cyan-400" />
             <span>{preferences.northMode === 'true' ? 'True North' : 'Magnetic'}</span>
             <span className="text-[11px] text-cyan-300 opacity-80">
-              ({sensors.declination >= 0 ? `+${sensors.declination}°` : `${sensors.declination}°`})
+              {sensors.declination === null
+                ? '(needs GPS)'
+                : `(${sensors.declination >= 0 ? '+' : ''}${sensors.declination}°)`}
             </span>
           </button>
 
@@ -154,6 +159,7 @@ export const CompassView: React.FC<Props> = ({
         <div className="flex items-center gap-2">
           <button
             onClick={() => setLockedHeading(lockedHeading === null ? Math.round(currentHeading) : null)}
+            disabled={!live}
             className={`flex items-center space-x-1 px-2.5 py-1.5 rounded-full text-xs font-medium border transition-all ${
               lockedHeading !== null
                 ? 'bg-rose-500/20 border-rose-500/50 text-rose-300'
@@ -187,6 +193,37 @@ export const CompassView: React.FC<Props> = ({
         </div>
       </Toolbar>
 
+      {/* No compass data: explain instead of showing an invented heading */}
+      {!live && (
+        <GlassCard className="w-full !p-4 border-amber-500/30 bg-amber-500/10 animate-fade-in">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-xs text-amber-200 min-w-0">
+              <div className="font-semibold flex items-center space-x-1">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span>No compass data</span>
+              </div>
+              <div className="text-[11px] text-slate-300 opacity-90 mt-0.5">
+                Allow motion &amp; orientation access, or use a device with a magnetometer. The simulator lets you explore the app without sensors.
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5 shrink-0">
+              <button
+                onClick={onRequestPermission}
+                className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-semibold shadow-md"
+              >
+                Enable
+              </button>
+              <button
+                onClick={onToggleSimulationMode}
+                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-semibold text-slate-200"
+              >
+                Simulator
+              </button>
+            </div>
+          </div>
+        </GlassCard>
+      )}
+
       {/* Target Navigation Banner if target is set */}
       {activeTarget && targetBearing !== null && (
         <GlassCard className="w-full !p-4 !rounded-2xl border-cyan-500/30 bg-cyan-950/20">
@@ -212,7 +249,9 @@ export const CompassView: React.FC<Props> = ({
             <div className="flex items-center space-x-2">
               <div className="text-right">
                 <div className="text-xs font-bold text-cyan-400">
-                  {Math.abs(Math.round(targetRelativeAngle!)) <= 3
+                  {!live
+                    ? 'NO HEADING'
+                    : Math.abs(Math.round(targetRelativeAngle!)) <= 3
                     ? 'ON COURSE'
                     : `${Math.abs(Math.round(targetRelativeAngle!))}° ${
                         targetRelativeAngle! > 0 ? 'RIGHT' : 'LEFT'
@@ -237,7 +276,7 @@ export const CompassView: React.FC<Props> = ({
             {headingDisplay}
           </span>
           <span className="text-2xl font-bold text-cyan-400 tracking-wider">
-            {cardinal}
+            {live ? cardinal : ''}
           </span>
         </div>
 
@@ -254,15 +293,15 @@ export const CompassView: React.FC<Props> = ({
           </div>
         ) : (
           <div className="text-xs text-slate-400 mt-1 flex items-center justify-center space-x-3">
-            <span>Roll: {sensors.roll > 0 ? `+${sensors.roll}°` : `${sensors.roll}°`}</span>
+            <span>Roll: {live ? (sensors.roll > 0 ? `+${sensors.roll}°` : `${sensors.roll}°`) : '—'}</span>
             <span>•</span>
-            <span>Pitch: {sensors.pitch > 0 ? `+${sensors.pitch}°` : `${sensors.pitch}°`}</span>
+            <span>Pitch: {live ? (sensors.pitch > 0 ? `+${sensors.pitch}°` : `${sensors.pitch}°`) : '—'}</span>
           </div>
         )}
       </div>
 
       {/* Liquid Glass Compass Dial Container */}
-      <div className="relative w-80 h-80 flex items-center justify-center select-none my-2">
+      <div className={`relative w-80 h-80 flex items-center justify-center select-none my-2 transition-[opacity,filter] duration-500 ${live ? '' : 'opacity-35 grayscale'}`}>
         {/* Ambient Glow Aura */}
         <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-cyan-500/10 via-teal-500/10 to-indigo-500/15 blur-2xl pointer-events-none" />
 
@@ -435,7 +474,7 @@ export const CompassView: React.FC<Props> = ({
             />
 
             {/* Target waypoint marker if set */}
-            {targetBearing !== null && (
+            {live && targetBearing !== null && (
               <g transform={`rotate(${targetBearing}, 140, 140)`}>
                 <polygon
                   points="140,28 146,38 134,38"
@@ -447,7 +486,7 @@ export const CompassView: React.FC<Props> = ({
             )}
 
             {/* Sun indicator on dial */}
-            {sensors.latitude !== null && (
+            {sensors.sunAzimuth !== null && (
               <g transform={`rotate(${sensors.sunAzimuth}, 140, 140)`}>
                 <circle cx="140" cy="22" r="5" fill="#fbbf24" filter="drop-shadow(0 0 6px #fbbf24)" />
               </g>
@@ -504,19 +543,19 @@ export const CompassView: React.FC<Props> = ({
             label="Level"
             tone={isLevel ? 'emerald' : 'amber'}
             icon={isLevel ? <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" /> : undefined}
-            value={isLevel ? 'Flat' : `${Math.max(Math.abs(sensors.pitch), Math.abs(sensors.roll)).toFixed(1)}°`}
+            value={!live ? '—' : isLevel ? 'Flat' : `${Math.max(Math.abs(sensors.pitch), Math.abs(sensors.roll)).toFixed(1)}°`}
           />
           <Stat
             label="Sun"
             tone="amber"
             icon={<Sun className="w-3 h-3 text-amber-400 shrink-0" />}
-            value={sensors.latitude === null ? '—' : `${sensors.sunAzimuth}°`}
+            value={sensors.sunAzimuth === null ? '—' : `${sensors.sunAzimuth}°`}
           />
           <Stat
             label="Mag"
             icon={<Magnet className="w-3 h-3 text-cyan-400 shrink-0" />}
-            value={sensors.magneticFlux}
-            unit="µT"
+            value={sensors.magneticFlux === null ? '—' : sensors.magneticFlux}
+            unit={sensors.magneticFlux === null ? undefined : 'µT'}
             onClick={onOpenCalibration}
             title="Tap to run Figure-8 calibration"
           />
@@ -537,29 +576,6 @@ export const CompassView: React.FC<Props> = ({
         speedAlertVisual={preferences.speedAlertVisual}
         onSetSimulationSpeed={onSetSimulationSpeed}
       />
-
-      {/* Hardware Permission Prompt on iOS / Browsers */}
-      {!sensors.isHardwareOrientationAvailable && !sensors.isSimulationMode && (
-        <GlassCard className="w-full !p-4 border-amber-500/30 bg-amber-500/10">
-          <div className="flex items-center justify-between">
-            <div className="text-xs text-amber-200">
-              <div className="font-semibold flex items-center space-x-1">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-                <span>Motion Sensor Inactive</span>
-              </div>
-              <div className="text-[11px] text-slate-300 opacity-80">
-                Grant device orientation permission or use interactive simulator.
-              </div>
-            </div>
-            <button
-              onClick={onRequestPermission}
-              className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-semibold shadow-md active:scale-95 transition-all"
-            >
-              Enable
-            </button>
-          </div>
-        </GlassCard>
-      )}
 
       {/* Interactive Sensor Simulator Controls Drawer (Visible when simulation mode is active) */}
       {sensors.isSimulationMode && (

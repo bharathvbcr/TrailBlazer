@@ -5,10 +5,12 @@ export type HeadingUnit = 'deg' | 'mils';
 export type NorthMode = 'magnetic' | 'true';
 export type ThemePalette = 'cyan' | 'emerald' | 'amber' | 'violet' | 'tactical_red' | 'phosphor_green';
 
+export type PressureSource = 'none' | 'sensor' | 'manual' | 'simulated';
+
 export interface PressureHistoryPoint {
   timestamp: number;
   pressure: number; // in hPa
-  altitude: number; // in meters
+  altitude: number | null; // in meters
 }
 
 export interface Waypoint {
@@ -16,7 +18,7 @@ export interface Waypoint {
   name: string;
   latitude: number;
   longitude: number;
-  altitude: number; // meters
+  altitude: number | null; // meters (null when no altitude source was available)
   timestamp: number;
   color: string;
   notes?: string;
@@ -25,10 +27,10 @@ export interface Waypoint {
 export interface TrackPoint {
   latitude: number;
   longitude: number;
-  altitude: number;
-  pressure: number;
-  heading: number;
-  speed: number;
+  altitude: number | null;
+  pressure: number | null;
+  heading: number | null;
+  speed: number | null; // m/s; null when the GPS reported no speed
   timestamp: number;
 }
 
@@ -39,8 +41,8 @@ export interface TrackSession {
   totalAscent: number; // meters
   totalDescent: number; // meters
   totalDistance: number; // meters
-  maxAltitude: number;
-  minAltitude: number;
+  maxAltitude: number | null;
+  minAltitude: number | null;
 }
 
 export interface SensorState {
@@ -50,18 +52,19 @@ export interface SensorState {
   roll: number; // -180 to +180°
   headingAccuracy: number | null; // degrees or null
   trueHeading: number;
-  declination: number; // magnetic declination in degrees
+  declination: number | null; // magnetic declination in degrees (WMM model; null until position is known)
 
   // Barometer & Altitude
-  pressure: number; // in hPa
+  pressure: number | null; // in hPa; null when no barometer reading exists
+  pressureSource: PressureSource;
   qnh: number; // Sea-level reference pressure, default 1013.25 hPa
-  barometricAltitude: number; // in meters
+  barometricAltitude: number | null; // best available altitude in meters (barometric, else GPS); null if neither
   relativeAltitudeZero: number; // tare offset in meters
   gpsAltitude: number | null; // in meters
   pressureHistory: PressureHistoryPoint[];
-  pressureTrendRate: number; // hPa / hr
-  weatherTendency: WeatherTendency;
-  barometricTrend3h: BarometricTrend3Hour;
+  pressureTrendRate: number | null; // hPa / hr
+  weatherTendency: WeatherTendency | null;
+  barometricTrend3h: BarometricTrend3Hour | null;
 
   // Variometer / Vertical Speed
   verticalSpeed: number; // m/s (climb or sink rate)
@@ -78,10 +81,10 @@ export interface SensorState {
   gyroZ: number;
 
   // Environment & Magnetics
-  magneticFlux: number; // in microtesla (µT)
+  magneticFlux: number | null; // measured, in microtesla (µT); null when no magnetometer
+  expectedMagneticField: number | null; // WMM model field strength at this position (µT)
   magneticAnomaly: boolean;
-  ambientLight: number; // lux
-  lightCondition: 'pitch_black' | 'moonlight' | 'indoor' | 'office' | 'daylight' | 'direct_sun';
+  ambientLight: number | null; // lux; null when no light sensor
 
   // Geolocation
   latitude: number | null;
@@ -89,8 +92,8 @@ export interface SensorState {
   gpsSpeed: number | null; // m/s
   gpsHeading: number | null;
   gpsAccuracy: number | null; // meters
-  sunAzimuth: number; // degrees
-  sunElevation: number; // degrees
+  sunAzimuth: number | null; // degrees, computed from position + time
+  sunElevation: number | null; // degrees
 
   // Hardware Status
   isHardwareOrientationAvailable: boolean;

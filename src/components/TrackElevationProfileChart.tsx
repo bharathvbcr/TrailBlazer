@@ -28,28 +28,11 @@ import {
 interface Props {
   trackSession: TrackSession;
   preferences: UserPreferences;
-  currentAltitude: number;
+  currentAltitude: number | null;
   sensors?: SensorState;
   onAddWaypoint?: (wp: Omit<Waypoint, 'id' | 'timestamp'>) => void;
   onToggleTrackRecording?: () => void;
 }
-
-// High-fidelity sample mountain traverse track for immediate visualization when user hasn't recorded yet
-const SAMPLE_TRAVERSE_TRACK: TrackPoint[] = [
-  { latitude: 37.7710, longitude: -122.4280, altitude: 48, pressure: 1007.5, heading: 45, speed: 1.2, timestamp: Date.now() - 3600000 },
-  { latitude: 37.7722, longitude: -122.4255, altitude: 72, pressure: 1004.6, heading: 48, speed: 1.3, timestamp: Date.now() - 3300000 },
-  { latitude: 37.7738, longitude: -122.4230, altitude: 115, pressure: 999.5, heading: 42, speed: 1.1, timestamp: Date.now() - 3000000 },
-  { latitude: 37.7755, longitude: -122.4202, altitude: 168, pressure: 993.2, heading: 38, speed: 1.0, timestamp: Date.now() - 2700000 },
-  { latitude: 37.7770, longitude: -122.4175, altitude: 224, pressure: 986.6, heading: 32, speed: 0.9, timestamp: Date.now() - 2400000 },
-  { latitude: 37.7788, longitude: -122.4148, altitude: 286, pressure: 979.3, heading: 28, speed: 0.8, timestamp: Date.now() - 2100000 },
-  { latitude: 37.7802, longitude: -122.4125, altitude: 342, pressure: 972.7, heading: 25, speed: 0.7, timestamp: Date.now() - 1800000 }, // Ridge Summit
-  { latitude: 37.7815, longitude: -122.4105, altitude: 328, pressure: 974.4, heading: 60, speed: 1.0, timestamp: Date.now() - 1500000 },
-  { latitude: 37.7828, longitude: -122.4075, altitude: 275, pressure: 980.6, heading: 75, speed: 1.3, timestamp: Date.now() - 1200000 },
-  { latitude: 37.7842, longitude: -122.4045, altitude: 210, pressure: 988.2, heading: 82, speed: 1.4, timestamp: Date.now() - 900000 },
-  { latitude: 37.7856, longitude: -122.4015, altitude: 154, pressure: 994.9, heading: 88, speed: 1.5, timestamp: Date.now() - 600000 },
-  { latitude: 37.7870, longitude: -122.3985, altitude: 98, pressure: 1001.6, heading: 92, speed: 1.6, timestamp: Date.now() - 300000 },
-  { latitude: 37.7885, longitude: -122.3955, altitude: 54, pressure: 1006.8, heading: 96, speed: 1.4, timestamp: Date.now() },
-];
 
 export const TrackElevationProfileChart: React.FC<Props> = ({
   trackSession,
@@ -61,19 +44,15 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
 }) => {
   // Default to 'duration' mode as requested to visualize altitude changes over recording duration
   const [viewMode, setViewMode] = useState<'duration' | 'distance'>('duration');
-  const [forceSampleData, setForceSampleData] = useState<boolean>(false);
   const [quickMarkSaved, setQuickMarkSaved] = useState<boolean>(false);
 
-  // Determine whether to use live session data or fallback preview
+  // Only real recorded data is ever charted
   const hasLiveSession = trackSession.isRecording || trackSession.points.length > 0;
-  const isShowingSample = !hasLiveSession || forceSampleData;
 
   // Real-time live points array:
   // If actively recording, append the current real-time telemetry point so the profile responds instantly
   const rawPoints = useMemo(() => {
-    if (isShowingSample) {
-      return SAMPLE_TRAVERSE_TRACK;
-    }
+    if (!hasLiveSession) return [] as TrackPoint[];
 
     const points = [...trackSession.points];
 
@@ -82,14 +61,14 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
       const now = Date.now();
       const last = points[points.length - 1];
       // Append if no points yet or if at least 400ms have passed since last stored point
-      if (!last || now - last.timestamp >= 400) {
+      if (sensors.latitude !== null && sensors.longitude !== null && (!last || now - last.timestamp >= 400)) {
         points.push({
-          latitude: sensors.latitude ?? 37.7749,
-          longitude: sensors.longitude ?? -122.4194,
+          latitude: sensors.latitude,
+          longitude: sensors.longitude,
           altitude: currentAltitude,
           pressure: sensors.pressure,
-          heading: preferences.northMode === 'true' ? sensors.trueHeading : sensors.heading,
-          speed: sensors.gpsSpeed ?? 0,
+          heading: sensors.isHardwareOrientationAvailable || sensors.isSimulationMode ? (preferences.northMode === 'true' ? sensors.trueHeading : sensors.heading) : null,
+          speed: sensors.gpsSpeed,
           timestamp: now,
         });
       }
@@ -97,7 +76,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
 
     return points;
   }, [
-    isShowingSample,
+    hasLiveSession,
     trackSession.isRecording,
     trackSession.points,
     sensors,
@@ -107,21 +86,19 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
 
   // Session start time
   const sessionStartTime = useMemo(() => {
-    if (isShowingSample) {
-      return SAMPLE_TRAVERSE_TRACK[0].timestamp;
-    }
     return trackSession.startTime || (rawPoints[0] ? rawPoints[0].timestamp : Date.now());
-  }, [isShowingSample, trackSession.startTime, rawPoints]);
+  }, [trackSession.startTime, rawPoints]);
 
   // Process data for Recharts
   const chartData = useMemo(() => {
     let cumulativeDistanceMeters = 0;
-    const startAltitude = rawPoints[0]?.altitude ?? currentAltitude;
-    const startAltConverted = convertAltitude(startAltitude, preferences.altitudeUnit);
+    const withAlt = rawPoints.filter((p): p is TrackPoint & { altitude: number } => p.altitude !== null);
+    if (withAlt.length === 0) return [];
+    const startAltConverted = convertAltitude(withAlt[0].altitude, preferences.altitudeUnit);
 
-    return rawPoints.map((pt, idx) => {
+    return withAlt.map((pt, idx) => {
       if (idx > 0) {
-        const prev = rawPoints[idx - 1];
+        const prev = withAlt[idx - 1];
         const dist = calculateDistanceMeters(prev.latitude, prev.longitude, pt.latitude, pt.longitude);
         cumulativeDistanceMeters += dist;
       }
@@ -152,8 +129,8 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
         altitude: altValue,
         deltaFromStart,
         altitudeUnit: altConverted.label,
-        pressure: Number(pt.pressure.toFixed(1)),
-        speed: Number((pt.speed * (preferences.altitudeUnit === 'ft' ? 2.237 : 3.6)).toFixed(1)),
+        pressure: pt.pressure !== null ? Number(pt.pressure.toFixed(1)) : null,
+        speed: pt.speed !== null ? Number((pt.speed * (preferences.altitudeUnit === 'ft' ? 2.237 : 3.6)).toFixed(1)) : null,
         speedUnit: preferences.altitudeUnit === 'ft' ? 'mph' : 'km/h',
         rawAltitudeMeters: pt.altitude,
       };
@@ -167,9 +144,9 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
   const totalElevationSpan = maxAltitude - minAltitude;
 
   const startAltitudeValue = chartData.length > 0 ? chartData[0].altitude : 0;
-  const currentAltConverted = convertAltitude(currentAltitude, preferences.altitudeUnit);
-  const currentAltValue = Math.round(currentAltConverted.value);
-  const netAltitudeChange = currentAltValue - startAltitudeValue;
+  const currentAltConverted = currentAltitude !== null ? convertAltitude(currentAltitude, preferences.altitudeUnit) : null;
+  const currentAltValue = currentAltConverted ? Math.round(currentAltConverted.value) : null;
+  const netAltitudeChange = currentAltValue !== null ? currentAltValue - startAltitudeValue : 0;
 
   // Active theme matching Material You Liquid Glass palette
   const theme = useMemo(() => {
@@ -235,6 +212,26 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
 
   const toast = useToast();
 
+  if (!hasLiveSession) {
+    return (
+      <GlassCard className="w-full !p-4">
+        <CardHeader icon={<Mountain className="w-4 h-4 text-cyan-400 shrink-0" />} title="Elevation Profile" subtitle="Altitude over your recorded track" />
+        <p className="text-xs text-slate-400 leading-relaxed">
+          No track recorded yet. Start recording and your real altitude profile will build here as you move.
+        </p>
+        {onToggleTrackRecording && (
+          <button
+            onClick={onToggleTrackRecording}
+            className="mt-3 flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold"
+          >
+            <Play className="w-3 h-3 fill-current" />
+            <span>Start Track</span>
+          </button>
+        )}
+      </GlassCard>
+    );
+  }
+
   return (
     <GlassCard className="w-full !p-4">
       {/* Header and Toggle Controls */}
@@ -247,10 +244,6 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
                 <span className="flex items-center space-x-1 text-[11px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 font-mono font-bold animate-pulse">
                   <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-ping" />
                   <span>LIVE RECORDING</span>
-                </span>
-              ) : isShowingSample ? (
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-medium normal-case">
-                  Sample Trail Preview
                 </span>
               ) : (
                 <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono font-medium normal-case">
@@ -276,7 +269,12 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
                   longitude: sensors.longitude,
                   altitude: sensors.barometricAltitude,
                   color: '#38bdf8',
-                  notes: `Track Profile Mark • Alt: ${sensors.barometricAltitude.toFixed(1)}m • Pressure: ${sensors.pressure.toFixed(1)} hPa • Net Δ: ${netAltitudeChange >= 0 ? '+' : ''}${netAltitudeChange}${preferences.altitudeUnit}`,
+                  notes: [
+                    'Track Profile Mark',
+                    sensors.barometricAltitude !== null ? `Alt: ${sensors.barometricAltitude.toFixed(1)}m` : null,
+                    sensors.pressure !== null ? `Pressure: ${sensors.pressure.toFixed(1)} hPa` : null,
+                    `Net Δ: ${netAltitudeChange >= 0 ? '+' : ''}${netAltitudeChange}${preferences.altitudeUnit}`,
+                  ].filter(Boolean).join(' • '),
                 });
                 setQuickMarkSaved(true);
                 toast({ message: 'Elevation mark saved', tone: 'success' });
@@ -326,7 +324,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06]">
           <span className="text-[11px] text-slate-400 uppercase font-sans block">Current Alt</span>
           <span className="text-cyan-300 font-bold text-sm whitespace-nowrap">
-            {currentAltValue}{' '}
+            {currentAltValue ?? '—'}{' '}
             <span className="text-[11px] text-slate-400 font-sans">{preferences.altitudeUnit}</span>
           </span>
         </div>
@@ -349,7 +347,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
               <ArrowDown className="w-3 h-3 text-rose-400" />
             ) : null}
             <span>
-              {netAltitudeChange >= 0 ? `+${netAltitudeChange}` : netAltitudeChange}{' '}
+              {!chartData.length || currentAltValue === null ? '—' : netAltitudeChange >= 0 ? `+${netAltitudeChange}` : netAltitudeChange}{' '}
               <span className="text-[11px] text-slate-400 font-sans">{preferences.altitudeUnit}</span>
             </span>
           </span>
@@ -359,7 +357,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06]">
           <span className="text-[11px] text-slate-400 uppercase font-sans block">Peak Summit</span>
           <span className="text-amber-300 font-bold text-sm whitespace-nowrap">
-            {maxAltitude}{' '}
+            {chartData.length ? maxAltitude : '—'}{' '}
             <span className="text-[11px] text-slate-400 font-sans">{preferences.altitudeUnit}</span>
           </span>
         </div>
@@ -368,7 +366,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
         <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06]">
           <span className="text-[11px] text-slate-400 uppercase font-sans block">Elev Span</span>
           <span className="text-emerald-300 font-bold text-sm whitespace-nowrap">
-            +{totalElevationSpan}{' '}
+            {chartData.length ? `+${totalElevationSpan}` : '—'}{' '}
             <span className="text-[11px] text-slate-400 font-sans">{preferences.altitudeUnit}</span>
           </span>
         </div>
@@ -376,14 +374,16 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
 
       {/* Main Recharts Container with Liquid Glass Glows */}
       <div className="relative w-full h-56 pt-1 select-none">
-        {chartData.length < 2 && !isShowingSample ? (
+        {chartData.length < 2 ? (
           <div className="w-full h-full flex flex-col items-center justify-center text-center p-4 rounded-2xl bg-white/[0.02] border border-white/[0.08]">
-            <Mountain className="w-8 h-8 text-cyan-400 mb-2 opacity-60 animate-bounce" />
+            <Mountain className="w-8 h-8 text-cyan-400 mb-2 opacity-60" />
             <div className="text-xs font-bold text-white mb-1">
-              Recording Initialized
+              {rawPoints.some((p) => p.altitude !== null) ? 'Recording started' : 'No altitude data'}
             </div>
             <p className="text-[11px] text-slate-400 max-w-xs">
-              Waiting for subsequent GPS/barometric telemetry points to graph elevation changes...
+              {rawPoints.some((p) => p.altitude !== null)
+                ? 'The profile appears once a second altitude reading is recorded.'
+                : 'Altitude needs a barometer reading, an entered pressure, or a GPS fix that reports altitude.'}
             </p>
           </div>
         ) : (
@@ -498,7 +498,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
 
                         <div className="flex items-center justify-between text-[11px]">
                           <span className="text-slate-400 font-sans">Baro Pressure:</span>
-                          <span className="text-amber-300">{data.pressure} hPa</span>
+                          <span className="text-amber-300">{data.pressure !== null ? `${data.pressure} hPa` : '—'}</span>
                         </div>
 
                         <div className="flex items-center justify-between text-[11px]">
@@ -546,15 +546,6 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
         </div>
 
         <div className="flex items-center space-x-2">
-          {hasLiveSession && (
-            <button
-              onClick={() => setForceSampleData(!forceSampleData)}
-              className="text-[11px] text-cyan-300 hover:text-cyan-200 underline font-sans"
-            >
-              {forceSampleData ? 'Switch to My Track' : 'View Sample Hike'}
-            </button>
-          )}
-
           {!trackSession.isRecording && onToggleTrackRecording && (
             <button
               onClick={onToggleTrackRecording}

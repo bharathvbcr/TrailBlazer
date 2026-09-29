@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   SensorState,
   UserPreferences,
@@ -40,6 +40,9 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 
+/** Sensor state narrowed to the case where a barometric reading exists. */
+type BaroSensors = SensorState & { pressure: number; barometricAltitude: number };
+
 interface Props {
   sensors: SensorState;
   preferences: UserPreferences;
@@ -50,9 +53,10 @@ interface Props {
   onCalibrateToGps: () => void;
   onUpdatePreferences: (prefs: Partial<UserPreferences>) => void;
   onSimulateTrendScenario?: (scenario: 'rising' | 'falling' | 'steady') => void;
+  onEditPressure?: () => void;
 }
 
-export const AltimeterBarometerView: React.FC<Props> = ({
+const BarometerDashboard: React.FC<Props & { sensors: BaroSensors }> = ({
   sensors,
   preferences,
   onSetQnh,
@@ -62,22 +66,19 @@ export const AltimeterBarometerView: React.FC<Props> = ({
   onCalibrateToGps,
   onUpdatePreferences,
   onSimulateTrendScenario,
+  onEditPressure,
 }) => {
   const [showQnhModal, setShowQnhModal] = useState(false);
   const [showSimulation, setShowSimulation] = useState(false);
   const [hoveredPoint, setHoveredPoint] = useState<PressureHistoryPoint | null>(null);
 
-  // 3-Hour Barometric Trend Analysis (WMO Code 0200 Standard Tendency)
-  const trend3h = useMemo(() => {
-    return (
-      sensors.barometricTrend3h ||
-      calculateThreeHourBarometricTrend(sensors.pressureHistory, sensors.pressure)
-    );
-  }, [sensors.barometricTrend3h, sensors.pressureHistory, sensors.pressure]);
+  // Trend/tendency exist only once enough real readings have been recorded
+  const trend3h = sensors.barometricTrend3h;
+  const tendency = sensors.weatherTendency;
 
   // Pressure unit conversion for 3-hour delta and baseline
-  const deltaPressureConverted = convertPressure(Math.abs(trend3h.deltaHpa3h), preferences.pressureUnit);
-  const pressure3hAgoConverted = convertPressure(trend3h.pressure3hAgo, preferences.pressureUnit);
+  const deltaPressureConverted = convertPressure(Math.abs(trend3h?.deltaHpa3h ?? 0), preferences.pressureUnit);
+  const pressure3hAgoConverted = convertPressure(trend3h?.pressure3hAgo ?? sensors.pressure, preferences.pressureUnit);
 
   // Pressure unit conversion
   const pressureConverted = convertPressure(sensors.pressure, preferences.pressureUnit);
@@ -110,7 +111,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
 
   // Weather tendency badge styling
   const getTendencyBadge = () => {
-    switch (sensors.weatherTendency.category) {
+    switch (tendency?.category) {
       case 'storm':
         return {
           icon: <CloudRain className="w-4 h-4 text-rose-400" />,
@@ -212,6 +213,17 @@ export const AltimeterBarometerView: React.FC<Props> = ({
         </div>
 
         <div className="flex items-center space-x-2">
+          {/* Where the pressure reading comes from */}
+          <button
+            onClick={sensors.pressureSource === 'manual' ? onEditPressure : undefined}
+            disabled={sensors.pressureSource !== 'manual'}
+            title={sensors.pressureSource === 'manual' ? 'Update pressure reading' : undefined}
+            className="px-2.5 py-1 rounded-full bg-white/10 border border-white/15 text-[11px] text-slate-300 disabled:cursor-default enabled:hover:text-white"
+          >
+            {SOURCE_LABEL[sensors.pressureSource]}
+            {sensors.pressureSource === 'manual' && <span className="text-cyan-300 font-semibold"> · Update</span>}
+          </button>
+
           {/* Audio Variometer Toggle Button */}
           <button
             onClick={() => onUpdatePreferences({ audioVariometerEnabled: !preferences.audioVariometerEnabled })}
@@ -225,6 +237,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
             {preferences.audioVariometerEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
           </button>
 
+          {sensors.isSimulationMode && (
           <button
             onClick={() => setShowSimulation(!showSimulation)}
             title="Adjust simulated altitude & pressure"
@@ -236,6 +249,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
           >
             <Sliders className="w-3.5 h-3.5" />
           </button>
+          )}
         </div>
       </Toolbar>
 
@@ -378,7 +392,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
               {pressureConverted.value.toFixed(2)} {pressureConverted.label}
             </div>
 
-            {/* 3-Hour Trend Real-Time Arrow Badge */}
+            {trend3h && (
             <div
               className={`inline-flex items-center space-x-1 px-2 py-0.5 mt-1 rounded-full text-[11px] font-bold border transition-all ${
                 trend3h.trend === 'rising'
@@ -401,6 +415,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
                 ({trend3h.deltaHpa3h > 0 ? '+' : ''}{trend3h.deltaHpa3h.toFixed(1)})
               </span>
             </div>
+            )}
           </div>
         </div>
 
@@ -508,6 +523,8 @@ export const AltimeterBarometerView: React.FC<Props> = ({
         )}
       </div>
 
+      {trend3h && tendency ? (
+        <>
       {/* 3-Hour Barometric Trend Analysis Card */}
       <GlassCard className="w-full !p-4 border-cyan-500/30">
         <CardHeader
@@ -693,7 +710,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
         </div>
 
         {/* Interactive 3-Hour Trend Quick Presets */}
-        {onSimulateTrendScenario && (
+        {onSimulateTrendScenario && sensors.isSimulationMode && (
           <div className="mt-3 pt-2.5 border-t border-white/[0.08] flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] text-slate-400 uppercase font-mono">Test 3h Trend:</span>
             <div className="flex space-x-1.5">
@@ -744,12 +761,12 @@ export const AltimeterBarometerView: React.FC<Props> = ({
             </div>
             <div>
               <div className="text-xs font-bold text-slate-100 flex items-center space-x-1">
-                <span>{sensors.weatherTendency.label}</span>
+                <span>{tendency.label}</span>
               </div>
               <div className="text-[11px] text-slate-400 flex items-center space-x-1 mt-0.5 font-mono">
                 {badge.trendIcon}
                 <span>
-                  {sensors.pressureTrendRate >= 0 ? `+${sensors.pressureTrendRate}` : sensors.pressureTrendRate} hPa/hr
+                  {(sensors.pressureTrendRate ?? 0) >= 0 ? `+${sensors.pressureTrendRate ?? 0}` : sensors.pressureTrendRate} hPa/hr
                 </span>
               </div>
             </div>
@@ -763,7 +780,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
           </div>
         </div>
 
-        {sensors.weatherTendency.category === 'storm' && (
+        {tendency.category === 'storm' && (
           <div className="mt-2.5 p-2 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center space-x-2 text-rose-300 text-xs">
             <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
             <span>Severe drop alert: High risk of sudden mountain gale or squall within 1-3 hrs.</span>
@@ -771,7 +788,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
         )}
 
         <p className="text-xs text-slate-300 mt-2.5 leading-relaxed bg-white/[0.03] p-2.5 rounded-2xl border border-white/[0.05]">
-          {sensors.weatherTendency.description}
+          {tendency.description}
         </p>
 
         {/* 3-Hour History Interactive SVG Sparkline */}
@@ -779,7 +796,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
           <div className="flex justify-between items-center text-[11px] text-slate-400 mb-1">
             <span>Barometric Trend (Recent Hours)</span>
             <span className="font-mono text-cyan-400">
-              {hoveredPoint ? `${hoveredPoint.pressure.toFixed(1)} hPa • ${hoveredPoint.altitude.toFixed(0)}m` : `${history.length} snapshots`}
+              {hoveredPoint ? `${hoveredPoint.pressure.toFixed(1)} hPa • ${hoveredPoint.altitude !== null ? `${hoveredPoint.altitude.toFixed(0)}m` : '—'}` : `${history.length} readings`}
             </span>
           </div>
           <div className="relative w-full h-16 bg-white/[0.02] rounded-xl border border-white/[0.05] p-1 flex items-center">
@@ -823,6 +840,18 @@ export const AltimeterBarometerView: React.FC<Props> = ({
           </div>
         </div>
       </GlassCard>
+
+        </>
+      ) : (
+        <GlassCard className="w-full !p-4">
+          <CardHeader icon={<History className="w-4 h-4 text-slate-400 shrink-0" />} title="Pressure Trend" />
+          <p className="text-xs text-slate-400 leading-relaxed">
+            Collecting readings. A trend needs at least 10 minutes of real pressure data
+            ({sensors.pressureHistory.length} reading{sensors.pressureHistory.length === 1 ? '' : 's'} so far); the full
+            3-hour tendency appears after 3 hours.
+          </p>
+        </GlassCard>
+      )}
 
       {/* Atmospheric Physics & Outdoor Insights Grid */}
       <GlassCard className="w-full !p-4">
@@ -928,7 +957,7 @@ export const AltimeterBarometerView: React.FC<Props> = ({
               <div className="pt-2 border-t border-cyan-500/20">
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-[11px] text-slate-300 font-semibold">3-Hour Barometric Tendency:</span>
-                  <span className="text-[11px] font-mono text-cyan-300 uppercase">{trend3h.trend}</span>
+                  <span className="text-[11px] font-mono text-cyan-300 uppercase">{trend3h?.trend ?? 'no trend yet'}</span>
                 </div>
                 <div className="grid grid-cols-3 gap-1.5">
                   <button
@@ -1008,5 +1037,145 @@ export const AltimeterBarometerView: React.FC<Props> = ({
               </div>
       </Modal>
     </Page>
+  );
+};
+
+const SOURCE_LABEL: Record<SensorState['pressureSource'], string> = {
+  none: 'No pressure source',
+  sensor: 'Device barometer',
+  manual: 'Manual entry',
+  simulated: 'Simulated',
+};
+
+const ManualPressureModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  onSubmit: (hpa: number) => void;
+  initial: number | null;
+}> = ({ isOpen, onClose, onSubmit, initial }) => {
+  const [value, setValue] = useState('');
+  useEffect(() => {
+    if (isOpen) setValue(initial !== null ? initial.toFixed(1) : '');
+  }, [isOpen, initial]);
+  const parsed = Number(value);
+  const valid = value.trim() !== '' && isFinite(parsed) && parsed >= 300 && parsed <= 1100;
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="Enter pressure" size="sm" icon={<Gauge className="w-5 h-5 text-cyan-400" />}>
+      <p className="text-xs text-slate-300 leading-relaxed mb-3">
+        Enter the station pressure (hPa) from a barometer or weather app. Each entry is stored as a real reading and builds your pressure trend.
+      </p>
+      <label className="block text-xs text-slate-300 mb-1" htmlFor="manual-pressure">
+        Station pressure (hPa)
+      </label>
+      <input
+        id="manual-pressure"
+        type="number"
+        inputMode="decimal"
+        step="0.1"
+        min="300"
+        max="1100"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        className="w-full px-3 py-2 rounded-xl bg-white/10 border border-white/20 text-white text-sm font-mono focus:outline-none focus:border-cyan-400"
+        placeholder="e.g. 1013.2"
+      />
+      {value !== '' && !valid && <p className="text-[11px] text-rose-300 mt-1">Enter a value between 300 and 1100 hPa.</p>}
+      <div className="flex gap-2 mt-4">
+        <button onClick={onClose} className="flex-1 py-2 rounded-xl bg-white/10 text-slate-300 text-xs font-semibold hover:bg-white/15">
+          Cancel
+        </button>
+        <button
+          disabled={!valid}
+          onClick={() => {
+            onSubmit(parsed);
+            onClose();
+          }}
+          className="flex-1 py-2 rounded-xl bg-cyan-500 text-slate-950 text-xs font-bold hover:bg-cyan-400 disabled:opacity-40"
+        >
+          Save reading
+        </button>
+      </div>
+    </Modal>
+  );
+};
+
+/** Public entry: shows real barometer data when a reading exists, otherwise an honest empty state. */
+export const AltimeterBarometerView: React.FC<Props> = (props) => {
+  const { sensors, preferences, onUpdatePreferences, onSetManualPressure } = props;
+  const [showManual, setShowManual] = useState(false);
+  const hasPressure = sensors.pressure !== null && sensors.barometricAltitude !== null;
+  const gpsAlt = sensors.gpsAltitude !== null ? convertAltitude(sensors.gpsAltitude, preferences.altitudeUnit) : null;
+
+  return (
+    <>
+      {hasPressure ? (
+        <BarometerDashboard {...props} sensors={sensors as BaroSensors} onEditPressure={() => setShowManual(true)} />
+      ) : (
+        <Page>
+          <PageHeader
+            icon={<Mountain className="w-5 h-5 text-cyan-400" />}
+            title="Altimeter"
+            subtitle="Altitude, pressure & weather trend"
+          />
+          <Toolbar>
+            <div className="flex bg-white/10 rounded-full p-0.5 border border-white/15 text-[11px] font-medium">
+              {(['m', 'ft'] as const).map((unit) => (
+                <button
+                  key={unit}
+                  onClick={() => onUpdatePreferences({ altitudeUnit: unit })}
+                  className={`px-2.5 py-1 rounded-full ${
+                    preferences.altitudeUnit === unit ? 'bg-cyan-500 text-slate-950 font-bold shadow' : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  {unit}
+                </button>
+              ))}
+            </div>
+          </Toolbar>
+
+          <GlassCard className="w-full !p-4">
+            <CardHeader icon={<Gauge className="w-4 h-4 text-slate-400 shrink-0" />} title="Barometer" />
+            <p className="text-xs text-slate-300 leading-relaxed">
+              This device doesn&apos;t expose a pressure sensor to the browser, so there is no barometric altitude or weather trend yet.
+              Enter a reading from a weather app or barometer, or use the Android app where the built-in barometer is available.
+            </p>
+            <button
+              onClick={() => setShowManual(true)}
+              className="mt-3 px-4 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold"
+            >
+              Enter pressure
+            </button>
+            {sensors.isSimulationMode && (
+              <button
+                onClick={() => onSetManualPressure(1013.25)}
+                className="mt-3 ml-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-xs font-semibold text-slate-200"
+              >
+                Simulate pressure
+              </button>
+            )}
+          </GlassCard>
+
+          <GlassCard className="w-full !p-4">
+            <CardHeader icon={<Satellite className="w-4 h-4 text-emerald-400 shrink-0" />} title="GPS Altitude" />
+            {gpsAlt !== null ? (
+              <div className="text-3xl font-black font-mono text-white">
+                {Math.round(gpsAlt.value)} <span className="text-sm font-semibold text-cyan-400 font-sans">{gpsAlt.label}</span>
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400">
+                {sensors.latitude === null ? 'Waiting for a GPS fix.' : 'Your GPS fix has no altitude reading.'}
+              </p>
+            )}
+          </GlassCard>
+        </Page>
+      )}
+      <ManualPressureModal
+        isOpen={showManual}
+        onClose={() => setShowManual(false)}
+        onSubmit={onSetManualPressure}
+        initial={sensors.pressure}
+      />
+    </>
   );
 };

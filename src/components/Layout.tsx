@@ -109,3 +109,10 @@ export const Stat: React.FC<StatProps> = ({ label, value, unit, icon, tone = 'cy
     </Tag>
   );
 };
+
+/** Honest empty state for a sensor the device (or browser) doesn't provide. */
+export const Unavailable: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <p className="text-[11px] text-slate-400 leading-relaxed p-3 rounded-xl border border-dashed border-white/15 bg-white/[0.02]">
+    {children}
+  </p>
+);

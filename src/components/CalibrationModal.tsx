@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { SensorState } from '../types/sensors';
 import { Modal } from './Modal';
 import { Magnet } from 'lucide-react';
@@ -10,35 +10,30 @@ interface Props {
 }
 
 export const CalibrationModal: React.FC<Props> = ({ isOpen, onClose, sensors }) => {
-  const [progress, setProgress] = useState(20);
-  const [isCalibrated, setIsCalibrated] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const motionLive = sensors.isHardwareMotionAvailable;
+  const isComplete = progress >= 100;
 
-  // Simulate progress when user moves device (or based on sensor gyro/accel activity)
+  // Progress comes only from real device rotation reported by the gyroscope
+  const rotationRef = useRef(0);
+  rotationRef.current = Math.abs(sensors.gyroX) + Math.abs(sensors.gyroY) + Math.abs(sensors.gyroZ);
+
   useEffect(() => {
     if (!isOpen) return;
-    setIsCalibrated(false);
-    setProgress(15);
-
+    setProgress(0);
     const interval = setInterval(() => {
-      setProgress((prev) => {
-        const motionDelta = Math.abs(sensors.gyroX) + Math.abs(sensors.gyroY) + Math.abs(sensors.gyroZ);
-        const increment = motionDelta > 10 ? 8 : 4;
-        const next = Math.min(100, prev + increment);
-        if (next >= 100) {
-          setIsCalibrated(true);
-        }
-        return next;
-      });
+      const rate = rotationRef.current; // deg/s
+      if (rate < 25) return; // ignore hand tremor
+      setProgress((prev) => Math.min(100, prev + Math.min(rate / 60, 3)));
     }, 400);
-
     return () => clearInterval(interval);
-  }, [isOpen, sensors.gyroX, sensors.gyroY, sensors.gyroZ]);
+  }, [isOpen]);
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Calibration" size="sm" icon={<Magnet className="w-5 h-5 text-cyan-400" />}>
       <div className="text-center">
           <p className="text-xs text-slate-300 mb-4 leading-relaxed">
-            Move your device in a smooth <strong>Figure-8 pattern</strong> through the air to calibrate the 3-axis Hall effect magnetometer sensors and eliminate magnetic bias.
+            Move your device in a smooth <strong>figure-8 pattern</strong> through the air. Your phone's operating system uses this motion to calibrate its magnetometer; the bar below tracks how much real motion your gyroscope detects.
           </p>
 
           {/* Animated 3D Figure-8 Graphic */}
@@ -85,31 +80,37 @@ export const CalibrationModal: React.FC<Props> = ({ isOpen, onClose, sensors }) 
           <div className="w-full bg-white/10 rounded-full h-2 mb-2 overflow-hidden">
             <div
               className={`h-full transition-all duration-300 rounded-full ${
-                isCalibrated ? 'bg-emerald-400 shadow-[0_0_10px_#34d399]' : 'bg-cyan-400'
+                isComplete ? 'bg-emerald-400 shadow-[0_0_10px_#34d399]' : 'bg-cyan-400'
               }`}
               style={{ width: `${progress}%` }}
             />
           </div>
 
           <div className="flex justify-between items-center text-xs font-mono mb-4 text-slate-300">
-            <span>Calibration Status</span>
-            <span className={isCalibrated ? 'text-emerald-400 font-bold' : 'text-cyan-400'}>
-              {isCalibrated ? 'OPTIMIZED (100%)' : `${progress}%`}
+            <span>Motion detected</span>
+            <span className={isComplete ? 'text-emerald-400 font-bold' : motionLive ? 'text-cyan-400' : 'text-slate-500'}>
+              {motionLive ? `${Math.round(progress)}%` : 'No motion sensor'}
             </span>
           </div>
 
           <div className="p-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] text-slate-400 flex items-center justify-between mb-4">
-            <span>Current Flux: {sensors.magneticFlux.toFixed(1)} µT</span>
-            <span className={sensors.magneticAnomaly ? 'text-amber-400' : 'text-emerald-400'}>
-              {sensors.magneticAnomaly ? 'Metal Proximity' : 'Clean Field'}
+            <span>
+              {sensors.magneticFlux !== null
+                ? `Field: ${sensors.magneticFlux.toFixed(1)} µT`
+                : 'Field strength: no magnetometer'}
             </span>
+            {sensors.magneticFlux !== null && (
+              <span className={sensors.magneticAnomaly ? 'text-amber-400' : 'text-emerald-400'}>
+                {sensors.magneticAnomaly ? 'Unusual field' : 'Normal field'}
+              </span>
+            )}
           </div>
 
           <button
             onClick={onClose}
             className="w-full py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs shadow-md transition-all active:scale-98"
           >
-            {isCalibrated ? 'Calibration Complete' : 'Close'}
+            {isComplete ? 'Done' : 'Close'}
           </button>
       </div>
     </Modal>

@@ -26,8 +26,10 @@ export const WaypointMapThumbnail: React.FC<Props> = ({
   const [isTileLoaded, setIsTileLoaded] = useState<boolean>(true);
   const [hoveredWaypoint, setHoveredWaypoint] = useState<Waypoint | null>(null);
 
-  const currentLat = sensors.latitude ?? 37.7749;
-  const currentLon = sensors.longitude ?? -122.4194;
+  // Without a fix the map is covered by a "Waiting for GPS" overlay and loads no tiles
+  const hasFix = sensors.latitude !== null && sensors.longitude !== null;
+  const currentLat = sensors.latitude ?? targetWaypoint?.latitude ?? 0;
+  const currentLon = sensors.longitude ?? targetWaypoint?.longitude ?? 0;
   const currentHeading = preferences.northMode === 'true' ? sensors.trueHeading : sensors.heading;
 
   // Compute map center and target stats
@@ -224,7 +226,7 @@ export const WaypointMapThumbnail: React.FC<Props> = ({
         )}
 
         {/* Layer 1: Dark Carto / OSM Tiles (if Dark Map mode is enabled) */}
-        {mapStyle === 'dark_map' && (
+        {hasFix && mapStyle === 'dark_map' && (
           <div
             className="absolute inset-0 pointer-events-none transition-opacity duration-500"
             style={{

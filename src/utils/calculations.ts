@@ -488,12 +488,9 @@ export function generateGpxString(points: TrackPoint[], sessionName: string = 'A
   const trkpts = points.map((p) => {
     const timeIso = new Date(p.timestamp).toISOString();
     return `      <trkpt lat="${p.latitude.toFixed(6)}" lon="${p.longitude.toFixed(6)}">
-        <ele>${p.altitude.toFixed(1)}</ele>
-        <time>${timeIso}</time>
+${p.altitude !== null ? `        <ele>${p.altitude.toFixed(1)}</ele>\n` : ''}        <time>${timeIso}</time>
         <extensions>
-          <pressure>${p.pressure.toFixed(2)}</pressure>
-          <heading>${p.heading.toFixed(1)}</heading>
-          <speed>${p.speed.toFixed(1)}</speed>
+${p.pressure !== null ? `          <pressure>${p.pressure.toFixed(2)}</pressure>\n` : ''}${p.heading !== null ? `          <heading>${p.heading.toFixed(1)}</heading>\n` : ''}${p.speed !== null ? `          <speed>${p.speed.toFixed(1)}</speed>` : ''}
         </extensions>
       </trkpt>`;
   }).join('\n');

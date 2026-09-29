@@ -4,6 +4,10 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
@@ -34,6 +38,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var webView: WebView
     private lateinit var assetLoader: WebViewAssetLoader
+    private lateinit var sensorBridge: NativeSensorBridge
 
     private val requiredPermissions = arrayOf(
         Manifest.permission.CAMERA,
@@ -116,7 +121,8 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            addJavascriptInterface(NativeSensorBridge(this@MainActivity), "AndroidBridge")
+            sensorBridge = NativeSensorBridge(this@MainActivity)
+            addJavascriptInterface(sensorBridge, "AndroidBridge")
         }
 
         setContentView(webView)
@@ -152,9 +158,11 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         webView.onResume()
+        sensorBridge.start()
     }
 
     override fun onPause() {
+        sensorBridge.stop()
         webView.onPause()
         super.onPause()
     }
@@ -164,7 +172,58 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    inner class NativeSensorBridge(private val context: Context) {
+    /**
+     * Exposes real hardware sensors the WebView cannot reach (barometer, magnetometer, light)
+     * plus haptics. Each getter returns NaN when the device has no such sensor or no reading
+     * has arrived yet, so the web app can show "unavailable" instead of inventing values.
+     */
+    inner class NativeSensorBridge(private val context: Context) : SensorEventListener {
+        private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+        private val pressureSensor: Sensor? = sensorManager?.getDefaultSensor(Sensor.TYPE_PRESSURE)
+        private val magneticSensor: Sensor? = sensorManager?.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
+        private val lightSensor: Sensor? = sensorManager?.getDefaultSensor(Sensor.TYPE_LIGHT)
+
+        @Volatile private var pressureHpa = Double.NaN
+        @Volatile private var magneticFluxUt = Double.NaN
+        @Volatile private var lightLux = Double.NaN
+
+        fun start() {
+            listOfNotNull(pressureSensor, magneticSensor, lightSensor).forEach {
+                sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+            }
+        }
+
+        fun stop() {
+            sensorManager?.unregisterListener(this)
+            pressureHpa = Double.NaN
+            magneticFluxUt = Double.NaN
+            lightLux = Double.NaN
+        }
+
+        override fun onSensorChanged(event: SensorEvent) {
+            when (event.sensor.type) {
+                Sensor.TYPE_PRESSURE -> pressureHpa = event.values[0].toDouble()
+                Sensor.TYPE_MAGNETIC_FIELD -> {
+                    val x = event.values[0].toDouble()
+                    val y = event.values[1].toDouble()
+                    val z = event.values[2].toDouble()
+                    magneticFluxUt = Math.sqrt(x * x + y * y + z * z)
+                }
+                Sensor.TYPE_LIGHT -> lightLux = event.values[0].toDouble()
+            }
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+
+        @JavascriptInterface
+        fun getPressureHpa(): Double = pressureHpa
+
+        @JavascriptInterface
+        fun getMagneticFluxUt(): Double = magneticFluxUt
+
+        @JavascriptInterface
+        fun getLightLux(): Double = lightLux
+
         private val vibrator: Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
             vibratorManager?.defaultVibrator

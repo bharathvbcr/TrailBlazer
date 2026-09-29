@@ -71,28 +71,8 @@ const DEFAULT_PREFERENCES: UserPreferences = {
   speedAlertAudio: true,
 };
 
-const DEFAULT_WAYPOINTS: Waypoint[] = [
-  {
-    id: 'wp-1',
-    name: 'Highland Ridge Camp',
-    latitude: 37.7812,
-    longitude: -122.4110,
-    altitude: 185,
-    timestamp: Date.now() - 3600000 * 2,
-    color: '#38bdf8',
-    notes: 'Camp shelter with fresh water spring',
-  },
-  {
-    id: 'wp-2',
-    name: 'Trailhead Parking',
-    latitude: 37.7710,
-    longitude: -122.4280,
-    altitude: 42,
-    timestamp: Date.now() - 3600000 * 5,
-    color: '#fbbf24',
-    notes: 'Vehicle parked near ranger post',
-  },
-];
+// No pre-loaded waypoints: the list only ever contains places the user saved.
+const DEFAULT_WAYPOINTS: Waypoint[] = [];
 
 type TabId = 'compass' | 'altimeter' | 'sensors' | 'waypoints';
 
@@ -154,8 +134,8 @@ export const App: React.FC = () => {
     totalAscent: 0,
     totalDescent: 0,
     totalDistance: 0,
-    maxAltitude: 0,
-    minAltitude: 0,
+    maxAltitude: null,
+    minAltitude: null,
   });
 
   // Device sensors custom hook
@@ -200,6 +180,11 @@ export const App: React.FC = () => {
     }
   }, [waypoints]);
 
+  // Heading to store with track points: only when a real (or simulated) compass is live
+  const orientationLive = sensors.isHardwareOrientationAvailable || sensors.isSimulationMode;
+  const trackHeading = (): number | null =>
+    !orientationLive ? null : preferences.northMode === 'true' && sensors.declination !== null ? sensors.trueHeading : sensors.heading;
+
   // Track recording interval
   const lastRecordedPointRef = useRef<TrackPoint | null>(null);
 
@@ -215,8 +200,8 @@ export const App: React.FC = () => {
         longitude: currentLon,
         altitude: currentAlt,
         pressure: sensors.pressure,
-        heading: preferences.northMode === 'true' ? sensors.trueHeading : sensors.heading,
-        speed: sensors.gpsSpeed ?? 0,
+        heading: trackHeading(),
+        speed: sensors.gpsSpeed,
         timestamp: Date.now(),
       };
 
@@ -232,9 +217,12 @@ export const App: React.FC = () => {
             currentLat,
             currentLon
           );
-          const dAlt = currentAlt - lastRecordedPointRef.current.altitude;
-          if (dAlt > 0) deltaAsc = dAlt;
-          if (dAlt < 0) deltaDesc = Math.abs(dAlt);
+          const lastAlt = lastRecordedPointRef.current.altitude;
+          if (currentAlt !== null && lastAlt !== null) {
+            const dAlt = currentAlt - lastAlt;
+            if (dAlt > 0) deltaAsc = dAlt;
+            if (dAlt < 0) deltaDesc = Math.abs(dAlt);
+          }
         }
 
         lastRecordedPointRef.current = currentPoint;
@@ -245,8 +233,8 @@ export const App: React.FC = () => {
           totalDistance: prev.totalDistance + deltaDist,
           totalAscent: prev.totalAscent + deltaAsc,
           totalDescent: prev.totalDescent + deltaDesc,
-          maxAltitude: Math.max(prev.maxAltitude, currentAlt),
-          minAltitude: prev.points.length === 0 ? currentAlt : Math.min(prev.minAltitude, currentAlt),
+          maxAltitude: currentAlt === null ? prev.maxAltitude : Math.max(prev.maxAltitude ?? currentAlt, currentAlt),
+          minAltitude: currentAlt === null ? prev.minAltitude : Math.min(prev.minAltitude ?? currentAlt, currentAlt),
         };
       });
     }, 2500);
@@ -268,8 +256,8 @@ export const App: React.FC = () => {
         longitude: currentLon,
         altitude: sensors.barometricAltitude,
         pressure: sensors.pressure,
-        heading: preferences.northMode === 'true' ? sensors.trueHeading : sensors.heading,
-        speed: sensors.gpsSpeed ?? 0,
+        heading: trackHeading(),
+        speed: sensors.gpsSpeed,
         timestamp: now,
       };
       lastRecordedPointRef.current = startPoint;
@@ -411,6 +399,12 @@ export const App: React.FC = () => {
     updatePreferences({ palette: nextPalette });
     triggerHaptic(20);
   };
+
+  // True North needs a magnetic declination, which needs a position; until then everything is magnetic
+  const viewPreferences: UserPreferences =
+    preferences.northMode === 'true' && sensors.declination === null
+      ? { ...preferences, northMode: 'magnetic' }
+      : preferences;
 
   const gpsStatus =
     sensors.isSimulationMode && sensors.latitude !== null
@@ -583,7 +577,7 @@ export const App: React.FC = () => {
         {activeTab === 'compass' && (
           <CompassView
             sensors={sensors}
-            preferences={preferences}
+            preferences={viewPreferences}
             waypoints={waypoints}
             onSetSimulationHeading={setSimulationHeading}
             onSetSimulationPitchRoll={setSimulationPitchRoll}
@@ -599,7 +593,7 @@ export const App: React.FC = () => {
         {activeTab === 'altimeter' && (
           <AltimeterBarometerView
             sensors={sensors}
-            preferences={preferences}
+            preferences={viewPreferences}
             onSetQnh={setQnh}
             onSetManualPressure={setManualPressure}
             onTareAltitude={tareAltitude}
@@ -613,7 +607,7 @@ export const App: React.FC = () => {
         {activeTab === 'sensors' && (
           <SensorMatrixView
             sensors={sensors}
-            preferences={preferences}
+            preferences={viewPreferences}
             trackSession={trackSession}
             onOpenCalibration={() => setIsCalibrationOpen(true)}
             onAddWaypoint={handleAddWaypoint}
@@ -626,7 +620,7 @@ export const App: React.FC = () => {
         {activeTab === 'waypoints' && (
           <WaypointsNavView
             sensors={sensors}
-            preferences={preferences}
+            preferences={viewPreferences}
             waypoints={waypoints}
             onAddWaypoint={handleAddWaypoint}
             onDeleteWaypoint={handleDeleteWaypoint}
@@ -684,7 +678,7 @@ export const App: React.FC = () => {
       {isCameraSightingOpen && (
         <CameraSightingView
           sensors={sensors}
-          preferences={preferences}
+          preferences={viewPreferences}
           waypoints={waypoints}
           onClose={() => setIsCameraSightingOpen(false)}
         />

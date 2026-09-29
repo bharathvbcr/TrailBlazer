@@ -11,6 +11,8 @@ Precision compass, altimeter, barometer, and environmental sensor suite with Mat
 - **Glider Audio Variometer**: Acoustic feedback with pitch-modulated climb beeps and sink tone.
 - **AR Camera Sighting**: Augmented reality camera overlay with a scrolling azimuth tape, off-screen target hints and a clear camera-unavailable state.
 - **Mobile-first UX**: Swipe between tabs, remembered last tab, compact Telemetry view, undoable waypoint deletion, toasts instead of blocking alerts, and a first-run sensor setup (location is only requested once you opt in; a built-in simulator works without any permissions).
+- **Real data only**: No placeholder positions, sample tracks, pre-loaded waypoints or invented sensor values. Anything a device can't measure shows as unavailable. Magnetic declination and expected field strength come from the World Magnetic Model; the sun position is computed from your position and clock; the pressure trend is built from readings actually recorded on your device. The built-in simulator is opt-in and clearly labelled.
+- **Sensor sources**: Browsers provide orientation, motion and GPS. The Android app additionally bridges the barometer, magnetometer and ambient light sensor. Without a barometer you can enter a pressure reading manually.
 - **Night modes**: Night Red and Phosphor Green tint the entire UI to preserve dark adaptation.
 
 ## Getting Started

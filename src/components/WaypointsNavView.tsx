@@ -97,12 +97,19 @@ export const WaypointsNavView: React.FC<Props> = ({
       name: autoName,
       latitude: Number(sensors.latitude.toFixed(6)),
       longitude: Number(sensors.longitude.toFixed(6)),
-      altitude: Number(sensors.barometricAltitude.toFixed(1)),
+      altitude: sensors.barometricAltitude !== null ? Number(sensors.barometricAltitude.toFixed(1)) : null,
       color,
-      notes: `Captured via Quick Mark during track session • Alt: ${sensors.barometricAltitude.toFixed(1)}m • Press: ${sensors.pressure.toFixed(1)} hPa • Speed: ${((sensors.gpsSpeed ?? 0) * 3.6).toFixed(1)} km/h`,
+      notes: [
+        'Captured via Quick Mark',
+        sensors.barometricAltitude !== null ? `Alt: ${sensors.barometricAltitude.toFixed(1)}m` : null,
+        sensors.pressure !== null ? `Press: ${sensors.pressure.toFixed(1)} hPa` : null,
+        sensors.gpsSpeed !== null ? `Speed: ${(sensors.gpsSpeed * 3.6).toFixed(1)} km/h` : null,
+      ]
+        .filter(Boolean)
+        .join(' • '),
     });
 
-    setQuickMarkFeedback(`✓ Quick Mark saved: ${sensors.latitude.toFixed(4)}°, ${sensors.longitude.toFixed(4)}° • ${sensors.barometricAltitude.toFixed(0)}m`);
+    setQuickMarkFeedback(`✓ Quick Mark saved: ${sensors.latitude.toFixed(4)}°, ${sensors.longitude.toFixed(4)}°${sensors.barometricAltitude !== null ? ` • ${sensors.barometricAltitude.toFixed(0)}m` : ''}`);
     setTimeout(() => setQuickMarkFeedback(null), 3500);
   };
 
@@ -355,7 +362,7 @@ export const WaypointsNavView: React.FC<Props> = ({
         <TrackSpeedTrendChart
           trackSession={trackSession}
           preferences={preferences}
-          currentSpeedMs={sensors.gpsSpeed ?? 0}
+          currentSpeedMs={sensors.gpsSpeed}
           sensors={sensors}
           onSetSimulationSpeed={onSetSimulationSpeed}
           onToggleTrackRecording={onToggleTrackRecording}
@@ -420,10 +427,10 @@ export const WaypointsNavView: React.FC<Props> = ({
                 wp.latitude,
                 wp.longitude
               );
-              elevDiff = wp.altitude - sensors.barometricAltitude;
+              elevDiff = wp.altitude !== null && sensors.barometricAltitude !== null ? wp.altitude - sensors.barometricAltitude : null;
             }
 
-            const altConverted = convertAltitude(wp.altitude, preferences.altitudeUnit);
+            const altConverted = wp.altitude !== null ? convertAltitude(wp.altitude, preferences.altitudeUnit) : null;
             const elevDiffConverted = elevDiff !== null ? convertAltitude(elevDiff, preferences.altitudeUnit) : null;
 
             return (
@@ -476,7 +483,7 @@ export const WaypointsNavView: React.FC<Props> = ({
                         <span>•</span>
                         <span className="flex items-center space-x-0.5">
                           <Mountain className="w-3 h-3 text-cyan-400" />
-                          <span>{altConverted.value.toFixed(0)} {altConverted.label}</span>
+                          <span>{altConverted ? `${altConverted.value.toFixed(0)} ${altConverted.label}` : '—'}</span>
                         </span>
                       </div>
                     </div>
@@ -597,7 +604,7 @@ export const WaypointsNavView: React.FC<Props> = ({
                 <div className="p-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] text-slate-400 space-y-0.5 font-mono">
                   <div>Lat: {sensors.latitude?.toFixed(5)}°</div>
                   <div>Lon: {sensors.longitude?.toFixed(5)}°</div>
-                  <div>Alt: {sensors.barometricAltitude.toFixed(0)} m</div>
+                  <div>Alt: {sensors.barometricAltitude !== null ? `${sensors.barometricAltitude.toFixed(0)} m` : '—'}</div>
                 </div>
 
                 <div className="flex space-x-2 pt-2">

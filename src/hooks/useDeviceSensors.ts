@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import geomagnetism from 'geomagnetism';
 import {
   SensorState,
   PressureHistoryPoint,
@@ -17,13 +18,44 @@ import {
   stopAudioVariometer,
 } from '../utils/audioHaptics';
 
-const INITIAL_HISTORY: PressureHistoryPoint[] = [
-  { timestamp: Date.now() - 3600000 * 3, pressure: 1014.8, altitude: 120 },
-  { timestamp: Date.now() - 3600000 * 2, pressure: 1014.2, altitude: 125 },
-  { timestamp: Date.now() - 3600000 * 1, pressure: 1013.6, altitude: 130 },
-  { timestamp: Date.now() - 1800000, pressure: 1013.4, altitude: 132 },
-  { timestamp: Date.now(), pressure: 1013.25, altitude: 134 },
-];
+const HISTORY_KEY = 'aeroglass_pressure_history';
+const HISTORY_WINDOW_MS = 4 * 3600 * 1000;
+const MIN_TREND_SPAN_MS = 10 * 60 * 1000;
+
+/** Real pressure readings recorded on this device (persisted so trends survive reloads). */
+function loadPressureHistory(): PressureHistoryPoint[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return [];
+    const cutoff = Date.now() - HISTORY_WINDOW_MS;
+    return (JSON.parse(raw) as PressureHistoryPoint[]).filter(
+      (p) => typeof p.timestamp === 'number' && typeof p.pressure === 'number' && p.timestamp >= cutoff
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** Trend/tendency are only meaningful once readings span a useful period; otherwise they stay null. */
+function deriveTrend(history: PressureHistoryPoint[], pressure: number | null) {
+  const sorted = history.length > 1 ? history : [];
+  const span = sorted.length ? sorted[sorted.length - 1].timestamp - sorted[0].timestamp : 0;
+  if (pressure === null || span < MIN_TREND_SPAN_MS) {
+    return { pressureTrendRate: null, weatherTendency: null, barometricTrend3h: null };
+  }
+  const trend3h = calculateThreeHourBarometricTrend(history, pressure);
+  return {
+    pressureTrendRate: trend3h.ratePerHour,
+    weatherTendency: analyzeWeatherTendency(trend3h.ratePerHour, pressure),
+    barometricTrend3h: trend3h,
+  };
+}
+
+type NativeBridge = {
+  getPressureHpa?: () => number;
+  getMagneticFluxUt?: () => number;
+  getLightLux?: () => number;
+};
 
 const SIM_LATITUDE = 37.7749;
 const SIM_LONGITUDE = -122.4194;
@@ -31,23 +63,26 @@ const SIM_LONGITUDE = -122.4194;
 export function useDeviceSensors(preferences: UserPreferences, options: { locationEnabled?: boolean } = {}) {
   const locationEnabled = options.locationEnabled ?? true;
   const hasRealFix = useRef(false);
-  const [sensors, setSensors] = useState<SensorState>({
+  const [sensors, setSensors] = useState<SensorState>(() => ({
+    // Orientation: zero until a real (or simulated) source reports; UI gates on availability flags
     heading: 0,
     pitch: 0,
     roll: 0,
-    headingAccuracy: 1,
+    headingAccuracy: null,
     trueHeading: 0,
-    declination: 2.5, // nominal default
+    declination: null,
 
-    pressure: 1013.25,
-    qnh: 1013.25,
-    barometricAltitude: 0,
+    // Barometer: no reading exists until a device sensor or the user provides one
+    pressure: null,
+    pressureSource: 'none',
+    qnh: 1013.25, // standard-atmosphere reference (user adjustable), not a measurement
+    barometricAltitude: null,
     relativeAltitudeZero: 0,
     gpsAltitude: null,
-    pressureHistory: INITIAL_HISTORY,
-    pressureTrendRate: -0.52,
-    weatherTendency: analyzeWeatherTendency(-0.52, 1013.25),
-    barometricTrend3h: calculateThreeHourBarometricTrend(INITIAL_HISTORY, 1013.25),
+    pressureHistory: loadPressureHistory(),
+    pressureTrendRate: null,
+    weatherTendency: null,
+    barometricTrend3h: null,
 
     verticalSpeed: 0,
     sessionAscentGain: 0,
@@ -55,40 +90,43 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
 
     accelX: 0,
     accelY: 0,
-    accelZ: 9.81,
-    gForce: 1.0,
+    accelZ: 0,
+    gForce: 0,
     gyroX: 0,
     gyroY: 0,
     gyroZ: 0,
 
-    magneticFlux: 46.2,
+    magneticFlux: null,
+    expectedMagneticField: null,
     magneticAnomaly: false,
-    ambientLight: 340,
-    lightCondition: 'office',
+    ambientLight: null,
 
     // No position until the GPS reports one (or the simulator supplies a sample location)
     latitude: null,
     longitude: null,
-    gpsSpeed: 0,
+    gpsSpeed: null,
     gpsHeading: null,
     gpsAccuracy: null,
-    sunAzimuth: 142,
-    sunElevation: 48,
+    sunAzimuth: null,
+    sunElevation: null,
 
     isHardwareOrientationAvailable: false,
     isHardwareMotionAvailable: false,
     isGpsAvailable: false,
     isSimulationMode: false,
     wakeLockActive: false,
-  });
+  }));
+  const realHistoryRef = useRef<PressureHistoryPoint[]>([]);
+  const lastHistoryWriteRef = useRef(0);
 
   const lastVibrateCardinalRef = useRef<number>(-1);
   const lastLevelVibrateRef = useRef<boolean>(false);
   const smoothedHeadingRef = useRef<number>(0);
+  const headingSeededRef = useRef(false);
   const lastTickHeadingRef = useRef<number>(0);
 
   // VSI / Variometer tracking
-  const lastAltTimeRef = useRef<{ alt: number; time: number }>({ alt: 0, time: Date.now() });
+  const lastAltTimeRef = useRef<{ alt: number | null; time: number }>({ alt: null, time: Date.now() });
   const smoothedVsiRef = useRef<number>(0);
   const wakeLockSentinelRef = useRef<unknown>(null);
 
@@ -184,55 +222,37 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
 
   // Update pressure or QNH
   const setQnh = useCallback((newQnh: number) => {
-    setSensors((prev) => {
-      const alt = calculateBarometricAltitude(prev.pressure, newQnh);
-      return {
-        ...prev,
-        qnh: Number(newQnh.toFixed(2)),
-        barometricAltitude: Number(alt.toFixed(1)),
-      };
-    });
+    setSensors((prev) => ({
+      ...prev,
+      qnh: newQnh,
+      barometricAltitude: prev.pressure !== null ? calculateBarometricAltitude(prev.pressure, newQnh) : prev.barometricAltitude,
+    }));
   }, []);
 
+  // A pressure reading from the user (or the simulator); recorded in history as a real data point
   const setManualPressure = useCallback((newPressure: number) => {
     setSensors((prev) => {
       const alt = calculateBarometricAltitude(newPressure, prev.qnh);
-      const historyPoint: PressureHistoryPoint = {
-        timestamp: Date.now(),
-        pressure: newPressure,
-        altitude: alt,
-      };
-      // Keep history points covering at least 4 hours so 3-hour trend remains continuously evaluated
-      const fourHoursAgo = Date.now() - 4 * 3600 * 1000;
-      const filtered = prev.pressureHistory.filter((pt) => pt.timestamp >= fourHoursAgo);
-      const updatedHistory = [...filtered, historyPoint];
-      const trend3h = calculateThreeHourBarometricTrend(updatedHistory, newPressure);
-      const trendRate = trend3h.ratePerHour;
+      const history = [
+        ...prev.pressureHistory.filter((pt) => pt.timestamp >= Date.now() - HISTORY_WINDOW_MS),
+        { timestamp: Date.now(), pressure: Number(newPressure.toFixed(2)), altitude: Number(alt.toFixed(1)) },
+      ];
       return {
         ...prev,
         pressure: Number(newPressure.toFixed(2)),
+        pressureSource: prev.isSimulationMode ? 'simulated' : 'manual',
         barometricAltitude: Number(alt.toFixed(1)),
-        pressureHistory: updatedHistory,
-        pressureTrendRate: trendRate,
-        weatherTendency: analyzeWeatherTendency(trendRate, newPressure),
-        barometricTrend3h: trend3h,
+        pressureHistory: history,
+        ...deriveTrend(history, newPressure),
       };
     });
-  }, []);
-
-  const setDeclination = useCallback((newDec: number) => {
-    setSensors((prev) => ({
-      ...prev,
-      declination: Number(newDec.toFixed(1)),
-      trueHeading: Math.round(((prev.heading + newDec + 360) % 360) * 10) / 10,
-    }));
   }, []);
 
   // Tare / Zero Relative Altitude
   const tareAltitude = useCallback(() => {
     setSensors((prev) => ({
       ...prev,
-      relativeAltitudeZero: prev.barometricAltitude,
+      relativeAltitudeZero: prev.barometricAltitude ?? 0,
     }));
     triggerHaptic(20);
   }, [triggerHaptic]);
@@ -248,7 +268,7 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
   // Calibrate QNH so current barometric altitude matches GPS altitude
   const calibrateToGpsAltitude = useCallback(() => {
     setSensors((prev) => {
-      if (prev.gpsAltitude === null) return prev;
+      if (prev.gpsAltitude === null || prev.pressure === null) return prev;
       const gpsAlt = prev.gpsAltitude;
       const newQnh = prev.pressure * Math.pow(1 - (gpsAlt / 44330.8), -5.255);
       return {
@@ -267,7 +287,7 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
       return {
         ...prev,
         heading: norm,
-        trueHeading: (norm + prev.declination) % 360,
+        trueHeading: (norm + (prev.declination ?? 0)) % 360,
       };
     });
   }, []);
@@ -283,14 +303,35 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
   const toggleSimulationMode = useCallback(() => {
     setSensors((prev) => {
       const turningOn = !prev.isSimulationMode;
-      if (turningOn && prev.latitude === null) {
-        // Supply a sample location so map/track features are demonstrable
-        return { ...prev, isSimulationMode: true, latitude: SIM_LATITUDE, longitude: SIM_LONGITUDE, gpsAccuracy: 8, isGpsAvailable: true };
+      if (turningOn) {
+        // Remember real readings so simulated values never contaminate them
+        realHistoryRef.current = prev.pressureSource === 'simulated' ? realHistoryRef.current : prev.pressureHistory;
+        return {
+          ...prev,
+          isSimulationMode: true,
+          ...(prev.latitude === null
+            ? { latitude: SIM_LATITUDE, longitude: SIM_LONGITUDE, gpsAccuracy: 8, isGpsAvailable: true }
+            : {}),
+        };
       }
-      if (!turningOn && !hasRealFix.current) {
-        return { ...prev, isSimulationMode: false, latitude: null, longitude: null, gpsAccuracy: null, isGpsAvailable: false };
-      }
-      return { ...prev, isSimulationMode: turningOn };
+      const restored = realHistoryRef.current;
+      const leavingSimPressure = prev.pressureSource === 'simulated';
+      return {
+        ...prev,
+        isSimulationMode: false,
+        ...(hasRealFix.current
+          ? {}
+          : { latitude: null, longitude: null, gpsAccuracy: null, gpsSpeed: null, isGpsAvailable: false }),
+        ...(leavingSimPressure
+          ? {
+              pressure: null,
+              pressureSource: 'none' as const,
+              barometricAltitude: prev.gpsAltitude,
+              pressureHistory: restored,
+              ...deriveTrend(restored, null),
+            }
+          : {}),
+      };
     });
   }, []);
 
@@ -305,6 +346,7 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
   // Quick preset scenario tester for 3-hour barometric trend
   const setSimulatedTrendScenario = useCallback((scenario: 'rising' | 'falling' | 'steady') => {
     setSensors((prev) => {
+      if (prev.pressure === null || !prev.isSimulationMode) return prev;
       const now = Date.now();
       const currentP = prev.pressure;
       let p3h: number;
@@ -337,6 +379,7 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
       return {
         ...prev,
         pressureHistory: simulatedHistory,
+        pressureSource: 'simulated' as const,
         pressureTrendRate: trend3h.ratePerHour,
         weatherTendency: analyzeWeatherTendency(trend3h.ratePerHour, currentP),
         barometricTrend3h: trend3h,
@@ -351,6 +394,13 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
     let hasMotionData = false;
 
     const handleOrientation = (event: DeviceOrientationEvent) => {
+      // Only trust events that carry a north reference. Relative-alpha events (or events with
+      // no data, as desktop browsers fire once) would produce a made-up heading.
+      const hasNorthReference =
+        typeof (event as unknown as { webkitCompassHeading?: number }).webkitCompassHeading === 'number' ||
+        event.absolute === true ||
+        (event.type as string) === 'deviceorientationabsolute';
+      if (!hasNorthReference || (event.alpha === null && typeof (event as unknown as { webkitCompassHeading?: number }).webkitCompassHeading !== 'number')) return;
       hasOrientationData = true;
       let rawHeading = 0;
       let accuracy: number | null = null;
@@ -366,6 +416,12 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
       }
 
       // Smooth heading with low-pass filter to prevent jumpy needle
+      // Seed the filter with the first real reading so the needle doesn't sweep in from 0°
+      if (!headingSeededRef.current) {
+        smoothedHeadingRef.current = rawHeading;
+        lastTickHeadingRef.current = rawHeading;
+        headingSeededRef.current = true;
+      }
       let current = smoothedHeadingRef.current;
       let diff = rawHeading - current;
       if (diff > 180) diff -= 360;
@@ -416,7 +472,7 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
         return {
           ...prev,
           heading: normHeading,
-          trueHeading: Math.round(((normHeading + prev.declination) % 360) * 10) / 10,
+          trueHeading: Math.round(((normHeading + (prev.declination ?? 0)) % 360) * 10) / 10,
           pitch: Math.round(pitch * 10) / 10,
           roll: Math.round(roll * 10) / 10,
           headingAccuracy: accuracy,
@@ -426,19 +482,17 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
     };
 
     const handleMotion = (event: DeviceMotionEvent) => {
-      hasMotionData = true;
       const acc = event.accelerationIncludingGravity || event.acceleration;
+      if (!acc || acc.x === null || acc.y === null || acc.z === null) return;
+      hasMotionData = true;
       const rot = event.rotationRate;
 
       const ax = acc?.x ?? 0;
       const ay = acc?.y ?? 0;
-      const az = acc?.z ?? 9.81;
+      const az = acc?.z ?? 0;
 
       const magnitude = Math.sqrt(ax * ax + ay * ay + az * az);
       const gForce = magnitude / 9.80665;
-
-      const baseMagneticFlux = 45 + Math.abs(ax) * 1.5;
-      const anomaly = baseMagneticFlux > 75;
 
       setSensors((prev) => {
         if (prev.isSimulationMode) return prev;
@@ -451,8 +505,6 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
           gyroX: Math.round((rot?.alpha ?? 0) * 10) / 10,
           gyroY: Math.round((rot?.beta ?? 0) * 10) / 10,
           gyroZ: Math.round((rot?.gamma ?? 0) * 10) / 10,
-          magneticFlux: Math.round(baseMagneticFlux * 10) / 10,
-          magneticAnomaly: anomaly,
           isHardwareMotionAvailable: true,
         };
       });
@@ -491,11 +543,10 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
       (pos) => {
         hasRealFix.current = true;
         const { latitude, longitude, altitude, speed, heading, accuracy } = pos.coords;
-        const sun = calculateSunPosition(latitude, longitude);
-
         setSensors((prev) => {
+          // GPS altitude is the fallback only while no barometric reading exists
           let updatedAlt = prev.barometricAltitude;
-          if (altitude !== null && !prev.isSimulationMode) {
+          if (altitude !== null && !prev.isSimulationMode && prev.pressure === null) {
             updatedAlt = altitude;
           }
 
@@ -504,11 +555,9 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
             latitude: Number(latitude.toFixed(5)),
             longitude: Number(longitude.toFixed(5)),
             gpsAltitude: altitude !== null ? Number(altitude.toFixed(1)) : prev.gpsAltitude,
-            gpsSpeed: speed !== null ? Number(speed.toFixed(1)) : 0,
+            gpsSpeed: speed !== null ? Number(speed.toFixed(1)) : null,
             gpsHeading: heading !== null ? Number(heading.toFixed(1)) : null,
             gpsAccuracy: accuracy !== null ? Math.round(accuracy) : null,
-            sunAzimuth: Math.round(sun.azimuth),
-            sunElevation: Math.round(sun.elevation),
             isGpsAvailable: true,
             barometricAltitude: updatedAlt,
           };
@@ -536,6 +585,10 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
       const now = Date.now();
       const currentAlt = sensors.barometricAltitude;
       const last = lastAltTimeRef.current;
+      if (currentAlt === null || last.alt === null) {
+        lastAltTimeRef.current = { alt: currentAlt, time: now };
+        return;
+      }
       const dt = Math.max(0.2, (now - last.time) / 1000); // seconds
 
       const rawVsi = (currentAlt - last.alt) / dt; // m/s
@@ -558,39 +611,138 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
     return () => clearInterval(vsiInterval);
   }, [sensors.barometricAltitude]);
 
-  // Periodic sensor snapshot recorder (updates pressure history & weather tendency)
+  // Re-evaluate the trend as time passes (no synthetic points are added)
   useEffect(() => {
     const interval = setInterval(() => {
-      setSensors((prev) => {
-        const point: PressureHistoryPoint = {
-          timestamp: Date.now(),
-          pressure: prev.pressure,
-          altitude: prev.barometricAltitude,
-        };
-        const fourHoursAgo = Date.now() - 4 * 3600 * 1000;
-        const filtered = prev.pressureHistory.filter((p) => p.timestamp >= fourHoursAgo);
-        const newHistory = [...filtered, point];
-        const trend3h = calculateThreeHourBarometricTrend(newHistory, prev.pressure);
-        const roundedRate = trend3h.ratePerHour;
-
-        return {
-          ...prev,
-          pressureHistory: newHistory,
-          pressureTrendRate: roundedRate,
-          weatherTendency: analyzeWeatherTendency(roundedRate, prev.pressure),
-          barometricTrend3h: trend3h,
-        };
-      });
-    }, 20000);
-
+      setSensors((prev) =>
+        prev.pressure === null ? prev : { ...prev, ...deriveTrend(prev.pressureHistory, prev.pressure) }
+      );
+    }, 60000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Persist genuine pressure history (never simulated data)
+  useEffect(() => {
+    if (sensors.isSimulationMode || sensors.pressureSource === 'simulated') return;
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(sensors.pressureHistory));
+    } catch {
+      // ignore
+    }
+  }, [sensors.pressureHistory, sensors.isSimulationMode, sensors.pressureSource]);
+
+  // Magnetic declination + expected field strength from the World Magnetic Model
+  useEffect(() => {
+    if (sensors.latitude === null || sensors.longitude === null) {
+      setSensors((prev) =>
+        prev.declination === null && prev.expectedMagneticField === null ? prev : { ...prev, declination: null, expectedMagneticField: null }
+      );
+      return;
+    }
+    try {
+      const info = geomagnetism
+        .model(new Date(), { allowOutOfBoundsModel: true })
+        .point([sensors.latitude, sensors.longitude]);
+      setSensors((prev) => ({
+        ...prev,
+        declination: Number(info.decl.toFixed(1)),
+        expectedMagneticField: Number((info.f / 1000).toFixed(1)),
+        trueHeading: Math.round((((prev.heading + info.decl) % 360) + 360) % 360 * 10) / 10,
+      }));
+    } catch (err) {
+      console.warn('Declination model unavailable:', err);
+    }
+  }, [sensors.latitude, sensors.longitude]);
+
+  // Sun position: pure astronomy from position + clock
+  useEffect(() => {
+    const update = () => {
+      setSensors((prev) => {
+        if (prev.latitude === null || prev.longitude === null) {
+          return prev.sunAzimuth === null ? prev : { ...prev, sunAzimuth: null, sunElevation: null };
+        }
+        const sun = calculateSunPosition(prev.latitude, prev.longitude);
+        return { ...prev, sunAzimuth: Math.round(sun.azimuth), sunElevation: Math.round(sun.elevation) };
+      });
+    };
+    update();
+    const interval = setInterval(update, 60000);
+    return () => clearInterval(interval);
+  }, [sensors.latitude, sensors.longitude]);
+
+  // Environmental sensors: only genuine hardware sources (Android bridge, Generic Sensor API)
+  useEffect(() => {
+    const cleanups: Array<() => void> = [];
+    const w = window as unknown as Record<string, unknown> & { AndroidBridge?: NativeBridge };
+
+    const setMag = (flux: number) =>
+      setSensors((prev) => {
+        const expected = prev.expectedMagneticField;
+        const anomaly = expected ? Math.abs(flux - expected) / expected > 0.35 : flux < 20 || flux > 80;
+        return { ...prev, magneticFlux: Math.round(flux * 10) / 10, magneticAnomaly: anomaly };
+      });
+    const setLight = (lux: number) => setSensors((prev) => ({ ...prev, ambientLight: Math.round(lux) }));
+
+    const startGenericSensor = (name: string, onReading: (sensor: Record<string, number>) => void) => {
+      try {
+        const Ctor = w[name] as (new (opts: { frequency: number }) => EventTarget & { start: () => void; stop: () => void } & Record<string, number>) | undefined;
+        if (!Ctor) return;
+        const sensor = new Ctor({ frequency: 4 });
+        sensor.addEventListener('reading', () => onReading(sensor));
+        sensor.addEventListener('error', () => {});
+        sensor.start();
+        cleanups.push(() => sensor.stop());
+      } catch {
+        // sensor blocked by permissions policy or unsupported
+      }
+    };
+    startGenericSensor('Magnetometer', (s) => setMag(Math.hypot(s.x, s.y, s.z)));
+    startGenericSensor('AmbientLightSensor', (s) => setLight(s.illuminance));
+
+    const bridge = w.AndroidBridge;
+    if (bridge) {
+      const poll = () => {
+        const flux = bridge.getMagneticFluxUt?.();
+        if (typeof flux === 'number' && isFinite(flux)) setMag(flux);
+        const lux = bridge.getLightLux?.();
+        if (typeof lux === 'number' && isFinite(lux)) setLight(lux);
+        const hpa = bridge.getPressureHpa?.();
+        if (typeof hpa === 'number' && isFinite(hpa) && hpa > 300 && hpa < 1100) {
+          setSensors((prev) => {
+            if (prev.isSimulationMode) return prev;
+            const now = Date.now();
+            const alt = calculateBarometricAltitude(hpa, prev.qnh);
+            let history = prev.pressureHistory;
+            if (now - lastHistoryWriteRef.current >= 60000) {
+              lastHistoryWriteRef.current = now;
+              history = [
+                ...history.filter((pt) => pt.timestamp >= now - HISTORY_WINDOW_MS),
+                { timestamp: now, pressure: Number(hpa.toFixed(2)), altitude: Number(alt.toFixed(1)) },
+              ];
+            }
+            return {
+              ...prev,
+              pressure: Number(hpa.toFixed(2)),
+              pressureSource: 'sensor',
+              barometricAltitude: Number(alt.toFixed(1)),
+              pressureHistory: history,
+              ...(history === prev.pressureHistory ? {} : deriveTrend(history, hpa)),
+            };
+          });
+        }
+      };
+      poll();
+      const interval = window.setInterval(poll, 1000);
+      cleanups.push(() => window.clearInterval(interval));
+    }
+
+    return () => cleanups.forEach((fn) => fn());
   }, []);
 
   return {
     sensors,
     setQnh,
     setManualPressure,
-    setDeclination,
     tareAltitude,
     resetTare,
     calibrateToGpsAltitude,

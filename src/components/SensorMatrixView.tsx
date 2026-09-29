@@ -3,7 +3,7 @@ import { SensorState, UserPreferences, TrackSession, Waypoint } from '../types/s
 import { formatToDMS } from '../utils/calculations';
 import { useAcousticSensor } from '../hooks/useAcousticSensor';
 import { GlassCard } from './GlassCard';
-import { Page, PageHeader, CardHeader } from './Layout';
+import { Page, PageHeader, CardHeader, Unavailable } from './Layout';
 import { TrackElevationProfileChart } from './TrackElevationProfileChart';
 import {
   Activity,
@@ -63,7 +63,8 @@ export const SensorMatrixView: React.FC<Props> = ({
     return { label: 'Direct Sunlight', category: 'sun' };
   };
 
-  const lightInfo = getLightLevelText(sensors.ambientLight);
+  const lightInfo = sensors.ambientLight !== null ? getLightLevelText(sensors.ambientLight) : null;
+  const motionLive = sensors.isHardwareMotionAvailable;
 
   return (
     <Page>
@@ -107,34 +108,39 @@ export const SensorMatrixView: React.FC<Props> = ({
             >
               Calibrate
             </button>
-            {sensors.magneticAnomaly ? (
+            {sensors.magneticFlux === null ? null : sensors.magneticAnomaly ? (
               <span className="flex items-center space-x-1 text-[11px] font-semibold text-rose-400 bg-rose-500/15 px-2 py-0.5 rounded-full border border-rose-500/30">
                 <AlertCircle className="w-3 h-3" />
                 <span>Ferromagnetic Alert</span>
               </span>
             ) : (
               <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded-full border border-emerald-500/30">
-                Normal Earth Field
+                Normal field
               </span>
             )}
           </div>
         </CardHeader>
+
+        {sensors.magneticFlux !== null ? (
+          <>
 
         <div className="flex items-baseline justify-between mb-2">
           <div className="text-3xl font-black font-mono text-white">
             {sensors.magneticFlux.toFixed(1)}{' '}
             <span className="text-sm font-semibold text-cyan-400 font-sans">µT</span>
           </div>
-          <span className="text-xs text-slate-400 font-mono">
-            Nominal: 25 – 65 µT
-          </span>
+          {sensors.expectedMagneticField !== null && (
+            <span className="text-xs text-slate-400 font-mono" title="World Magnetic Model estimate for your position">
+              Expected here: {sensors.expectedMagneticField} µT
+            </span>
+          )}
         </div>
 
         {/* Magnetic field flux progress bar */}
         <div className="w-full h-2 rounded-full bg-white/10 overflow-hidden relative mb-3">
           <div
             className={`h-full transition-all duration-300 rounded-full ${
-              sensors.magneticFlux > 75
+              sensors.magneticAnomaly
                 ? 'bg-gradient-to-r from-amber-400 to-rose-500'
                 : 'bg-gradient-to-r from-teal-400 to-cyan-400'
             }`}
@@ -145,8 +151,15 @@ export const SensorMatrixView: React.FC<Props> = ({
         <p className="text-[11px] text-slate-300 bg-white/[0.03] p-2.5 rounded-xl border border-white/[0.05] leading-relaxed">
           {sensors.magneticAnomaly
             ? 'High magnetic field detected. Nearby metals, electric cables, or car frames may distort compass bearings. Tap "Calibrate" to run figure-8 motion.'
-            : 'Magnetic field is nominal. Compass readings have high confidence and low interference.'}
+            : 'Field strength is close to what is expected here. Compass readings should be reliable.'}
         </p>
+</>
+        ) : (
+          <Unavailable>
+            No magnetometer data. Browsers rarely expose one; the Android app and some Chrome versions do. Your compass heading is unaffected.
+            {sensors.expectedMagneticField !== null && ` The World Magnetic Model expects about ${sensors.expectedMagneticField} µT at your position.`}
+          </Unavailable>
+        )}
       </GlassCard>
 
       {/* 3. Kinematics & Accelerometer G-Force */}
@@ -163,6 +176,9 @@ export const SensorMatrixView: React.FC<Props> = ({
             </button>
           </div>
         </CardHeader>
+
+        {motionLive ? (
+          <>
 
         <div className="grid grid-cols-2 gap-3 mb-3">
           <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
@@ -215,6 +231,10 @@ export const SensorMatrixView: React.FC<Props> = ({
             />
           </div>
         </div>
+</>
+        ) : (
+          <Unavailable>No accelerometer data. Allow motion access or use a device with motion sensors.</Unavailable>
+        )}
       </GlassCard>
 
       {compact ? (
@@ -226,9 +246,9 @@ export const SensorMatrixView: React.FC<Props> = ({
         </button>
       ) : (
         <>
-      {/* 4. Acoustic Sound Level (SPL Decibel Meter) */}
+      {/* 4. Microphone input level (relative dBFS, uncalibrated) */}
       <GlassCard className="w-full !p-4">
-        <CardHeader icon={<Volume2 className="text-cyan-400 w-4 h-4 shrink-0" />} title="Acoustic Sound Level (SPL)">
+        <CardHeader icon={<Volume2 className="text-cyan-400 w-4 h-4 shrink-0" />} title="Sound Input Level">
           <button
             onClick={() => setEnableMic(!enableMic)}
             className={`flex items-center space-x-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all ${
@@ -246,33 +266,36 @@ export const SensorMatrixView: React.FC<Props> = ({
           <div>
             <div className="flex items-baseline justify-between mb-2">
               <div className="text-3xl font-black font-mono text-white">
-                {acoustic.decibels}{' '}
-                <span className="text-sm font-semibold text-cyan-400 font-sans">dB SPL</span>
+                {acoustic.decibels ?? '—'}{' '}
+                <span className="text-sm font-semibold text-cyan-400 font-sans">dBFS</span>
               </div>
               <span className="text-xs font-mono text-slate-400">
-                Peak: {acoustic.peakDecibels} dB
+                Peak: {acoustic.peakDecibels ?? '—'} dBFS
               </span>
             </div>
 
             <div className="w-full h-2 rounded-full bg-white/10 overflow-hidden relative mb-2">
               <div
                 className={`h-full transition-all duration-150 rounded-full ${
-                  acoustic.decibels > 80
+                  (acoustic.decibels ?? -90) > -20
                     ? 'bg-gradient-to-r from-amber-400 to-rose-500'
                     : 'bg-gradient-to-r from-teal-400 to-cyan-400'
                 }`}
-                style={{ width: `${Math.min(100, Math.max(5, ((acoustic.decibels - 30) / 75) * 100))}%` }}
+                style={{ width: `${Math.min(100, Math.max(2, (((acoustic.decibels ?? -90) + 90) / 90) * 100))}%` }}
               />
             </div>
 
             <div className="flex justify-between items-center text-[11px] text-slate-300 bg-white/[0.03] p-2 rounded-xl border border-white/[0.05]">
-              <span>Classification:</span>
+              <span>Level:</span>
               <span className="font-semibold text-cyan-300">{acoustic.categoryLabel}</span>
             </div>
+            <p className="text-[11px] text-slate-500 mt-2 leading-relaxed">
+              Relative to your microphone&apos;s full scale. Phones don&apos;t report calibrated sound pressure, so this is not dB SPL.
+            </p>
           </div>
         ) : (
           <p className="text-[11px] text-slate-400 bg-white/[0.02] p-2.5 rounded-xl border border-white/[0.04]">
-            Tap "Enable Mic" to monitor real-time ambient decibels and sound pressure levels during hikes or outdoor operations.
+            Tap "Enable Mic" to show the live microphone input level. The microphone is only used while this is on and audio is never stored.
           </p>
         )}
       </GlassCard>
@@ -282,6 +305,9 @@ export const SensorMatrixView: React.FC<Props> = ({
         <CardHeader icon={<RotateCw className="text-emerald-400 w-4 h-4 shrink-0" />} title="Gyroscope Angular Velocity">
           <span className="text-[11px] font-mono text-slate-400">deg / sec</span>
         </CardHeader>
+
+        {motionLive ? (
+          <>
 
         <div className="grid grid-cols-3 gap-2 text-center font-mono">
           <div className="p-2.5 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
@@ -297,15 +323,24 @@ export const SensorMatrixView: React.FC<Props> = ({
             <span className="text-base font-bold text-white mt-0.5 block">{sensors.gyroZ.toFixed(1)}°/s</span>
           </div>
         </div>
+</>
+        ) : (
+          <Unavailable>No gyroscope data. Allow motion access or use a device with motion sensors.</Unavailable>
+        )}
       </GlassCard>
 
       {/* 6. Ambient Illumination (Lux) */}
       <GlassCard className="w-full !p-4">
         <CardHeader icon={<Sun className="text-amber-400 w-4 h-4 shrink-0" />} title="Ambient Light Sensor">
-          <span className="text-[11px] font-medium text-amber-300 bg-amber-500/15 px-2 py-0.5 rounded-full border border-amber-500/30">
-            {lightInfo.label}
-          </span>
+          {lightInfo && (
+            <span className="text-[11px] font-medium text-amber-300 bg-amber-500/15 px-2 py-0.5 rounded-full border border-amber-500/30">
+              {lightInfo.label}
+            </span>
+          )}
         </CardHeader>
+
+        {sensors.ambientLight !== null && lightInfo ? (
+          <>
 
         <div className="text-3xl font-black font-mono text-white mb-2">
           {Math.round(sensors.ambientLight)}{' '}
@@ -318,6 +353,10 @@ export const SensorMatrixView: React.FC<Props> = ({
             style={{ width: `${Math.min(100, (sensors.ambientLight / 2000) * 100)}%` }}
           />
         </div>
+</>
+        ) : (
+          <Unavailable>No ambient light sensor available on this device or browser.</Unavailable>
+        )}
       </GlassCard>
 
         </>
@@ -353,10 +392,10 @@ export const SensorMatrixView: React.FC<Props> = ({
               <div className="p-2.5 rounded-2xl bg-white/[0.04] border border-white/[0.06] text-center">
                 <span className="text-[11px] text-slate-400 uppercase block">Ground Speed</span>
                 <span className="text-base font-bold font-mono text-cyan-300 mt-0.5 block">
-                  {((sensors.gpsSpeed ?? 0) * 3.6).toFixed(1)} km/h
+                  {sensors.gpsSpeed === null ? '—' : `${(sensors.gpsSpeed * 3.6).toFixed(1)} km/h`}
                 </span>
                 <span className="text-[11px] text-slate-400 font-mono">
-                  {((sensors.gpsSpeed ?? 0) * 2.237).toFixed(1)} mph
+                  {sensors.gpsSpeed === null ? 'no speed reported' : `${(sensors.gpsSpeed * 2.237).toFixed(1)} mph`}
                 </span>
               </div>
 

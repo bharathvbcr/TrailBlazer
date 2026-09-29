@@ -56,6 +56,7 @@ export const CircularSpeedometerGauge: React.FC<Props> = ({
   const [showSimControls, setShowSimControls] = useState<boolean>(false);
 
   // Normalize current speed (m/s)
+  const hasSpeed = gpsSpeedMs !== null;
   const currentSpeedMs = Math.max(0, gpsSpeedMs ?? 0);
 
   // Update session peak speed
@@ -119,7 +120,7 @@ export const CircularSpeedometerGauge: React.FC<Props> = ({
 
   // Pace calculation (e.g., min:sec per km or mile)
   const paceFormatted = useMemo(() => {
-    if (currentSpeedMs < 0.3) return '—';
+    if (!hasSpeed || currentSpeedMs < 0.3) return '—';
     // seconds per km = 1000 / ms, seconds per mile = 1609.34 / ms
     const metersPerUnit = speedUnit === 'mph' ? 1609.34 : 1000;
     const paceSeconds = metersPerUnit / currentSpeedMs;
@@ -127,7 +128,7 @@ export const CircularSpeedometerGauge: React.FC<Props> = ({
     const mins = Math.floor(paceSeconds / 60);
     const secs = Math.floor(paceSeconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')} /${speedUnit === 'mph' ? 'mi' : 'km'}`;
-  }, [currentSpeedMs, speedUnit]);
+  }, [currentSpeedMs, speedUnit, hasSpeed]);
 
   // Activity classification
   const activityCategory = useMemo(() => {
@@ -400,7 +401,7 @@ export const CircularSpeedometerGauge: React.FC<Props> = ({
                 : 'text-white drop-shadow-[0_2px_12px_rgba(56,189,248,0.35)]'
             }`}
           >
-            {currentDisplaySpeed.toFixed(1)}
+            {hasSpeed ? currentDisplaySpeed.toFixed(1) : '—'}
           </div>
 
           {/* Unit Label */}
@@ -418,8 +419,12 @@ export const CircularSpeedometerGauge: React.FC<Props> = ({
               <span className="text-[11px] font-bold px-2 py-0.5 rounded-full border border-rose-400/50 bg-rose-500/30 text-rose-200 flex items-center space-x-0.5 shadow-[0_0_8px_rgba(244,63,94,0.4)] font-mono">
                 <span>LIMIT +{overspeedDelta.toFixed(1)}</span>
               </span>
+            ) : !hasSpeed ? (
+              <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full border text-slate-400 bg-white/10 border-white/15">
+                No GPS speed
+              </span>
             ) : (
-              <span className={`text-[8.5px] font-semibold px-2 py-0.5 rounded-full border ${activityCategory.color}`}>
+              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${activityCategory.color}`}>
                 {activityCategory.label}
               </span>
             )}
@@ -450,7 +455,7 @@ export const CircularSpeedometerGauge: React.FC<Props> = ({
         <div className="p-2 rounded-xl bg-white/[0.03] border border-white/[0.06]">
           <span className="text-[11px] text-slate-400 uppercase font-sans block">Peak Velocity</span>
           <span className="text-sm font-bold text-cyan-300">
-            {peakDisplaySpeed.toFixed(1)} {speedUnit}
+            {sessionPeakSpeedMs > 0 ? `${peakDisplaySpeed.toFixed(1)} ${speedUnit}` : '—'}
           </span>
         </div>
 

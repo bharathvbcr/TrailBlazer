@@ -43,6 +43,7 @@ export const CameraSightingView: React.FC<Props> = ({
   const [frozenHeading, setFrozenHeading] = useState<number | null>(null);
   const [frozenPitch, setFrozenPitch] = useState<number | null>(null);
 
+  const live = sensors.isHardwareOrientationAvailable || sensors.isSimulationMode;
   const activeHeading = isFrozen && frozenHeading !== null
     ? frozenHeading
     : (preferences.northMode === 'true' ? sensors.trueHeading : sensors.heading);
@@ -69,7 +70,7 @@ export const CameraSightingView: React.FC<Props> = ({
       activeTarget.latitude,
       activeTarget.longitude
     );
-    targetAngleDiff = ((targetBearing - activeHeading + 540) % 360) - 180;
+    targetAngleDiff = live ? ((targetBearing - activeHeading + 540) % 360) - 180 : null;
   }
 
   // Request rear camera stream (re-runs on retry). `cancelled` guards against a
@@ -223,12 +224,12 @@ export const CameraSightingView: React.FC<Props> = ({
 
         <div
           role="img"
-          aria-label={`Heading ${Math.round(activeHeading)} degrees ${getCardinalDirection(activeHeading)}`}
+          aria-label={live ? `Heading ${Math.round(activeHeading)} degrees ${getCardinalDirection(activeHeading)}` : 'No compass data'}
           className="relative w-full max-w-xs rounded-2xl bg-black/60 backdrop-blur-md border border-cyan-400/30 overflow-hidden shadow-[0_0_15px_rgba(56,189,248,0.2)]"
         >
           {/* Scrolling ticks */}
           <div className="relative h-9 border-b border-white/10 [mask-image:linear-gradient(to_right,transparent,black_18%,black_82%,transparent)]">
-            {Array.from({ length: TAPE_SPAN / 5 + 1 }, (_, i) => {
+            {live && Array.from({ length: TAPE_SPAN / 5 + 1 }, (_, i) => {
               const base = Math.round((activeHeading - TAPE_SPAN / 2) / 5) * 5;
               const deg = ((base + i * 5) % 360 + 360) % 360;
               const delta = signedDelta(deg, activeHeading);
@@ -264,9 +265,9 @@ export const CameraSightingView: React.FC<Props> = ({
 
           <div className="flex items-baseline justify-center gap-2 py-1.5 font-mono">
             <span className="text-xl font-black text-cyan-300 tabular-nums">
-              {Math.round(activeHeading).toString().padStart(3, '0')}°
+              {live ? `${Math.round(activeHeading).toString().padStart(3, '0')}°` : '---°'}
             </span>
-            <span className="text-xs font-bold text-white font-sans">{getCardinalDirection(activeHeading)}</span>
+            <span className="text-xs font-bold text-white font-sans">{live ? getCardinalDirection(activeHeading) : 'No compass data'}</span>
             <span className="text-[11px] text-slate-400">{preferences.northMode === 'true' ? 'True' : 'Mag'}</span>
           </div>
         </div>
@@ -276,7 +277,7 @@ export const CameraSightingView: React.FC<Props> = ({
       <div className="relative z-20 w-72 h-72 flex items-center justify-center pointer-events-none">
         {/* Roll Tilt Horizon Line */}
         <div
-          className="absolute w-64 h-[1px] bg-cyan-400/40 transition-transform duration-100 ease-out"
+          className={`absolute w-64 h-[1px] bg-cyan-400/40 transition-transform duration-100 ease-out ${live ? "" : "hidden"}`}
           style={{
             transform: `rotate(${-activeRoll}deg) translateY(${activePitch * 2}px)`,
           }}
@@ -340,15 +341,15 @@ export const CameraSightingView: React.FC<Props> = ({
         <div className="w-full grid grid-cols-3 gap-2 text-center text-xs font-mono bg-black/65 backdrop-blur-md p-2.5 rounded-2xl border border-white/15 text-white">
           <div>
             <span className="text-[11px] text-slate-400 uppercase font-sans block">Pitch</span>
-            <span className="text-cyan-300 font-bold">{activePitch > 0 ? `+${activePitch}°` : `${activePitch}°`}</span>
+            <span className="text-cyan-300 font-bold">{!live ? '—' : activePitch > 0 ? `+${activePitch}°` : `${activePitch}°`}</span>
           </div>
           <div>
             <span className="text-[11px] text-slate-400 uppercase font-sans block">Altitude</span>
-            <span className="text-white font-bold">{sensors.barometricAltitude.toFixed(0)}m</span>
+            <span className="text-white font-bold">{sensors.barometricAltitude === null ? '—' : `${sensors.barometricAltitude.toFixed(0)}m`}</span>
           </div>
           <div>
             <span className="text-[11px] text-slate-400 uppercase font-sans block">Pressure</span>
-            <span className="text-amber-300 font-bold">{sensors.pressure.toFixed(1)} <span className="text-[11px] text-slate-400">hPa</span></span>
+            <span className="text-amber-300 font-bold">{sensors.pressure === null ? '—' : <>{sensors.pressure.toFixed(1)} <span className="text-[11px] text-slate-400">hPa</span></>}</span>
           </div>
         </div>
 
