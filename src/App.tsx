@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   UserPreferences,
   Waypoint,
@@ -7,12 +7,14 @@ import {
 } from './types/sensors';
 import { useDeviceSensors } from './hooks/useDeviceSensors';
 import { calculateDistanceMeters, convertSpeed } from './utils/calculations';
+import { calculateSolarDay } from './utils/celestial';
 import { playSpeedAlertTone } from './utils/audioHaptics';
 import { LiquidGlassBackground } from './components/LiquidGlassBackground';
 import { CompassView } from './components/CompassView';
 import { AltimeterBarometerView } from './components/AltimeterBarometerView';
 import { SensorMatrixView } from './components/SensorMatrixView';
 import { WaypointsNavView } from './components/WaypointsNavView';
+import { NatureCampView } from './components/NatureCampView';
 import { SettingsModal } from './components/SettingsModal';
 import { CameraSightingView } from './components/CameraSightingView';
 import { CalibrationModal } from './components/CalibrationModal';
@@ -20,6 +22,7 @@ import { OnboardingModal } from './components/OnboardingModal';
 import { useToast } from './components/Toast';
 import {
   Compass,
+  Tent,
   Mountain,
   Activity,
   MapPin,
@@ -29,15 +32,23 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 
-const STORAGE_PREFS_KEY = 'aeroglass_user_prefs';
-const STORAGE_WAYPOINTS_KEY = 'aeroglass_waypoints';
-const STORAGE_TAB_KEY = 'aeroglass_last_tab';
-const STORAGE_ONBOARDED_KEY = 'aeroglass_onboarded';
-const STORAGE_LOCATION_KEY = 'aeroglass_location';
+const STORAGE_PREFS_KEY = 'trailblazer_user_prefs';
+const LEGACY_PREFS_KEY = 'aeroglass_user_prefs';
+const STORAGE_WAYPOINTS_KEY = 'trailblazer_waypoints';
+const LEGACY_WAYPOINTS_KEY = 'aeroglass_waypoints';
+const STORAGE_TAB_KEY = 'trailblazer_last_tab';
+const LEGACY_TAB_KEY = 'aeroglass_last_tab';
+const STORAGE_ONBOARDED_KEY = 'trailblazer_onboarded';
+const LEGACY_ONBOARDED_KEY = 'aeroglass_onboarded';
+const STORAGE_LOCATION_KEY = 'trailblazer_location';
+const LEGACY_LOCATION_KEY = 'aeroglass_location';
 
-const readStorage = (key: string): string | null => {
+const readStorage = (key: string, legacyKey?: string): string | null => {
   try {
-    return localStorage.getItem(key);
+    const val = localStorage.getItem(key);
+    if (val !== null) return val;
+    if (legacyKey) return localStorage.getItem(legacyKey);
+    return null;
   } catch {
     return null;
   }
@@ -74,13 +85,14 @@ const DEFAULT_PREFERENCES: UserPreferences = {
 // No pre-loaded waypoints: the list only ever contains places the user saved.
 const DEFAULT_WAYPOINTS: Waypoint[] = [];
 
-type TabId = 'compass' | 'altimeter' | 'sensors' | 'waypoints';
+type TabId = 'compass' | 'nature' | 'altimeter' | 'waypoints' | 'sensors';
 
 const NAV_ITEMS = [
   { id: 'compass' as const, label: 'Compass', icon: Compass },
+  { id: 'nature' as const, label: 'Nature', icon: Tent },
   { id: 'altimeter' as const, label: 'Altimeter', icon: Mountain },
-  { id: 'sensors' as const, label: 'Telemetry', icon: Activity },
   { id: 'waypoints' as const, label: 'Tracks', icon: MapPin },
+  { id: 'sensors' as const, label: 'Telemetry', icon: Activity },
 ];
 
 export const App: React.FC = () => {
@@ -88,7 +100,7 @@ export const App: React.FC = () => {
   // Load preferences from localStorage or default
   const [preferences, setPreferences] = useState<UserPreferences>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_PREFS_KEY);
+      const saved = readStorage(STORAGE_PREFS_KEY, LEGACY_PREFS_KEY);
       return saved ? { ...DEFAULT_PREFERENCES, ...JSON.parse(saved) } : DEFAULT_PREFERENCES;
     } catch {
       return DEFAULT_PREFERENCES;
@@ -98,7 +110,7 @@ export const App: React.FC = () => {
   // Load waypoints from localStorage or default
   const [waypoints, setWaypoints] = useState<Waypoint[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_WAYPOINTS_KEY);
+      const saved = readStorage(STORAGE_WAYPOINTS_KEY, LEGACY_WAYPOINTS_KEY);
       return saved ? JSON.parse(saved) : DEFAULT_WAYPOINTS;
     } catch {
       return DEFAULT_WAYPOINTS;
@@ -106,7 +118,7 @@ export const App: React.FC = () => {
   });
 
   const [activeTab, setActiveTabState] = useState<TabId>(() => {
-    const saved = readStorage(STORAGE_TAB_KEY);
+    const saved = readStorage(STORAGE_TAB_KEY, LEGACY_TAB_KEY);
     return NAV_ITEMS.some((n) => n.id === saved) ? (saved as TabId) : 'compass';
   });
   const [tabDirection, setTabDirection] = useState<'next' | 'prev'>('next');
@@ -120,8 +132,8 @@ export const App: React.FC = () => {
   };
 
   // First-run sensor setup + opt-in location (GPS prompt is deferred until the user agrees)
-  const [locationEnabled, setLocationEnabled] = useState(() => readStorage(STORAGE_LOCATION_KEY) === 'on');
-  const [isOnboardingOpen, setIsOnboardingOpen] = useState(() => readStorage(STORAGE_ONBOARDED_KEY) === null);
+  const [locationEnabled, setLocationEnabled] = useState(() => readStorage(STORAGE_LOCATION_KEY, LEGACY_LOCATION_KEY) === 'on');
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(() => readStorage(STORAGE_ONBOARDED_KEY, LEGACY_ONBOARDED_KEY) === null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCameraSightingOpen, setIsCameraSightingOpen] = useState(false);
   const [isCalibrationOpen, setIsCalibrationOpen] = useState(false);
@@ -154,6 +166,37 @@ export const App: React.FC = () => {
     requestOrientationPermission,
     triggerHaptic,
   } = useDeviceSensors(preferences, { locationEnabled });
+
+  // Planned expedition day offset (0 = today, 1 = tomorrow, etc.)
+  const [expeditionDayOffset, setExpeditionDayOffset] = useState<number>(0);
+
+  // Solar ephemeris for planned expedition day (if offset !== 0)
+  const plannedSolarDay = useMemo(() => {
+    if (expeditionDayOffset === 0) return null;
+    const isSim = sensors.isSimulationMode;
+    const lat = sensors.latitude ?? (isSim ? 37.7749 : null);
+    const lon = sensors.longitude ?? (isSim ? -122.4194 : null);
+    if (lat === null || lon === null) return null;
+    const d = new Date();
+    d.setDate(d.getDate() + expeditionDayOffset);
+    return calculateSolarDay(lat, lon, d);
+  }, [expeditionDayOffset, sensors.latitude, sensors.longitude, sensors.isSimulationMode]);
+
+  // Active sensor state with solar metrics synchronized to chosen expedition day
+  const activeSensors = useMemo(() => {
+    if (expeditionDayOffset === 0 || !plannedSolarDay) return sensors;
+    const formatTime = (d: Date | null) =>
+      d ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null;
+    return {
+      ...sensors,
+      sunriseAzimuth: plannedSolarDay.sunriseAzimuth !== null ? Math.round(plannedSolarDay.sunriseAzimuth) : null,
+      sunsetAzimuth: plannedSolarDay.sunsetAzimuth !== null ? Math.round(plannedSolarDay.sunsetAzimuth) : null,
+      sunriseTime: formatTime(plannedSolarDay.sunriseTime),
+      sunsetTime: formatTime(plannedSolarDay.sunsetTime),
+      solarNoonTime: formatTime(plannedSolarDay.solarNoonTime),
+      solarDay: plannedSolarDay,
+    };
+  }, [sensors, expeditionDayOffset, plannedSolarDay]);
 
   // Persist preferences
   useEffect(() => {
@@ -464,15 +507,15 @@ export const App: React.FC = () => {
       <LiquidGlassBackground palette={preferences.palette} />
 
       {/* Top Header */}
-      <header className="sticky top-0 z-30 px-4 pb-3 pt-[calc(0.75rem+var(--safe-top))] bg-[#080b14]/70 backdrop-blur-xl border-b border-white/[0.08]">
+      <header className="sticky top-0 z-30 px-4 pl-[calc(1rem+var(--safe-left))] pr-[calc(1rem+var(--safe-right))] pb-3 pt-[calc(0.75rem+var(--safe-top))] bg-[#080b14]/80 backdrop-blur-xl border-b border-white/[0.08]">
         <div className="max-w-lg mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center shadow-[0_0_14px_rgba(56,189,248,0.35)] border border-white/20 shrink-0">
-              <Compass className="w-[18px] h-[18px] text-white" />
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-500/20 via-blue-500/30 to-indigo-600/40 flex items-center justify-center shadow-[0_0_14px_rgba(56,189,248,0.35)] border border-cyan-400/40 shrink-0 overflow-hidden">
+              <img src="./icon.svg" alt="TrailBlazer" className="w-6 h-6 drop-shadow-[0_0_6px_rgba(56,189,248,0.6)]" />
             </div>
             <div className="min-w-0">
               <h1 className="text-sm font-bold tracking-tight text-white flex items-center gap-1.5 leading-tight">
-                <span>AeroGlass</span>
+                <span>TrailBlazer</span>
                 <span className="text-[11px] px-1.5 py-px rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-mono font-medium tracking-wider">
                   PRO
                 </span>
@@ -576,7 +619,7 @@ export const App: React.FC = () => {
         <div key={activeTab} className={`tab-enter ${tabDirection === 'next' ? 'tab-from-right' : 'tab-from-left'} w-full`}>
         {activeTab === 'compass' && (
           <CompassView
-            sensors={sensors}
+            sensors={activeSensors}
             preferences={viewPreferences}
             waypoints={waypoints}
             onSetSimulationHeading={setSimulationHeading}
@@ -587,6 +630,21 @@ export const App: React.FC = () => {
             onOpenCameraSighting={() => setIsCameraSightingOpen(true)}
             onOpenCalibration={() => setIsCalibrationOpen(true)}
             onSetSimulationSpeed={setSimulationSpeed}
+            onNavigateToNature={() => setActiveTab('nature')}
+            plannedDayOffset={expeditionDayOffset}
+            onSetPlannedDayOffset={setExpeditionDayOffset}
+          />
+        )}
+
+        {activeTab === 'nature' && (
+          <NatureCampView
+            sensors={sensors}
+            preferences={viewPreferences}
+            onNavigateToCompass={() => setActiveTab('compass')}
+            onToggleSimulationMode={toggleSimulationMode}
+            onRequestPermission={handleEnableSensors}
+            dayOffset={expeditionDayOffset}
+            onSetDayOffset={setExpeditionDayOffset}
           />
         )}
 
@@ -601,19 +659,6 @@ export const App: React.FC = () => {
             onCalibrateToGps={calibrateToGpsAltitude}
             onUpdatePreferences={updatePreferences}
             onSimulateTrendScenario={setSimulatedTrendScenario}
-          />
-        )}
-
-        {activeTab === 'sensors' && (
-          <SensorMatrixView
-            sensors={sensors}
-            preferences={viewPreferences}
-            trackSession={trackSession}
-            onOpenCalibration={() => setIsCalibrationOpen(true)}
-            onAddWaypoint={handleAddWaypoint}
-            onUpdatePreferences={updatePreferences}
-            locationEnabled={locationEnabled}
-            onSetupSensors={() => setIsOnboardingOpen(true)}
           />
         )}
 
@@ -632,13 +677,26 @@ export const App: React.FC = () => {
             onUpdatePreferences={updatePreferences}
           />
         )}
+
+        {activeTab === 'sensors' && (
+          <SensorMatrixView
+            sensors={sensors}
+            preferences={viewPreferences}
+            trackSession={trackSession}
+            onOpenCalibration={() => setIsCalibrationOpen(true)}
+            onAddWaypoint={handleAddWaypoint}
+            onUpdatePreferences={updatePreferences}
+            locationEnabled={locationEnabled}
+            onSetupSensors={() => setIsOnboardingOpen(true)}
+          />
+        )}
         </div>
       </main>
 
       {/* Floating Liquid Glass Bottom Navigation Bar */}
       <nav
         aria-label="Primary"
-        className="fixed inset-x-4 max-w-sm mx-auto z-40 bottom-[calc(1rem+var(--safe-bottom))]"
+        className="fixed left-[calc(1rem+var(--safe-left))] right-[calc(1rem+var(--safe-right))] max-w-md mx-auto z-40 bottom-[calc(1rem+var(--safe-bottom))]"
       >
         <div className="relative rounded-full p-1.5 bg-gradient-to-b from-white/[0.14] to-white/[0.04] backdrop-blur-2xl border border-white/20 shadow-[0_12px_36px_rgba(0,0,0,0.6),inset_0_1px_2px_rgba(255,255,255,0.25)] flex items-center gap-1">
           {NAV_ITEMS.map(({ id, label, icon: Icon }) => {

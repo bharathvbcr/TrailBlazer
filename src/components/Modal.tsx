@@ -74,7 +74,7 @@ export const Modal: React.FC<Props> = ({ isOpen, onClose, title, icon, size = 'm
 
   return createPortal(
     <div
-      className={`${isOpen ? 'animate-fade-in' : 'animate-fade-out pointer-events-none'} fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm select-none`}
+      className={`${isOpen ? 'animate-fade-in' : 'animate-fade-out pointer-events-none'} fixed inset-0 z-50 flex items-center justify-center p-4 pt-[calc(1rem+var(--safe-top))] pb-[calc(1rem+var(--safe-bottom))] pl-[calc(1rem+var(--safe-left))] pr-[calc(1rem+var(--safe-right))] bg-black/75 backdrop-blur-sm select-none`}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -85,7 +85,7 @@ export const Modal: React.FC<Props> = ({ isOpen, onClose, title, icon, size = 'm
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
-        className={`${isOpen ? 'animate-sheet-in' : 'animate-sheet-out'} w-full ${size === 'sm' ? 'max-w-sm' : 'max-w-md'} max-h-[calc(100dvh-2rem)] overflow-y-auto scroll-thin rounded-3xl outline-none`}
+        className={`${isOpen ? 'animate-sheet-in' : 'animate-sheet-out'} w-full ${size === 'sm' ? 'max-w-sm' : 'max-w-md'} max-h-[calc(100dvh-2rem-var(--safe-top)-var(--safe-bottom))] overflow-y-auto scroll-thin rounded-3xl outline-none`}
       >
         <GlassCard className="!p-5 border-cyan-500/40">
           <div className="flex items-center justify-between gap-3 mb-4">

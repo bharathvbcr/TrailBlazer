@@ -48,7 +48,7 @@ export const OnboardingModal: React.FC<Props> = ({ isOpen, onSkip, onEnable, onU
       icon={<Compass className="w-5 h-5 text-cyan-400" />}
     >
       <p className="text-xs text-slate-300 leading-relaxed mb-3">
-        AeroGlass reads your device sensors locally. Nothing leaves your device. Your browser will ask for these permissions:
+        TrailBlazer reads your device sensors locally. Nothing leaves your device. Your browser will ask for these permissions:
       </p>
 
       <div className="space-y-2 mb-4">

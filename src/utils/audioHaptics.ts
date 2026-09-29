@@ -171,3 +171,64 @@ export function playSpeedAlertTone() {
     // ignore
   }
 }
+
+let whistleOsc1: OscillatorNode | null = null;
+let whistleOsc2: OscillatorNode | null = null;
+let whistleGain: GainNode | null = null;
+
+/**
+ * Play high-decibel piercing dual-frequency outdoor emergency whistle (2800Hz + 3100Hz)
+ */
+export function playEmergencyWhistle(): boolean {
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return false;
+
+    stopEmergencyWhistle();
+
+    whistleOsc1 = ctx.createOscillator();
+    whistleOsc2 = ctx.createOscillator();
+    whistleGain = ctx.createGain();
+
+    whistleOsc1.type = 'sine';
+    whistleOsc1.frequency.setValueAtTime(2850, ctx.currentTime);
+
+    whistleOsc2.type = 'triangle';
+    whistleOsc2.frequency.setValueAtTime(3150, ctx.currentTime);
+
+    whistleGain.gain.setValueAtTime(0.12, ctx.currentTime);
+
+    whistleOsc1.connect(whistleGain);
+    whistleOsc2.connect(whistleGain);
+    whistleGain.connect(ctx.destination);
+
+    whistleOsc1.start();
+    whistleOsc2.start();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function stopEmergencyWhistle() {
+  if (whistleOsc1) {
+    try {
+      whistleOsc1.stop();
+      whistleOsc1.disconnect();
+    } catch {}
+    whistleOsc1 = null;
+  }
+  if (whistleOsc2) {
+    try {
+      whistleOsc2.stop();
+      whistleOsc2.disconnect();
+    } catch {}
+    whistleOsc2 = null;
+  }
+  if (whistleGain) {
+    try {
+      whistleGain.disconnect();
+    } catch {}
+    whistleGain = null;
+  }
+}

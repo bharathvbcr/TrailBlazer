@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SensorState, UserPreferences, TrackSession, Waypoint } from '../types/sensors';
 import { formatToDMS } from '../utils/calculations';
 import { useAcousticSensor } from '../hooks/useAcousticSensor';
@@ -19,7 +19,9 @@ import {
   Volume2,
   Rows3,
   Rows4,
+  Box,
 } from 'lucide-react';
+import { Accelerometer3DPlot } from './Accelerometer3DPlot';
 
 interface Props {
   sensors: SensorState;
@@ -46,13 +48,17 @@ export const SensorMatrixView: React.FC<Props> = ({
   // Highest G actually observed this session (null until motion data arrives)
   const [peakG, setPeakG] = useState<number | null>(null);
   const [enableMic, setEnableMic] = useState<boolean>(false);
+  const [accelViewMode, setAccelViewMode] = useState<'3d' | 'split' | 'bars'>('3d');
 
   const { state: acoustic, startListening, stopListening, resetPeak: resetPeakAcoustic } = useAcousticSensor(enableMic && !compact);
 
-  // Track peak G
-  if (sensors.isHardwareMotionAvailable && (peakG === null || sensors.gForce > peakG)) {
-    setPeakG(sensors.gForce);
-  }
+  // Track peak G safely in an effect
+  const motionLive = sensors.isHardwareMotionAvailable || sensors.isSimulationMode;
+  useEffect(() => {
+    if (motionLive && (peakG === null || sensors.gForce > peakG)) {
+      setPeakG(sensors.gForce);
+    }
+  }, [motionLive, sensors.gForce, peakG]);
 
   // Determine light condition label
   const getLightLevelText = (lux: number) => {
@@ -65,7 +71,6 @@ export const SensorMatrixView: React.FC<Props> = ({
   };
 
   const lightInfo = sensors.ambientLight !== null ? getLightLevelText(sensors.ambientLight) : null;
-  const motionLive = sensors.isHardwareMotionAvailable;
 
   return (
     <Page>
@@ -167,72 +172,120 @@ export const SensorMatrixView: React.FC<Props> = ({
       <GlassCard className="w-full !p-4">
         <CardHeader icon={<Zap className="text-amber-400 w-4 h-4 shrink-0" />} title="Accelerometer & G‑Force">
           <div className="flex items-center space-x-2">
+            {/* View Mode Toggle */}
+            <div className="flex items-center gap-0.5 bg-white/10 p-0.5 rounded-full border border-white/10 text-[10px]">
+              {(['3d', 'split', 'bars'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => setAccelViewMode(mode)}
+                  className={`px-2 py-0.5 rounded-full font-semibold transition-all ${
+                    accelViewMode === mode
+                      ? 'bg-amber-500/25 text-amber-300 border border-amber-500/40'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {mode === '3d' ? '3D Plot' : mode === 'split' ? 'Split' : '2D Bars'}
+                </button>
+              ))}
+            </div>
+
             <button
               onClick={() => setPeakG(sensors.gForce)}
               title="Reset Peak G"
               className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center space-x-1"
             >
               <RotateCcw className="w-2.5 h-2.5" />
-              <span>Reset Peak</span>
+              <span className="hidden sm:inline">Reset</span>
             </button>
           </div>
         </CardHeader>
 
         {motionLive ? (
-          <>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+              <div className="p-2.5 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Current G-Force</span>
+                <div className="text-xl font-black font-mono text-amber-300 mt-0.5">
+                  {sensors.gForce.toFixed(2)} <span className="text-xs font-sans text-slate-400">G</span>
+                </div>
+              </div>
 
-        <div className="grid grid-cols-2 gap-3 mb-3">
-          <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
-            <span className="text-[11px] text-slate-400 uppercase tracking-wider block">Current G-Force</span>
-            <div className="text-2xl font-black font-mono text-amber-300 mt-0.5">
-              {sensors.gForce.toFixed(2)} <span className="text-xs font-sans text-slate-400">G</span>
+              <div className="p-2.5 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Peak G Recorded</span>
+                <div className="text-xl font-black font-mono text-cyan-300 mt-0.5">
+                  {peakG !== null ? peakG.toFixed(2) : '—'} <span className="text-xs font-sans text-slate-400">G</span>
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-2xl bg-white/[0.04] border border-white/[0.06] col-span-2 sm:col-span-1">
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Vector Magnitude</span>
+                <div className="text-xl font-black font-mono text-teal-300 mt-0.5">
+                  {Math.sqrt(sensors.accelX * sensors.accelX + sensors.accelY * sensors.accelY + sensors.accelZ * sensors.accelZ).toFixed(1)}{' '}
+                  <span className="text-xs font-sans text-slate-400">m/s²</span>
+                </div>
+              </div>
             </div>
-          </div>
 
-          <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/[0.06]">
-            <span className="text-[11px] text-slate-400 uppercase tracking-wider block">Peak G Recorded</span>
-            <div className="text-2xl font-black font-mono text-cyan-300 mt-0.5">
-              {peakG !== null ? peakG.toFixed(2) : '—'} <span className="text-xs font-sans text-slate-400">G</span>
-            </div>
-          </div>
-        </div>
+            {/* 3D Accelerometer Plot */}
+            {(accelViewMode === '3d' || accelViewMode === 'split') && (
+              <Accelerometer3DPlot
+                accelX={sensors.accelX}
+                accelY={sensors.accelY}
+                accelZ={sensors.accelZ}
+                gForce={sensors.gForce}
+                peakG={peakG}
+                height={accelViewMode === '3d' ? 300 : 230}
+                onResetPeak={() => setPeakG(sensors.gForce)}
+              />
+            )}
 
-        {/* 3-Axis Acceleration vector bars */}
-        <div className="space-y-2 text-xs font-mono">
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400">X-Axis (Lateral)</span>
-            <span className="text-slate-200">{sensors.accelX >= 0 ? `+${sensors.accelX}` : sensors.accelX} m/s²</span>
-          </div>
-          <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
-            <div
-              className="h-full bg-cyan-400 transition-all duration-100"
-              style={{ width: `${Math.min(100, Math.abs(sensors.accelX / 15) * 100)}%` }}
-            />
-          </div>
+            {/* 3-Axis Acceleration vector bars */}
+            {(accelViewMode === 'bars' || accelViewMode === 'split') && (
+              <div className="space-y-2 text-xs font-mono pt-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-cyan-400 inline-block" />
+                    X-Axis (Lateral)
+                  </span>
+                  <span className="text-slate-200">{sensors.accelX >= 0 ? `+${sensors.accelX}` : sensors.accelX} m/s²</span>
+                </div>
+                <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
+                  <div
+                    className="h-full bg-cyan-400 transition-all duration-100"
+                    style={{ width: `${Math.min(100, Math.abs(sensors.accelX / 15) * 100)}%` }}
+                  />
+                </div>
 
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400">Y-Axis (Longitudinal)</span>
-            <span className="text-slate-200">{sensors.accelY >= 0 ? `+${sensors.accelY}` : sensors.accelY} m/s²</span>
-          </div>
-          <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
-            <div
-              className="h-full bg-teal-400 transition-all duration-100"
-              style={{ width: `${Math.min(100, Math.abs(sensors.accelY / 15) * 100)}%` }}
-            />
-          </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-teal-400 inline-block" />
+                    Y-Axis (Longitudinal)
+                  </span>
+                  <span className="text-slate-200">{sensors.accelY >= 0 ? `+${sensors.accelY}` : sensors.accelY} m/s²</span>
+                </div>
+                <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
+                  <div
+                    className="h-full bg-teal-400 transition-all duration-100"
+                    style={{ width: `${Math.min(100, Math.abs(sensors.accelY / 15) * 100)}%` }}
+                  />
+                </div>
 
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400">Z-Axis (Vertical / Gravity)</span>
-            <span className="text-slate-200">{sensors.accelZ >= 0 ? `+${sensors.accelZ}` : sensors.accelZ} m/s²</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
+                    Z-Axis (Vertical / Gravity)
+                  </span>
+                  <span className="text-slate-200">{sensors.accelZ >= 0 ? `+${sensors.accelZ}` : sensors.accelZ} m/s²</span>
+                </div>
+                <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
+                  <div
+                    className="h-full bg-amber-400 transition-all duration-100"
+                    style={{ width: `${Math.min(100, Math.abs(sensors.accelZ / 15) * 100)}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
-          <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
-            <div
-              className="h-full bg-emerald-400 transition-all duration-100"
-              style={{ width: `${Math.min(100, Math.abs(sensors.accelZ / 15) * 100)}%` }}
-            />
-          </div>
-        </div>
-</>
         ) : (
           <Unavailable>No accelerometer data. Allow motion access or use a device with motion sensors.</Unavailable>
         )}

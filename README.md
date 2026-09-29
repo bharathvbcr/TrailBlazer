@@ -1,6 +1,6 @@
-# AeroGlass Sensors Pro
+# TrailBlazer
 
-Precision compass, altimeter, barometer, and environmental sensor suite with Material You Liquid Glass design, live weather tendency, AR camera sighting, and variometer.
+Precision compass, altimeter, barometer, moon phases, solar ephemeris, and outdoor adventure sensor suite with Material You Liquid Glass design, live weather tendency, AR camera sighting, and variometer.
 
 ## Features
 

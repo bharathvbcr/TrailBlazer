@@ -146,12 +146,12 @@ export const WaypointsNavView: React.FC<Props> = ({
       toast({ message: 'No track points recorded yet.', tone: 'error' });
       return;
     }
-    const gpxData = generateGpxString(trackSession.points, 'AeroGlass Session Track');
+    const gpxData = generateGpxString(trackSession.points, 'TrailBlazer Session Track');
     const blob = new Blob([gpxData], { type: 'application/gpx+xml' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `aeroglass-track-${new Date().toISOString().slice(0, 10)}.gpx`;
+    a.download = `trailblazer-track-${new Date().toISOString().slice(0, 10)}.gpx`;
     a.click();
     URL.revokeObjectURL(url);
     toast({ message: `GPX exported (${trackSession.points.length} points)`, tone: 'success' });
@@ -168,7 +168,7 @@ export const WaypointsNavView: React.FC<Props> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `aeroglass-telemetry-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `trailblazer-telemetry-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };

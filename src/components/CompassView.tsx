@@ -8,6 +8,8 @@ import {
   getCardinalDirection,
   calculateBearingDegrees,
   calculateDistanceMeters,
+  convertTrueToDialBearing,
+  calculateRelativeTargetAngle,
 } from '../utils/calculations';
 import { GlassCard } from './GlassCard';
 import {
@@ -21,6 +23,9 @@ import { CircularSpeedometerGauge } from './CircularSpeedometerGauge';
 import {
   Compass,
   Sun,
+  Sunrise,
+  Sunset,
+  Moon,
   Lock,
   Unlock,
   Sliders,
@@ -29,6 +34,7 @@ import {
   AlertTriangle,
   Camera,
   Magnet,
+  Tent,
 } from 'lucide-react';
 
 interface Props {
@@ -43,6 +49,9 @@ interface Props {
   onOpenCameraSighting: () => void;
   onOpenCalibration: () => void;
   onSetSimulationSpeed?: (speedMs: number) => void;
+  onNavigateToNature?: () => void;
+  plannedDayOffset?: number;
+  onSetPlannedDayOffset?: (offset: number) => void;
 }
 
 export const CompassView: React.FC<Props> = ({
@@ -57,6 +66,9 @@ export const CompassView: React.FC<Props> = ({
   onOpenCameraSighting,
   onOpenCalibration,
   onSetSimulationSpeed,
+  onNavigateToNature,
+  plannedDayOffset = 0,
+  onSetPlannedDayOffset,
 }) => {
   const [lockedHeading, setLockedHeading] = useState<number | null>(null);
   // Real (or simulated) orientation data is flowing; otherwise every heading-derived value would be invented
@@ -90,8 +102,14 @@ export const CompassView: React.FC<Props> = ({
       activeTarget.latitude,
       activeTarget.longitude
     );
-    targetRelativeAngle = ((targetBearing - currentHeading + 540) % 360) - 180;
+    const targetDialBearing = convertTrueToDialBearing(targetBearing, preferences.northMode, sensors.declination) ?? targetBearing;
+    targetRelativeAngle = calculateRelativeTargetAngle(targetDialBearing, currentHeading);
   }
+
+  // Convert any True North azimuth to current dial card reference frame (Magnetic or True)
+  const toDialAngle = (trueAzimuth: number | null): number | null => {
+    return convertTrueToDialBearing(trueAzimuth, preferences.northMode, sensors.declination);
+  };
 
   // Spirit level calculations (Pitch & Roll)
   const isLevel = live && Math.abs(sensors.pitch) < 1.0 && Math.abs(sensors.roll) < 1.0;
@@ -475,7 +493,7 @@ export const CompassView: React.FC<Props> = ({
 
             {/* Target waypoint marker if set */}
             {live && targetBearing !== null && (
-              <g transform={`rotate(${targetBearing}, 140, 140)`}>
+              <g transform={`rotate(${toDialAngle(targetBearing)}, 140, 140)`}>
                 <polygon
                   points="140,28 146,38 134,38"
                   fill="#38bdf8"
@@ -485,9 +503,33 @@ export const CompassView: React.FC<Props> = ({
               </g>
             )}
 
-            {/* Sun indicator on dial */}
+            {/* Sunrise direction azimuth marker on dial */}
+            {sensors.sunriseAzimuth !== null && (
+              <g transform={`rotate(${toDialAngle(sensors.sunriseAzimuth)}, 140, 140)`}>
+                <line x1="140" y1="14" x2="140" y2="28" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" filter="drop-shadow(0 0 4px #fbbf24)" />
+                <circle cx="140" cy="18" r="3.5" fill="#fef08a" stroke="#d97706" strokeWidth="0.8" />
+              </g>
+            )}
+
+            {/* Sunset direction azimuth marker on dial */}
+            {sensors.sunsetAzimuth !== null && (
+              <g transform={`rotate(${toDialAngle(sensors.sunsetAzimuth)}, 140, 140)`}>
+                <line x1="140" y1="14" x2="140" y2="28" stroke="#f97316" strokeWidth="2" strokeLinecap="round" filter="drop-shadow(0 0 4px #f97316)" />
+                <circle cx="140" cy="18" r="3.5" fill="#fb923c" stroke="#c2410c" strokeWidth="0.8" />
+              </g>
+            )}
+
+            {/* Moon indicator on dial */}
+            {sensors.moonAzimuth !== null && (
+              <g transform={`rotate(${toDialAngle(sensors.moonAzimuth)}, 140, 140)`}>
+                <circle cx="140" cy="22" r="4.5" fill="#e2e8f0" filter="drop-shadow(0 0 6px rgba(226,232,240,0.8))" />
+                <circle cx="142" cy="21" r="3.5" fill="#1e293b" />
+              </g>
+            )}
+
+            {/* Live Sun indicator on dial */}
             {sensors.sunAzimuth !== null && (
-              <g transform={`rotate(${sensors.sunAzimuth}, 140, 140)`}>
+              <g transform={`rotate(${toDialAngle(sensors.sunAzimuth)}, 140, 140)`}>
                 <circle cx="140" cy="22" r="5" fill="#fbbf24" filter="drop-shadow(0 0 6px #fbbf24)" />
               </g>
             )}
@@ -559,6 +601,97 @@ export const CompassView: React.FC<Props> = ({
             onClick={onOpenCalibration}
             title="Tap to run Figure-8 calibration"
           />
+        </div>
+      </GlassCard>
+
+      {/* Sun & Moon Celestial Navigation Strip */}
+      <GlassCard className="w-full !p-3.5 border-amber-500/20 bg-gradient-to-r from-amber-950/15 via-transparent to-indigo-950/15">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-white">
+            <Sun className="w-3.5 h-3.5 text-amber-400" />
+            <span>Solar &amp; Lunar Ephemeris</span>
+            {plannedDayOffset !== 0 && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-mono font-medium">
+                {plannedDayOffset === 1 ? 'Tomorrow' : `${plannedDayOffset > 0 ? '+' : ''}${plannedDayOffset}d`}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {plannedDayOffset !== 0 && onSetPlannedDayOffset && (
+              <button
+                onClick={() => onSetPlannedDayOffset(0)}
+                className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 border border-white/15"
+                title="Reset compass dial to Today's sun"
+              >
+                Reset to Today
+              </button>
+            )}
+            {onNavigateToNature && (
+              <button
+                onClick={onNavigateToNature}
+                className="text-[11px] font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1 transition-all"
+              >
+                <Tent className="w-3 h-3" />
+                <span>Camp Hub →</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 text-center text-xs">
+          {/* Sunrise */}
+          <div className="p-2 rounded-xl bg-white/[0.04] border border-amber-500/20">
+            <div className="flex items-center justify-center gap-1 text-[11px] text-amber-300 font-semibold mb-0.5">
+              <Sunrise className="w-3.5 h-3.5 text-amber-400" />
+              <span>Sunrise</span>
+            </div>
+            <div className="font-mono font-bold text-white text-sm">
+              {sensors.sunriseAzimuth !== null ? `${sensors.sunriseAzimuth}°` : '—'}
+            </div>
+            <div className="text-[10px] text-slate-400 font-mono">
+              {sensors.sunriseTime ?? (
+                sensors.solarDay?.isPolarDay
+                  ? '24h Sun'
+                  : sensors.solarDay?.isPolarNight
+                  ? 'Polar Night'
+                  : (sensors.solarDay?.sunriseCardinal ?? 'needs GPS')
+              )}
+            </div>
+          </div>
+
+          {/* Sunset */}
+          <div className="p-2 rounded-xl bg-white/[0.04] border border-orange-500/20">
+            <div className="flex items-center justify-center gap-1 text-[11px] text-orange-400 font-semibold mb-0.5">
+              <Sunset className="w-3.5 h-3.5 text-orange-400" />
+              <span>Sunset</span>
+            </div>
+            <div className="font-mono font-bold text-white text-sm">
+              {sensors.sunsetAzimuth !== null ? `${sensors.sunsetAzimuth}°` : '—'}
+            </div>
+            <div className="text-[10px] text-slate-400 font-mono">
+              {sensors.sunsetTime ?? (
+                sensors.solarDay?.isPolarDay
+                  ? '24h Sun'
+                  : sensors.solarDay?.isPolarNight
+                  ? 'Polar Night'
+                  : (sensors.solarDay?.sunsetCardinal ?? 'needs GPS')
+              )}
+            </div>
+          </div>
+
+          {/* Moon Phase */}
+          <div className="p-2 rounded-xl bg-white/[0.04] border border-indigo-500/20">
+            <div className="flex items-center justify-center gap-1 text-[11px] text-indigo-300 font-semibold mb-0.5">
+              <Moon className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Moon</span>
+            </div>
+            <div className="font-mono font-bold text-white text-sm">
+              {sensors.moonPhase ? `${sensors.moonPhase.illuminationPercentage}%` : '—'}
+            </div>
+            <div className="text-[10px] text-indigo-200 truncate">
+              {sensors.moonPhase ? `${sensors.moonPhase.phaseEmoji} ${sensors.moonPhase.phaseName}` : 'Moon'}
+            </div>
+          </div>
         </div>
       </GlassCard>
 

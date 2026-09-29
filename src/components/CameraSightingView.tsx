@@ -4,6 +4,8 @@ import {
   calculateBearingDegrees,
   calculateDistanceMeters,
   getCardinalDirection,
+  convertTrueToDialBearing,
+  calculateRelativeTargetAngle,
 } from '../utils/calculations';
 import { Camera, X, Crosshair, Lock, Unlock, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 
@@ -70,7 +72,8 @@ export const CameraSightingView: React.FC<Props> = ({
       activeTarget.latitude,
       activeTarget.longitude
     );
-    targetAngleDiff = live ? ((targetBearing - activeHeading + 540) % 360) - 180 : null;
+    const targetDialBearing = convertTrueToDialBearing(targetBearing, preferences.northMode, sensors.declination) ?? targetBearing;
+    targetAngleDiff = live ? calculateRelativeTargetAngle(targetDialBearing, activeHeading) : null;
   }
 
   // Request rear camera stream (re-runs on retry). `cancelled` guards against a

@@ -12,20 +12,25 @@ import {
   calculateThreeHourBarometricTrend,
 } from '../utils/calculations';
 import {
+  calculateSolarDay,
+  calculateMoonPhase,
+} from '../utils/celestial.ts';
+import {
   playCompassTick,
   playChime,
   updateAudioVariometer,
   stopAudioVariometer,
 } from '../utils/audioHaptics';
 
-const HISTORY_KEY = 'aeroglass_pressure_history';
+const HISTORY_KEY = 'trailblazer_pressure_history';
+const LEGACY_HISTORY_KEY = 'aeroglass_pressure_history';
 const HISTORY_WINDOW_MS = 4 * 3600 * 1000;
 const MIN_TREND_SPAN_MS = 10 * 60 * 1000;
 
 /** Real pressure readings recorded on this device (persisted so trends survive reloads). */
 function loadPressureHistory(): PressureHistoryPoint[] {
   try {
-    const raw = localStorage.getItem(HISTORY_KEY);
+    const raw = localStorage.getItem(HISTORY_KEY) ?? localStorage.getItem(LEGACY_HISTORY_KEY);
     if (!raw) return [];
     const cutoff = Date.now() - HISTORY_WINDOW_MS;
     return (JSON.parse(raw) as PressureHistoryPoint[]).filter(
@@ -109,6 +114,15 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
     gpsAccuracy: null,
     sunAzimuth: null,
     sunElevation: null,
+    sunriseAzimuth: null,
+    sunsetAzimuth: null,
+    sunriseTime: null,
+    sunsetTime: null,
+    solarNoonTime: null,
+    moonAzimuth: null,
+    moonElevation: null,
+    moonPhase: calculateMoonPhase(new Date()),
+    solarDay: null,
 
     isHardwareOrientationAvailable: false,
     isHardwareMotionAvailable: false,
@@ -294,11 +308,25 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
   }, []);
 
   const setSimulationPitchRoll = useCallback((pitch: number, roll: number) => {
-    setSensors((prev) => ({
-      ...prev,
-      pitch,
-      roll,
-    }));
+    setSensors((prev) => {
+      const pitchRad = (pitch * Math.PI) / 180;
+      const rollRad = (roll * Math.PI) / 180;
+      const g = 9.80665;
+      const ax = -g * Math.sin(rollRad) * Math.cos(pitchRad);
+      const ay = g * Math.sin(pitchRad);
+      const az = g * Math.cos(pitchRad) * Math.cos(rollRad);
+      const mag = Math.sqrt(ax * ax + ay * ay + az * az);
+      return {
+        ...prev,
+        pitch,
+        roll,
+        accelX: Math.round(ax * 100) / 100,
+        accelY: Math.round(ay * 100) / 100,
+        accelZ: Math.round(az * 100) / 100,
+        gForce: Math.round((mag / g) * 100) / 100,
+        isHardwareMotionAvailable: true,
+      };
+    });
   }, []);
 
   const toggleSimulationMode = useCallback(() => {
@@ -310,6 +338,11 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
         return {
           ...prev,
           isSimulationMode: true,
+          isHardwareMotionAvailable: true,
+          accelX: 0.25,
+          accelY: -0.18,
+          accelZ: 9.78,
+          gForce: 1.0,
           ...(prev.latitude === null
             ? { latitude: SIM_LATITUDE, longitude: SIM_LONGITUDE, gpsAccuracy: 8, isGpsAvailable: true }
             : {}),
@@ -661,19 +694,52 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
     }
   }, [sensors.latitude, sensors.longitude]);
 
-  // Sun position: pure astronomy from position + clock
+  // Celestial positions (Sun & Moon) + sunrise/sunset directions from position + clock
   useEffect(() => {
     const update = () => {
       setSensors((prev) => {
+        const now = new Date();
+        const moon = calculateMoonPhase(now, prev.latitude, prev.longitude);
+
         if (prev.latitude === null || prev.longitude === null) {
-          return prev.sunAzimuth === null ? prev : { ...prev, sunAzimuth: null, sunElevation: null };
+          return {
+            ...prev,
+            sunAzimuth: null,
+            sunElevation: null,
+            sunriseAzimuth: null,
+            sunsetAzimuth: null,
+            sunriseTime: null,
+            sunsetTime: null,
+            solarNoonTime: null,
+            moonAzimuth: null,
+            moonElevation: null,
+            moonPhase: moon,
+            solarDay: null,
+          };
         }
-        const sun = calculateSunPosition(prev.latitude, prev.longitude);
-        return { ...prev, sunAzimuth: Math.round(sun.azimuth), sunElevation: Math.round(sun.elevation) };
+
+        const solar = calculateSolarDay(prev.latitude, prev.longitude, now);
+        const formatTime = (d: Date | null) =>
+          d ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null;
+
+        return {
+          ...prev,
+          sunAzimuth: Math.round(solar.sunAzimuth),
+          sunElevation: Math.round(solar.sunElevation),
+          sunriseAzimuth: solar.sunriseAzimuth !== null ? Math.round(solar.sunriseAzimuth) : null,
+          sunsetAzimuth: solar.sunsetAzimuth !== null ? Math.round(solar.sunsetAzimuth) : null,
+          sunriseTime: formatTime(solar.sunriseTime),
+          sunsetTime: formatTime(solar.sunsetTime),
+          solarNoonTime: formatTime(solar.solarNoonTime),
+          moonAzimuth: moon.moonAzimuth !== null ? Math.round(moon.moonAzimuth) : null,
+          moonElevation: moon.moonElevation !== null ? Math.round(moon.moonElevation) : null,
+          moonPhase: moon,
+          solarDay: solar,
+        };
       });
     };
     update();
-    const interval = setInterval(update, 60000);
+    const interval = setInterval(update, 30000);
     return () => clearInterval(interval);
   }, [sensors.latitude, sensors.longitude]);
 

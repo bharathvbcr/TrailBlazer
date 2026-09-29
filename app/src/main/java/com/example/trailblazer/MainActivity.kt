@@ -1,23 +1,13 @@
 package com.example.trailblazer
 
 import android.Manifest
-import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
 import android.os.Build
 import android.os.Bundle
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
-import android.view.View
 import android.view.WindowManager
 import android.webkit.ConsoleMessage
 import android.webkit.GeolocationPermissions
-import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -27,11 +17,13 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.WebViewAssetLoader
 
 class MainActivity : ComponentActivity() {
@@ -50,21 +42,35 @@ class MainActivity : ComponentActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        // Notify webview or reload if needed
         val allGranted = permissions.values.all { it }
-        android.util.Log.d("AeroGlass", "Permissions granted: $allGranted")
+        android.util.Log.d("TrailBlazer", "Permissions granted: $allGranted")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Modern Android Edge-to-Edge with transparent system bars
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT)
+        )
+
         super.onCreate(savedInstanceState)
 
-        // Set status and navigation bar styling to match dark glass aesthetic
-        window.statusBarColor = Color.parseColor("#080b14")
-        window.navigationBarColor = Color.parseColor("#080b14")
-        WindowCompat.setDecorFitsSystemWindows(window, false)
+        // Ensure status bar icons and navigation bar are light (white) on dark glass theme
+        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+        insetsController.isAppearanceLightStatusBars = false
+        insetsController.isAppearanceLightNavigationBars = false
+
+        // Extend into display cutout / notch area
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
 
         // Enable screen wake lock support
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        // Initialize Native Sensor & Safe Area Inset Bridge
+        sensorBridge = NativeSensorBridge(this)
 
         // Initialize WebViewAssetLoader for secure loading from app assets
         assetLoader = WebViewAssetLoader.Builder()
@@ -73,15 +79,32 @@ class MainActivity : ComponentActivity() {
 
         webView = WebView(this).apply {
             setBackgroundColor(Color.parseColor("#080b14"))
-            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(this) { v, insets ->
-                val bars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
-                v.setPadding(0, bars.top, 0, 0)
-                insets
+
+            // Edge-to-edge insets listener: do NOT pad WebView view itself so dark liquid
+            // glass background and header blur extend behind notification panel and nav bar.
+            // Instead, measure precise dp insets and bridge them directly to CSS custom properties.
+            ViewCompat.setOnApplyWindowInsetsListener(this) { _, windowInsets ->
+                val insets = windowInsets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() or
+                    WindowInsetsCompat.Type.displayCutout() or
+                    WindowInsetsCompat.Type.ime()
+                )
+                val density = resources.displayMetrics.density
+                val safeDensity = if (density > 0f) density else 1f
+                val topDp = insets.top / safeDensity
+                val bottomDp = insets.bottom / safeDensity
+                val leftDp = insets.left / safeDensity
+                val rightDp = insets.right / safeDensity
+
+                sensorBridge.updateSafeAreaInsets(topDp, bottomDp, leftDp, rightDp)
+                applySafeAreaInsetsToWeb(topDp, bottomDp, leftDp, rightDp)
+
+                windowInsets
             }
+
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
-                databaseEnabled = true
                 mediaPlaybackRequiresUserGesture = false
                 setGeolocationEnabled(true)
                 allowFileAccess = false
@@ -95,6 +118,16 @@ class MainActivity : ComponentActivity() {
                     request: WebResourceRequest
                 ): WebResourceResponse? {
                     return assetLoader.shouldInterceptRequest(request.url)
+                }
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    applySafeAreaInsetsToWeb(
+                        sensorBridge.getSafeAreaTop(),
+                        sensorBridge.getSafeAreaBottom(),
+                        sensorBridge.getSafeAreaLeft(),
+                        sensorBridge.getSafeAreaRight()
+                    )
                 }
             }
 
@@ -114,14 +147,13 @@ class MainActivity : ComponentActivity() {
 
                 override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
                     android.util.Log.d(
-                        "AeroGlassJS",
+                        "TrailBlazerJS",
                         "[${consoleMessage.messageLevel()}] ${consoleMessage.message()} (at ${consoleMessage.sourceId()}:${consoleMessage.lineNumber()})"
                     )
                     return true
                 }
             }
 
-            sensorBridge = NativeSensorBridge(this@MainActivity)
             addJavascriptInterface(sensorBridge, "AndroidBridge")
         }
 
@@ -142,8 +174,25 @@ class MainActivity : ComponentActivity() {
             }
         })
 
-        // Load AeroGlass web application
+        // Load TrailBlazer web application
         webView.loadUrl("https://appassets.androidplatform.net/assets/index.html")
+    }
+
+    private fun applySafeAreaInsetsToWeb(topDp: Float, bottomDp: Float, leftDp: Float, rightDp: Float) {
+        val js = """
+            (function() {
+                var root = document.documentElement;
+                if (!root) return;
+                root.style.setProperty('--safe-top', '${topDp}px');
+                root.style.setProperty('--safe-bottom', '${bottomDp}px');
+                root.style.setProperty('--safe-left', '${leftDp}px');
+                root.style.setProperty('--safe-right', '${rightDp}px');
+                if (typeof window.__onSafeAreaInsetsChanged === 'function') {
+                    window.__onSafeAreaInsetsChanged({ top: $topDp, bottom: $bottomDp, left: $leftDp, right: $rightDp });
+                }
+            })();
+        """.trimIndent()
+        webView.evaluateJavascript(js, null)
     }
 
     private fun requestRuntimePermissions() {
@@ -170,78 +219,5 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         webView.destroy()
         super.onDestroy()
-    }
-
-    /**
-     * Exposes real hardware sensors the WebView cannot reach (barometer, magnetometer, light)
-     * plus haptics. Each getter returns NaN when the device has no such sensor or no reading
-     * has arrived yet, so the web app can show "unavailable" instead of inventing values.
-     */
-    inner class NativeSensorBridge(private val context: Context) : SensorEventListener {
-        private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
-        private val pressureSensor: Sensor? = sensorManager?.getDefaultSensor(Sensor.TYPE_PRESSURE)
-        private val magneticSensor: Sensor? = sensorManager?.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
-        private val lightSensor: Sensor? = sensorManager?.getDefaultSensor(Sensor.TYPE_LIGHT)
-
-        @Volatile private var pressureHpa = Double.NaN
-        @Volatile private var magneticFluxUt = Double.NaN
-        @Volatile private var lightLux = Double.NaN
-
-        fun start() {
-            listOfNotNull(pressureSensor, magneticSensor, lightSensor).forEach {
-                sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
-            }
-        }
-
-        fun stop() {
-            sensorManager?.unregisterListener(this)
-            pressureHpa = Double.NaN
-            magneticFluxUt = Double.NaN
-            lightLux = Double.NaN
-        }
-
-        override fun onSensorChanged(event: SensorEvent) {
-            when (event.sensor.type) {
-                Sensor.TYPE_PRESSURE -> pressureHpa = event.values[0].toDouble()
-                Sensor.TYPE_MAGNETIC_FIELD -> {
-                    val x = event.values[0].toDouble()
-                    val y = event.values[1].toDouble()
-                    val z = event.values[2].toDouble()
-                    magneticFluxUt = Math.sqrt(x * x + y * y + z * z)
-                }
-                Sensor.TYPE_LIGHT -> lightLux = event.values[0].toDouble()
-            }
-        }
-
-        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
-
-        @JavascriptInterface
-        fun getPressureHpa(): Double = pressureHpa
-
-        @JavascriptInterface
-        fun getMagneticFluxUt(): Double = magneticFluxUt
-
-        @JavascriptInterface
-        fun getLightLux(): Double = lightLux
-
-        private val vibrator: Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
-            vibratorManager?.defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-        }
-
-        @JavascriptInterface
-        fun vibrate(durationMs: Long) {
-            if (vibrator != null && vibrator.hasVibrator()) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator.vibrate(VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE))
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator.vibrate(durationMs)
-                }
-            }
-        }
     }
 }

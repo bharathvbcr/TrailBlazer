@@ -95,6 +95,17 @@ export interface SensorState {
   sunAzimuth: number | null; // degrees, computed from position + time
   sunElevation: number | null; // degrees
 
+  // Celestial (Sun & Moon)
+  sunriseAzimuth: number | null; // degrees (0-360) on horizon
+  sunsetAzimuth: number | null; // degrees (0-360) on horizon
+  sunriseTime: string | null; // formatted time e.g. "06:42"
+  sunsetTime: string | null; // formatted time e.g. "19:18"
+  solarNoonTime: string | null;
+  moonAzimuth: number | null;
+  moonElevation: number | null;
+  moonPhase: import('../utils/celestial.ts').MoonPhaseInfo | null;
+  solarDay: import('../utils/celestial.ts').SolarDayInfo | null;
+
   // Hardware Status
   isHardwareOrientationAvailable: boolean;
   isHardwareMotionAvailable: boolean;
