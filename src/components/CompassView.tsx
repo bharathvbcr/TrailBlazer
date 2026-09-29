@@ -10,11 +10,16 @@ import {
   calculateDistanceMeters,
 } from '../utils/calculations';
 import { GlassCard } from './GlassCard';
-import { Page, PageHeader, Toolbar, CardHeader, SectionLabel, Stat } from './Layout';
+import {
+  Page,
+  PageHeader,
+  Toolbar,
+  CardHeader,
+  Stat,
+} from './Layout';
 import { CircularSpeedometerGauge } from './CircularSpeedometerGauge';
 import {
   Compass,
-  Navigation,
   Sun,
   Lock,
   Unlock,
@@ -22,11 +27,8 @@ import {
   RotateCcw,
   CheckCircle2,
   AlertTriangle,
-  LocateFixed,
   Camera,
   Magnet,
-  Volume2,
-  VolumeX,
 } from 'lucide-react';
 
 interface Props {
@@ -445,9 +447,11 @@ export const CompassView: React.FC<Props> = ({
             )}
 
             {/* Sun indicator on dial */}
-            <g transform={`rotate(${sensors.sunAzimuth}, 140, 140)`}>
-              <circle cx="140" cy="22" r="5" fill="#fbbf24" filter="drop-shadow(0 0 6px #fbbf24)" />
-            </g>
+            {sensors.latitude !== null && (
+              <g transform={`rotate(${sensors.sunAzimuth}, 140, 140)`}>
+                <circle cx="140" cy="22" r="5" fill="#fbbf24" filter="drop-shadow(0 0 6px #fbbf24)" />
+              </g>
+            )}
           </svg>
 
           {/* Locked heading index flag */}
@@ -506,7 +510,7 @@ export const CompassView: React.FC<Props> = ({
             label="Sun"
             tone="amber"
             icon={<Sun className="w-3 h-3 text-amber-400 shrink-0" />}
-            value={`${sensors.sunAzimuth}°`}
+            value={sensors.latitude === null ? '—' : `${sensors.sunAzimuth}°`}
           />
           <Stat
             label="Mag"

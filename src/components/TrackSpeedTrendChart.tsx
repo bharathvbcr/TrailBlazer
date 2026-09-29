@@ -16,15 +16,9 @@ import { CardHeader } from './Layout';
 import {
   Gauge,
   Zap,
-  TrendingUp,
-  Clock,
-  Navigation2,
   AlertTriangle,
-  Activity,
   Sliders,
   Sparkles,
-  Footprints,
-  ShieldAlert,
 } from 'lucide-react';
 
 interface Props {

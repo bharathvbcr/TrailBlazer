@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -16,22 +16,13 @@ import { CardHeader } from './Layout';
 import { useToast } from './Toast';
 import {
   Mountain,
-  TrendingUp,
-  TrendingDown,
-  Navigation2,
   Clock,
-  Gauge,
-  Sparkles,
-  Layers,
-  Activity,
   Footprints,
   MapPin,
   Check,
   Play,
-  Square,
   ArrowUp,
   ArrowDown,
-  Sliders,
 } from 'lucide-react';
 
 interface Props {

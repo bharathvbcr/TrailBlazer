@@ -14,7 +14,7 @@ import {
   calculateThreeHourBarometricTrend,
 } from '../utils/calculations';
 import { GlassCard } from './GlassCard';
-import { Page, PageHeader, Toolbar, CardHeader, SectionLabel } from './Layout';
+import { Page, PageHeader, Toolbar, CardHeader } from './Layout';
 import { Modal } from './Modal';
 import {
   Gauge,
@@ -32,7 +32,6 @@ import {
   Info,
   ArrowUp,
   ArrowDown,
-  ArrowRight,
   MoveRight,
   History,
   Clock,

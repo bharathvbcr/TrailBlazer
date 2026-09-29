@@ -7,15 +7,10 @@ import {
   Palette,
   Compass,
   Vibrate,
-  Sliders,
   Check,
   Shield,
   Layers,
   Volume2,
-  Eye,
-  Sun,
-  Flame,
-  Gauge,
   AlertTriangle,
   Zap,
 } from 'lucide-react';
@@ -255,6 +250,7 @@ export const SettingsModal: React.FC<Props> = ({
                   </span>
                 </div>
                 <input
+                  aria-label="Enable speed limit alert"
                   type="checkbox"
                   checked={preferences.speedAlertEnabled}
                   onChange={(e) => onUpdatePreferences({ speedAlertEnabled: e.target.checked })}
@@ -270,6 +266,7 @@ export const SettingsModal: React.FC<Props> = ({
                       <span className="font-medium">Speed Limit Threshold</span>
                       <div className="flex items-center space-x-1.5">
                         <input
+                          aria-label="Speed limit threshold value"
                           type="number"
                           min="1"
                           max={maxSliderSpeed}
@@ -288,6 +285,7 @@ export const SettingsModal: React.FC<Props> = ({
                     </div>
 
                     <input
+                      aria-label="Speed limit threshold slider"
                       type="range"
                       min="1"
                       max={maxSliderSpeed}
@@ -337,6 +335,7 @@ export const SettingsModal: React.FC<Props> = ({
                         </div>
                       </div>
                       <input
+                        aria-label="Haptic warning pulse"
                         type="checkbox"
                         checked={preferences.speedAlertHaptic}
                         onChange={(e) => onUpdatePreferences({ speedAlertHaptic: e.target.checked })}
@@ -353,6 +352,7 @@ export const SettingsModal: React.FC<Props> = ({
                         </div>
                       </div>
                       <input
+                        aria-label="Visual alert banner"
                         type="checkbox"
                         checked={preferences.speedAlertVisual}
                         onChange={(e) => onUpdatePreferences({ speedAlertVisual: e.target.checked })}
@@ -369,6 +369,7 @@ export const SettingsModal: React.FC<Props> = ({
                         </div>
                       </div>
                       <input
+                        aria-label="Acoustic warning tone"
                         type="checkbox"
                         checked={preferences.speedAlertAudio}
                         onChange={(e) => onUpdatePreferences({ speedAlertAudio: e.target.checked })}
@@ -393,6 +394,7 @@ export const SettingsModal: React.FC<Props> = ({
                   <div className="text-[11px] text-slate-400">Vibrate on cardinals and 0° level</div>
                 </div>
                 <input
+                  aria-label="Haptic feedback"
                   type="checkbox"
                   checked={preferences.hapticsEnabled}
                   onChange={(e) => onUpdatePreferences({ hapticsEnabled: e.target.checked })}
@@ -406,6 +408,7 @@ export const SettingsModal: React.FC<Props> = ({
                   <div className="text-[11px] text-slate-400">Mechanical bezel clicks on degree changes</div>
                 </div>
                 <input
+                  aria-label="Audio feedback clicks"
                   type="checkbox"
                   checked={preferences.audioFeedbackEnabled}
                   onChange={(e) => onUpdatePreferences({ audioFeedbackEnabled: e.target.checked })}
@@ -419,6 +422,7 @@ export const SettingsModal: React.FC<Props> = ({
                   <div className="text-[11px] text-slate-400">Acoustic climb beeps and sink tone</div>
                 </div>
                 <input
+                  aria-label="Audio variometer"
                   type="checkbox"
                   checked={preferences.audioVariometerEnabled}
                   onChange={(e) => onUpdatePreferences({ audioVariometerEnabled: e.target.checked })}
@@ -432,6 +436,7 @@ export const SettingsModal: React.FC<Props> = ({
                   <div className="text-[11px] text-slate-400">Prevent sleep during navigation</div>
                 </div>
                 <input
+                  aria-label="Keep screen awake"
                   type="checkbox"
                   checked={preferences.wakeLockEnabled}
                   onChange={(e) => onUpdatePreferences({ wakeLockEnabled: e.target.checked })}

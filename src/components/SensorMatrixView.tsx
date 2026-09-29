@@ -3,13 +3,12 @@ import { SensorState, UserPreferences, TrackSession, Waypoint } from '../types/s
 import { formatToDMS } from '../utils/calculations';
 import { useAcousticSensor } from '../hooks/useAcousticSensor';
 import { GlassCard } from './GlassCard';
-import { Page, PageHeader, Toolbar, CardHeader, SectionLabel } from './Layout';
+import { Page, PageHeader, CardHeader } from './Layout';
 import { TrackElevationProfileChart } from './TrackElevationProfileChart';
 import {
   Activity,
   Magnet,
   Sun,
-  Compass,
   Zap,
   RotateCw,
   Locate,
@@ -29,6 +28,8 @@ interface Props {
   onOpenCalibration: () => void;
   onAddWaypoint?: (wp: Omit<Waypoint, 'id' | 'timestamp'>) => void;
   onUpdatePreferences: (prefs: Partial<UserPreferences>) => void;
+  locationEnabled: boolean;
+  onSetupSensors: () => void;
 }
 
 export const SensorMatrixView: React.FC<Props> = ({
@@ -38,6 +39,8 @@ export const SensorMatrixView: React.FC<Props> = ({
   onOpenCalibration,
   onAddWaypoint,
   onUpdatePreferences,
+  locationEnabled,
+  onSetupSensors,
 }) => {
   const compact = preferences.compactTelemetry;
   const [peakG, setPeakG] = useState<number>(1.0);
@@ -321,7 +324,7 @@ export const SensorMatrixView: React.FC<Props> = ({
       )}
 
       {/* 7. Geodesy & GPS Satellite Telemetry */}
-      {sensors.latitude !== null && sensors.longitude !== null && (
+      {sensors.latitude !== null && sensors.longitude !== null ? (
         <GlassCard className="w-full !p-4">
           <CardHeader icon={<Locate className="text-cyan-400 w-4 h-4 shrink-0" />} title="Geodesy & GPS Navigation">
             {sensors.gpsAccuracy !== null && (
@@ -368,6 +371,23 @@ export const SensorMatrixView: React.FC<Props> = ({
               </div>
             </div>
           </div>
+        </GlassCard>
+      ) : (
+        <GlassCard className="w-full !p-4">
+          <CardHeader icon={<Locate className="text-slate-400 w-4 h-4 shrink-0" />} title="Geodesy & GPS Navigation" />
+          <p className="text-xs text-slate-400 leading-relaxed">
+            {locationEnabled
+              ? 'Searching for a GPS fix. Move to open sky if this takes long.'
+              : 'Location is off, so position, ground speed and solar data are unavailable.'}
+          </p>
+          {!locationEnabled && (
+            <button
+              onClick={onSetupSensors}
+              className="mt-3 px-3 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold"
+            >
+              Enable location
+            </button>
+          )}
         </GlassCard>
       )}
     </Page>

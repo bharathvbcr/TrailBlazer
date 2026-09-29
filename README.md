@@ -9,7 +9,9 @@ Precision compass, altimeter, barometer, and environmental sensor suite with Mat
 - **Barometer & Altimeter**: Barometric altitude calculation, MSL pressure calibration (QNH), tare zeroing, and 3-hour pressure trend forecasting.
 - **Sensor Telemetry Matrix**: Live GPS tracking, speed with configurable threshold warning alerts, 3-axis accelerometer (G-force), and gyroscope tilt/roll indicators.
 - **Glider Audio Variometer**: Acoustic feedback with pitch-modulated climb beeps and sink tone.
-- **AR Camera Sighting**: Augmented reality camera overlay for visual bearing target acquisition.
+- **AR Camera Sighting**: Augmented reality camera overlay with a scrolling azimuth tape, off-screen target hints and a clear camera-unavailable state.
+- **Mobile-first UX**: Swipe between tabs, remembered last tab, compact Telemetry view, undoable waypoint deletion, toasts instead of blocking alerts, and a first-run sensor setup (location is only requested once you opt in; a built-in simulator works without any permissions).
+- **Night modes**: Night Red and Phosphor Green tint the entire UI to preserve dark adaptation.
 
 ## Getting Started
 

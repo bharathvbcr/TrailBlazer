@@ -25,8 +25,12 @@ const INITIAL_HISTORY: PressureHistoryPoint[] = [
   { timestamp: Date.now(), pressure: 1013.25, altitude: 134 },
 ];
 
+const SIM_LATITUDE = 37.7749;
+const SIM_LONGITUDE = -122.4194;
+
 export function useDeviceSensors(preferences: UserPreferences, options: { locationEnabled?: boolean } = {}) {
   const locationEnabled = options.locationEnabled ?? true;
+  const hasRealFix = useRef(false);
   const [sensors, setSensors] = useState<SensorState>({
     heading: 0,
     pitch: 0,
@@ -62,11 +66,12 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
     ambientLight: 340,
     lightCondition: 'office',
 
-    latitude: 37.7749,
-    longitude: -122.4194,
+    // No position until the GPS reports one (or the simulator supplies a sample location)
+    latitude: null,
+    longitude: null,
     gpsSpeed: 0,
     gpsHeading: null,
-    gpsAccuracy: 8,
+    gpsAccuracy: null,
     sunAzimuth: 142,
     sunElevation: 48,
 
@@ -276,10 +281,17 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
   }, []);
 
   const toggleSimulationMode = useCallback(() => {
-    setSensors((prev) => ({
-      ...prev,
-      isSimulationMode: !prev.isSimulationMode,
-    }));
+    setSensors((prev) => {
+      const turningOn = !prev.isSimulationMode;
+      if (turningOn && prev.latitude === null) {
+        // Supply a sample location so map/track features are demonstrable
+        return { ...prev, isSimulationMode: true, latitude: SIM_LATITUDE, longitude: SIM_LONGITUDE, gpsAccuracy: 8, isGpsAvailable: true };
+      }
+      if (!turningOn && !hasRealFix.current) {
+        return { ...prev, isSimulationMode: false, latitude: null, longitude: null, gpsAccuracy: null, isGpsAvailable: false };
+      }
+      return { ...prev, isSimulationMode: turningOn };
+    });
   }, []);
 
   const setSimulationSpeed = useCallback((speedMs: number) => {
@@ -477,6 +489,7 @@ export function useDeviceSensors(preferences: UserPreferences, options: { locati
 
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
+        hasRealFix.current = true;
         const { latitude, longitude, altitude, speed, heading, accuracy } = pos.coords;
         const sun = calculateSunPosition(latitude, longitude);
 

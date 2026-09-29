@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { SensorState } from '../types/sensors';
 import { Modal } from './Modal';
-import { Magnet, CheckCircle2, RotateCcw, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { Magnet } from 'lucide-react';
 
 interface Props {
   isOpen: boolean;

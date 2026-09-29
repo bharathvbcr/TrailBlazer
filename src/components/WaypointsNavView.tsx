@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { SensorState, UserPreferences, Waypoint, TrackPoint, TrackSession } from '../types/sensors';
+import React, { useState, useEffect } from 'react';
+import { SensorState, UserPreferences, Waypoint, TrackSession } from '../types/sensors';
 import {
   calculateBearingDegrees,
   calculateDistanceMeters,
@@ -8,7 +8,7 @@ import {
   generateGpxString,
 } from '../utils/calculations';
 import { GlassCard } from './GlassCard';
-import { Page, PageHeader, Toolbar, CardHeader, SectionLabel } from './Layout';
+import { Page, PageHeader, CardHeader, SectionLabel } from './Layout';
 import { Modal } from './Modal';
 import { useToast } from './Toast';
 import { WaypointMapThumbnail } from './WaypointMapThumbnail';
@@ -16,19 +16,15 @@ import { TrackElevationProfileChart } from './TrackElevationProfileChart';
 import { TrackSpeedTrendChart } from './TrackSpeedTrendChart';
 import {
   MapPin,
-  Navigation,
   Plus,
   Trash2,
   Check,
   Compass,
-  ArrowUpRight,
   Mountain,
   Download,
   Play,
   Square,
   Copy,
-  Clock,
-  Footprints,
   Map as MapIcon,
   Gauge,
   Activity,

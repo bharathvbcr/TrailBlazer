@@ -6,16 +6,9 @@ import { CardHeader } from './Layout';
 import {
   Gauge,
   Zap,
-  TrendingUp,
-  Activity,
   Sliders,
-  RotateCcw,
-  Compass,
-  Footprints,
   Satellite,
-  Navigation,
   AlertTriangle,
-  ShieldAlert,
 } from 'lucide-react';
 
 export type { SpeedUnit };
@@ -474,7 +467,7 @@ export const CircularSpeedometerGauge: React.FC<Props> = ({
           <span className="text-[11px] text-slate-400 uppercase font-sans block">GPS Accuracy</span>
           <span className="text-sm font-bold text-amber-300 flex items-center justify-center space-x-1">
             <Satellite className="w-3 h-3 text-amber-400" />
-            <span>±{gpsAccuracy ?? 8}m</span>
+            <span>{gpsAccuracy !== null ? `±${gpsAccuracy}m` : '—'}</span>
           </span>
         </div>
       </div>

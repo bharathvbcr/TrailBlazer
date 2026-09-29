@@ -23,8 +23,17 @@ export const CameraSightingView: React.FC<Props> = ({
   sensors,
   preferences,
   waypoints,
-  onClose,
+  onClose: onCloseRequest,
 }) => {
+  const [closing, setClosing] = useState(false);
+  const closeTimer = useRef<number | null>(null);
+  const onClose = () => {
+    if (closing) return;
+    setClosing(true);
+    closeTimer.current = window.setTimeout(onCloseRequest, 180);
+  };
+  useEffect(() => () => { if (closeTimer.current) window.clearTimeout(closeTimer.current); }, []);
+
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [isStarting, setIsStarting] = useState(true);
   const [attempt, setAttempt] = useState(0);
@@ -122,14 +131,26 @@ export const CameraSightingView: React.FC<Props> = ({
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [closing]);
+
+  // Lock page scroll and restore focus while the full-screen view is open
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    const prevFocus = document.activeElement as HTMLElement | null;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      prevFocus?.focus?.();
+    };
+  }, []);
 
   return (
     <div
       role="dialog"
       aria-modal="true"
       aria-label="Camera sighting"
-      className="animate-fade-in fixed inset-0 z-50 bg-black flex flex-col items-center justify-between overflow-hidden select-none"
+      className={`${closing ? 'animate-fade-out' : 'animate-fade-in'} fixed inset-0 z-50 bg-black flex flex-col items-center justify-between overflow-hidden select-none`}
     >
       {/* Background Video Stream */}
       <video

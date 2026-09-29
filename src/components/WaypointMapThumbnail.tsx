@@ -1,25 +1,8 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { SensorState, UserPreferences, Waypoint } from '../types/sensors';
-import {
-  calculateBearingDegrees,
-  calculateDistanceMeters,
-  getCardinalDirection,
-  convertAltitude,
-} from '../utils/calculations';
+import { calculateBearingDegrees, calculateDistanceMeters, getCardinalDirection } from '../utils/calculations';
 import { GlassCard } from './GlassCard';
-import {
-  MapPin,
-  Navigation,
-  Compass,
-  Maximize2,
-  ZoomIn,
-  ZoomOut,
-  Crosshair,
-  Layers,
-  Map as MapIcon,
-  Shield,
-  Locate,
-} from 'lucide-react';
+import { Compass, ZoomIn, ZoomOut, Map as MapIcon } from 'lucide-react';
 
 interface Props {
   sensors: SensorState;
@@ -231,6 +214,15 @@ export const WaypointMapThumbnail: React.FC<Props> = ({
         className="relative w-full h-[190px] bg-[#0c101a] overflow-hidden select-none"
         style={{ height: `${MAP_HEIGHT}px` }}
       >
+        {/* No position yet: say so instead of showing a placeholder location */}
+        {sensors.latitude === null && (
+          <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-1 bg-[#0c101a]/85 backdrop-blur-[2px] text-center px-6 animate-fade-in">
+            <MapIcon className="w-5 h-5 text-slate-500" />
+            <span className="text-xs font-semibold text-slate-300">Waiting for GPS</span>
+            <span className="text-[11px] text-slate-500">Your position appears here once location is available.</span>
+          </div>
+        )}
+
         {/* Layer 1: Dark Carto / OSM Tiles (if Dark Map mode is enabled) */}
         {mapStyle === 'dark_map' && (
           <div

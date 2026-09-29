@@ -187,6 +187,8 @@ export const App: React.FC = () => {
   // Expose palette to CSS so night palettes can tint the whole UI (not just the background)
   useEffect(() => {
     document.documentElement.dataset.palette = preferences.palette;
+    const bg = preferences.palette === 'tactical_red' ? '#050203' : preferences.palette === 'phosphor_green' ? '#020704' : '#080b14';
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', bg);
   }, [preferences.palette]);
 
   // Persist waypoints
@@ -254,9 +256,13 @@ export const App: React.FC = () => {
 
   const toggleTrackRecording = () => {
     if (!trackSession.isRecording) {
+      if (sensors.latitude === null || sensors.longitude === null) {
+        toast({ message: 'Waiting for GPS. Tracks need a position fix (or enable the simulator).', tone: 'error' });
+        return;
+      }
       const now = Date.now();
-      const currentLat = sensors.latitude ?? 37.7749;
-      const currentLon = sensors.longitude ?? -122.4194;
+      const currentLat = sensors.latitude;
+      const currentLon = sensors.longitude;
       const startPoint: TrackPoint = {
         latitude: currentLat,
         longitude: currentLon,
@@ -407,7 +413,9 @@ export const App: React.FC = () => {
   };
 
   const gpsStatus =
-    !locationEnabled
+    sensors.isSimulationMode && sensors.latitude !== null
+      ? { dot: 'bg-cyan-400', label: `Simulated · ±${sensors.gpsAccuracy ?? 8} m` }
+      : !locationEnabled
       ? { dot: 'bg-amber-400', label: 'Enable GPS' }
       : sensors.latitude === null
       ? { dot: 'bg-slate-500', label: 'Searching for GPS…' }
@@ -415,7 +423,7 @@ export const App: React.FC = () => {
       ? { dot: 'bg-amber-400', label: 'GPS fix' }
       : {
           dot: sensors.gpsAccuracy <= 15 ? 'bg-emerald-400' : sensors.gpsAccuracy <= 40 ? 'bg-amber-400' : 'bg-rose-400',
-          label: `GPS ±${sensors.gpsAccuracy} m${sensors.isSimulationMode ? ' · Sim' : ''}`,
+          label: `GPS ±${sensors.gpsAccuracy} m`,
         };
 
   // Check if current GPS speed exceeds user-configured speed threshold
@@ -610,6 +618,8 @@ export const App: React.FC = () => {
             onOpenCalibration={() => setIsCalibrationOpen(true)}
             onAddWaypoint={handleAddWaypoint}
             onUpdatePreferences={updatePreferences}
+            locationEnabled={locationEnabled}
+            onSetupSensors={() => setIsOnboardingOpen(true)}
           />
         )}
 
