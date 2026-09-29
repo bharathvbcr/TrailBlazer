@@ -10,6 +10,7 @@ import {
 import { GlassCard } from './GlassCard';
 import { Page, PageHeader, Toolbar, CardHeader, SectionLabel } from './Layout';
 import { Modal } from './Modal';
+import { useToast } from './Toast';
 import { WaypointMapThumbnail } from './WaypointMapThumbnail';
 import { TrackElevationProfileChart } from './TrackElevationProfileChart';
 import { TrackSpeedTrendChart } from './TrackSpeedTrendChart';
@@ -70,6 +71,7 @@ export const WaypointsNavView: React.FC<Props> = ({
 }) => {
   const [telemetryTab, setTelemetryTab] = useState<'both' | 'speed' | 'elevation'>('both');
   const [showAddModal, setShowAddModal] = useState(false);
+  const toast = useToast();
   const [name, setName] = useState('');
   const [color, setColor] = useState(COLOR_OPTIONS[0]);
   const [notes, setNotes] = useState('');
@@ -81,7 +83,7 @@ export const WaypointsNavView: React.FC<Props> = ({
   // Quick Mark: Automatically captures current GPS coordinate & barometric altitude without manual input
   const handleQuickMark = () => {
     if (sensors.latitude === null || sensors.longitude === null) {
-      alert('GPS location is unavailable. Please ensure location permissions are granted or simulator is active.');
+      toast({ message: 'GPS unavailable. Grant location permission or enable the simulator.', tone: 'error' });
       return;
     }
 
@@ -110,7 +112,7 @@ export const WaypointsNavView: React.FC<Props> = ({
 
   const handleCreateCurrent = () => {
     if (sensors.latitude === null || sensors.longitude === null) {
-      alert('GPS location unavailable yet.');
+      toast({ message: 'GPS location not available yet.', tone: 'error' });
       return;
     }
     onAddWaypoint({
@@ -124,11 +126,13 @@ export const WaypointsNavView: React.FC<Props> = ({
     setName('');
     setNotes('');
     setShowAddModal(false);
+    toast({ message: 'Waypoint saved', tone: 'success' });
   };
 
   const handleCopyCoords = (wp: Waypoint) => {
     const text = `${wp.latitude.toFixed(6)}, ${wp.longitude.toFixed(6)}`;
     navigator.clipboard?.writeText(text);
+    toast({ message: 'Coordinates copied', tone: 'info', duration: 2000 });
     setCopiedId(wp.id);
     setTimeout(() => setCopiedId(null), 2000);
   };
@@ -136,7 +140,7 @@ export const WaypointsNavView: React.FC<Props> = ({
   // Export GPX File
   const handleExportGpx = () => {
     if (trackSession.points.length === 0) {
-      alert('No recorded track points in current session yet.');
+      toast({ message: 'No track points recorded yet.', tone: 'error' });
       return;
     }
     const gpxData = generateGpxString(trackSession.points, 'AeroGlass Session Track');
@@ -147,6 +151,7 @@ export const WaypointsNavView: React.FC<Props> = ({
     a.download = `aeroglass-track-${new Date().toISOString().slice(0, 10)}.gpx`;
     a.click();
     URL.revokeObjectURL(url);
+    toast({ message: `GPX exported (${trackSession.points.length} points)`, tone: 'success' });
   };
 
   // Export JSON Telemetry

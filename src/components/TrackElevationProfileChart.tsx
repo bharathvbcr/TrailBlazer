@@ -13,6 +13,7 @@ import { TrackSession, TrackPoint, UserPreferences, SensorState, Waypoint } from
 import { convertAltitude, calculateDistanceMeters } from '../utils/calculations';
 import { GlassCard } from './GlassCard';
 import { CardHeader } from './Layout';
+import { useToast } from './Toast';
 import {
   Mountain,
   TrendingUp,
@@ -241,6 +242,8 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
     return `${mins}m ${secs.toString().padStart(2, '0')}s`;
   }, [chartData]);
 
+  const toast = useToast();
+
   return (
     <GlassCard className="w-full !p-4">
       {/* Header and Toggle Controls */}
@@ -272,7 +275,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
             <button
               onClick={() => {
                 if (sensors.latitude === null || sensors.longitude === null) {
-                  alert('GPS location unavailable.');
+                  toast({ message: 'GPS location unavailable.', tone: 'error' });
                   return;
                 }
                 const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -285,6 +288,7 @@ export const TrackElevationProfileChart: React.FC<Props> = ({
                   notes: `Track Profile Mark • Alt: ${sensors.barometricAltitude.toFixed(1)}m • Pressure: ${sensors.pressure.toFixed(1)} hPa • Net Δ: ${netAltitudeChange >= 0 ? '+' : ''}${netAltitudeChange}${preferences.altitudeUnit}`,
                 });
                 setQuickMarkSaved(true);
+                toast({ message: 'Elevation mark saved', tone: 'success' });
                 setTimeout(() => setQuickMarkSaved(false), 2500);
               }}
               className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-200 text-[11px] font-bold transition-all active:scale-95 shadow"

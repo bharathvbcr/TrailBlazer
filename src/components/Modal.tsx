@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { GlassCard } from './GlassCard';
@@ -19,6 +19,17 @@ const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabi
  * scroll lock, focus containment and focus restore.
  */
 export const Modal: React.FC<Props> = ({ isOpen, onClose, title, icon, size = 'md', children }) => {
+  // Stay mounted briefly after closing so the exit animation can play.
+  const [mounted, setMounted] = useState(isOpen);
+  useEffect(() => {
+    if (isOpen) {
+      setMounted(true);
+      return;
+    }
+    const t = window.setTimeout(() => setMounted(false), 200);
+    return () => window.clearTimeout(t);
+  }, [isOpen]);
+
   const dialogRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -59,11 +70,11 @@ export const Modal: React.FC<Props> = ({ isOpen, onClose, title, icon, size = 'm
     };
   }, [isOpen]);
 
-  if (!isOpen) return null;
+  if (!mounted) return null;
 
   return createPortal(
     <div
-      className="animate-fade-in fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm select-none"
+      className={`${isOpen ? 'animate-fade-in' : 'animate-fade-out pointer-events-none'} fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm select-none`}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -74,7 +85,7 @@ export const Modal: React.FC<Props> = ({ isOpen, onClose, title, icon, size = 'm
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
-        className={`animate-sheet-in w-full ${size === 'sm' ? 'max-w-sm' : 'max-w-md'} max-h-[calc(100dvh-2rem)] overflow-y-auto scroll-thin rounded-3xl outline-none`}
+        className={`${isOpen ? 'animate-sheet-in' : 'animate-sheet-out'} w-full ${size === 'sm' ? 'max-w-sm' : 'max-w-md'} max-h-[calc(100dvh-2rem)] overflow-y-auto scroll-thin rounded-3xl outline-none`}
       >
         <GlassCard className="!p-5 border-cyan-500/40">
           <div className="flex items-center justify-between gap-3 mb-4">

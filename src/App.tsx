@@ -16,6 +16,7 @@ import { WaypointsNavView } from './components/WaypointsNavView';
 import { SettingsModal } from './components/SettingsModal';
 import { CameraSightingView } from './components/CameraSightingView';
 import { CalibrationModal } from './components/CalibrationModal';
+import { useToast } from './components/Toast';
 import {
   Compass,
   Mountain,
@@ -83,6 +84,7 @@ const NAV_ITEMS = [
 ];
 
 export const App: React.FC = () => {
+  const toast = useToast();
   // Load preferences from localStorage or default
   const [preferences, setPreferences] = useState<UserPreferences>(() => {
     try {
@@ -240,9 +242,11 @@ export const App: React.FC = () => {
         minAltitude: sensors.barometricAltitude,
       });
       triggerHaptic([30, 60, 30]);
+      toast({ message: 'Track recording started', tone: 'success' });
     } else {
       setTrackSession((prev) => ({ ...prev, isRecording: false }));
       triggerHaptic(40);
+      toast({ message: 'Track recording stopped', tone: 'info' });
     }
   };
 
@@ -261,11 +265,28 @@ export const App: React.FC = () => {
   };
 
   const handleDeleteWaypoint = (id: string) => {
+    const index = waypoints.findIndex((w) => w.id === id);
+    const removed = waypoints[index];
+    if (!removed) return;
+    const wasTarget = preferences.targetWaypointId === id;
     setWaypoints((prev) => prev.filter((w) => w.id !== id));
-    if (preferences.targetWaypointId === id) {
-      updatePreferences({ targetWaypointId: null });
-    }
+    if (wasTarget) updatePreferences({ targetWaypointId: null });
     triggerHaptic(20);
+    toast({
+      message: `Deleted “${removed.name}”`,
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          setWaypoints((prev) => {
+            if (prev.some((w) => w.id === removed.id)) return prev;
+            const next = [...prev];
+            next.splice(Math.min(index, next.length), 0, removed);
+            return next;
+          });
+          if (wasTarget) updatePreferences({ targetWaypointId: removed.id });
+        },
+      },
+    });
   };
 
   const handleSelectTarget = (id: string | null) => {
@@ -279,6 +300,16 @@ export const App: React.FC = () => {
     updatePreferences({ palette: nextPalette });
     triggerHaptic(20);
   };
+
+  const gpsStatus =
+    sensors.latitude === null
+      ? { dot: 'bg-slate-500', label: 'No GPS fix' }
+      : sensors.gpsAccuracy === null
+      ? { dot: 'bg-amber-400', label: 'GPS fix' }
+      : {
+          dot: sensors.gpsAccuracy <= 15 ? 'bg-emerald-400' : sensors.gpsAccuracy <= 40 ? 'bg-amber-400' : 'bg-rose-400',
+          label: `GPS ±${sensors.gpsAccuracy} m${sensors.isSimulationMode ? ' · Sim' : ''}`,
+        };
 
   // Check if current GPS speed exceeds user-configured speed threshold
   const currentSpeedMs = sensors.gpsSpeed ?? 0;
@@ -337,7 +368,10 @@ export const App: React.FC = () => {
                   PRO
                 </span>
               </h1>
-              <p className="text-[11px] text-slate-400 leading-tight truncate">Precision outdoor sensors</p>
+              <p className="text-[11px] text-slate-400 leading-tight truncate flex items-center gap-1.5" title="GPS status">
+                <span className={`inline-block w-1.5 h-1.5 rounded-full ${gpsStatus.dot}`} />
+                <span>{gpsStatus.label}</span>
+              </p>
             </div>
           </div>
 
