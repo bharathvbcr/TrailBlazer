@@ -20,7 +20,8 @@ enum class RefusalReason { ShortLinkNeedsNetwork, NoCoordinatesInLink }
 /**
  * Turns pasted or shared text into coordinates without any network access: decimal and DMS text,
  * `geo:` URIs, Google Maps, OpenStreetMap and Apple Maps links. Short links (maps.app.goo.gl, osm.org/go)
- * are refused rather than resolved, because resolving them would leak the query to a server.
+ * are refused rather than resolved, because resolving them would leak the query to a server; [ShortLinks] resolves one
+ * only when the user asks.
  */
 object CoordinateParser {
     private const val MAX_INPUT = 4096
@@ -28,7 +29,7 @@ object CoordinateParser {
     private val pair = Regex("""^\s*($number)\s*,\s*($number)""")
     private val googleData = Regex("""!3d($number)!4d($number)""")
     private val googleAt = Regex("""@($number),($number)""")
-    private val shortHosts = listOf("goo.gl", "maps.app.goo.gl", "g.co", "bit.ly", "tinyurl.com", "t.co")
+    private val urlInText = Regex("""https?://[^\s<>"]+""", RegexOption.IGNORE_CASE)
 
     fun parse(input: String): CoordinateParse {
         val text = input.trim()
@@ -36,10 +37,55 @@ object CoordinateParser {
         val lower = text.lowercase()
         return when {
             lower.startsWith("geo:") -> parseGeoUri(text)
-            lower.startsWith("http://") || lower.startsWith("https://") -> parseUrl(text)
-            else -> parseText(text)?.let { CoordinateParse.Found(listOf(ParsedPlace(it))) } ?: CoordinateParse.NotRecognized
+            lower.startsWith("http://") || lower.startsWith("https://") -> parseUrl(text.substringBefore(' ').substringBefore('\n').trim())
+            else -> parseText(text)?.let { CoordinateParse.Found(listOf(ParsedPlace(it))) } ?: parseShared(text) ?: CoordinateParse.NotRecognized
         }
     }
+
+    /**
+     * Text shared from a maps app: the place name (and often an address) on the lines before the link. The link is
+     * parsed; the first line names the place when the link itself does not.
+     */
+    private fun parseShared(text: String): CoordinateParse? {
+        val m = urlInText.find(text) ?: return null
+        return withName(parseUrl(m.value.trimEnd('.', ',', ')', ';')), sharedName(text, m.range.first))
+    }
+
+    /**
+     * Parses [fullUrl], the link a short link in [sharedText] turned out to point to, naming the place from the
+     * shared text's first line when the link does not. Offline, like [parse].
+     */
+    fun parseResolved(sharedText: String, fullUrl: String): CoordinateParse {
+        if (!fullUrl.startsWith("https://", true) && !fullUrl.startsWith("http://", true)) return CoordinateParse.NotRecognized
+        if (fullUrl.length > MAX_INPUT) return CoordinateParse.NotRecognized
+        val at = urlInText.find(sharedText.take(MAX_INPUT))?.range?.first ?: 0
+        return withName(parseUrl(fullUrl), sharedName(sharedText, at))
+    }
+
+    /**
+     * The place name a coordinate-less map link searches for (Google's `maps?q=Eiffel+Tower&ftid=…`, `/search/…`), so
+     * the app can offer to search for it by name. Null when the link has coordinates or names nothing.
+     */
+    fun placeQuery(url: String): String? {
+        if (!url.startsWith("https://", true) && !url.startsWith("http://", true)) return null
+        if (url.length > MAX_INPUT || parseUrl(url) is CoordinateParse.Found) return null
+        val rest = url.substringAfter("://")
+        val path = rest.substringAfter('/', "").substringBefore('?').substringBefore('#')
+        val params = queryParams(rest.substringAfter('?', ""))
+        val raw = params["q"] ?: params["query"] ?: params["destination"] ?: params["daddr"]
+            ?: Regex("""(?:search|place)/([^/@]+)""").find(path)?.groupValues?.get(1)
+        return raw?.let { decode(it.replace('+', ' ')) }?.trim()?.take(200)?.takeIf { it.length >= 2 && pair.find(it) == null }
+    }
+
+    /** The first non-blank line before the link, unless it is itself coordinates. */
+    private fun sharedName(text: String, linkStart: Int): String? =
+        text.substring(0, linkStart.coerceIn(0, text.length)).lines().map { it.trim() }.firstOrNull { it.isNotEmpty() }
+            ?.take(120)?.takeIf { pair.find(it) == null }
+
+    private fun withName(r: CoordinateParse, name: String?): CoordinateParse =
+        if (r is CoordinateParse.Found && name != null && r.places.size == 1 && r.places[0].label == null) {
+            CoordinateParse.Found(listOf(r.places[0].copy(label = name)))
+        } else r
 
     /** Percent-decodes, keeping a literal '+' (a sign in "+12.5", not a space). */
     private fun decode(s: String): String = try {
@@ -93,7 +139,7 @@ object CoordinateParser {
         val fragment = rest.substringAfter('#', "")
         val params = queryParams(query)
 
-        if (host in shortHosts || (host == "osm.org" && path.startsWith("/go/"))) {
+        if (ShortLinks.isShort(url)) {
             return CoordinateParse.Refused(RefusalReason.ShortLinkNeedsNetwork)
         }
 
@@ -111,7 +157,8 @@ object CoordinateParser {
     }
 
     private fun parseGoogle(path: String, params: Map<String, String>): List<ParsedPlace> {
-        val placeName = Regex("""/place/([^/@]+)""").find(path)?.groupValues?.get(1)?.let(::decode)
+        // In a place name '+' is a space ("Eiffel+Tower"); only coordinates keep '+' as a sign.
+        val placeName = Regex("""/place/([^/@]+)""").find(path)?.groupValues?.get(1)?.let { decode(it.replace('+', ' ')) }?.trim()
             ?.takeIf { pair.find(it) == null }
         // Place links: the !3d!4d data block is the pin; '@' is only the map viewport.
         googleData.find(path)?.let { m ->

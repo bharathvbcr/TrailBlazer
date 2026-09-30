@@ -21,6 +21,7 @@ import com.example.trailblazer.sensors.Reading
 import com.example.trailblazer.sensors.UnavailableReason
 import com.example.trailblazer.sensors.shareReading
 import com.trailblazer.core.geo.LatLon
+import com.trailblazer.core.math.mod360
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -99,6 +100,29 @@ class LocationRepository(
 
     val fix: StateFlow<Reading<Fix>> = live(1_000L).shareReading(scope)
 
+    /**
+     * The newest position the system already has, if it is at most [maxAgeMs] old, through the same validation as a
+     * live fix. Never used for tracking, alerts or waypoints: only for screens where a place a few km off is fine
+     * while the first live fix arrives. Null without permission, with location off, or when nothing is recent.
+     */
+    @SuppressLint("MissingPermission") // Checked here; SecurityException is still handled.
+    fun lastKnown(maxAgeMs: Long, nowMs: Long = System.currentTimeMillis()): Fix? {
+        if (!permissions.isGranted(AppPermission.Location) || !LocationManagerCompat.isLocationEnabled(manager)) return null
+        val candidates = (providers() + LocationManager.PASSIVE_PROVIDER).distinct().mapNotNull { p ->
+            try {
+                manager.getLastKnownLocation(p)
+            } catch (_: SecurityException) {
+                null
+            } catch (_: IllegalArgumentException) {
+                null // provider missing on this device
+            }
+        }
+        return candidates
+            .filter { nowMs - it.time in 0..maxAgeMs }
+            .maxByOrNull { it.time }
+            ?.toFix()
+    }
+
     private fun providers(): List<String> {
         if (Build.VERSION.SDK_INT >= 31 && LocationManagerCompat.hasProvider(manager, LocationManager.FUSED_PROVIDER)) {
             return listOf(LocationManager.FUSED_PROVIDER)
@@ -175,21 +199,27 @@ class LocationRepository(
     }
 
     /** Null for a fix whose coordinates are not a real position; such fixes are dropped, never shown. */
+    /**
+     * Converts a platform fix. The position must be valid or the fix is dropped; every optional field must be finite and
+     * physically possible or it becomes null ("not reported"). Mock providers and buggy chipsets do send NaN accuracy,
+     * a speed of -1 and bearings past 360°, and a NaN accuracy would slip through every "accuracy ≤ x" filter.
+     */
     private fun Location.toFix(): Fix? {
         val pos = LatLon.of(latitude, longitude) ?: return null
         val msl = Build.VERSION.SDK_INT >= 34 && hasMslAltitude()
+        fun Double.within(r: ClosedFloatingPointRange<Double>) = takeIf { it.isFinite() && it in r }
         return Fix(
             position = pos,
-            accuracyM = if (hasAccuracy()) accuracy.toDouble() else null,
+            accuracyM = if (hasAccuracy()) accuracy.toDouble().within(0.0..MAX_ACCURACY_M) else null,
             altitudeM = when {
                 msl -> mslAltitudeMeters
                 hasAltitude() -> altitude
                 else -> null
-            },
+            }?.within(MIN_ALTITUDE_M..MAX_ALTITUDE_M),
             altitudeDatum = if (msl) AltitudeDatum.SeaLevel else AltitudeDatum.Ellipsoid,
-            verticalAccuracyM = if (Build.VERSION.SDK_INT >= 26 && hasVerticalAccuracy()) verticalAccuracyMeters.toDouble() else null,
-            speedMps = if (hasSpeed()) speed.toDouble() else null,
-            bearingDeg = if (hasBearing()) bearing.toDouble() else null,
+            verticalAccuracyM = if (Build.VERSION.SDK_INT >= 26 && hasVerticalAccuracy()) verticalAccuracyMeters.toDouble().within(0.0..MAX_ACCURACY_M) else null,
+            speedMps = if (hasSpeed()) speed.toDouble().within(0.0..MAX_SPEED_MPS) else null,
+            bearingDeg = if (hasBearing()) bearing.toDouble().takeIf { it.isFinite() }?.let { mod360(it) } else null,
             timeMs = time,
             provider = provider,
         )
@@ -204,7 +234,20 @@ data class Satellite(
     val elevationDeg: Double,
     val azimuthDeg: Double,
     val usedInFix: Boolean,
-)
+) {
+    companion object {
+        /**
+         * Validates a chipset report: a satellite with no real position in the sky is dropped, azimuth is wrapped into
+         * [0, 360), and signal strength (C/N0) is clamped to 0–99 dB-Hz, with an unreadable one shown as no signal.
+         */
+        fun of(constellation: Int, svid: Int, cn0: Float, elevation: Float, azimuth: Float, used: Boolean): Satellite? {
+            val el = elevation.toDouble().takeIf { it.isFinite() && it in -90.0..90.0 } ?: return null
+            val az = azimuth.toDouble().takeIf { it.isFinite() }?.let { mod360(it) } ?: return null
+            val signal = cn0.toDouble().takeIf { it.isFinite() }?.coerceIn(0.0, 99.0) ?: 0.0
+            return Satellite(constellation, svid, signal, el, az, used)
+        }
+    }
+}
 
 data class GnssSnapshot(val satellites: List<Satellite>) {
     val inView: Int get() = satellites.size
@@ -232,10 +275,10 @@ class GnssRepository(
         trySend(Reading.Acquiring)
         val cb = object : GnssStatusCompat.Callback() {
             override fun onSatelliteStatusChanged(status: GnssStatusCompat) {
-                val sats = (0 until status.satelliteCount).map { i ->
-                    Satellite(
-                        status.getConstellationType(i), status.getSvid(i), status.getCn0DbHz(i).toDouble(),
-                        status.getElevationDegrees(i).toDouble(), status.getAzimuthDegrees(i).toDouble(), status.usedInFix(i),
+                val sats = (0 until status.satelliteCount).mapNotNull { i ->
+                    Satellite.of(
+                        status.getConstellationType(i), status.getSvid(i), status.getCn0DbHz(i),
+                        status.getElevationDegrees(i), status.getAzimuthDegrees(i), status.usedInFix(i),
                     )
                 }
                 trySend(Reading.Value(GnssSnapshot(sats), Accuracy.Unknown, System.currentTimeMillis()))
@@ -257,3 +300,9 @@ class GnssRepository(
         awaitClose { LocationManagerCompat.unregisterGnssStatusCallback(manager, cb) }
     }
 }
+
+/** Plausibility limits for optional fix fields: beyond them the chipset is reporting garbage, not the world. */
+private const val MAX_ACCURACY_M = 100_000.0
+private const val MIN_ALTITUDE_M = -1_000.0
+private const val MAX_ALTITUDE_M = 20_000.0
+private const val MAX_SPEED_MPS = 400.0

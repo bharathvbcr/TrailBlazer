@@ -67,6 +67,13 @@ object LunarPhase {
         )
     }
 
+    /**
+     * Which side of the disc is lit as an observer sees it: the right when waxing from the northern hemisphere, the
+     * left from the southern (the Moon appears upside down there). On the equator the terminator runs roughly
+     * horizontally; the northern convention is used.
+     */
+    fun litOnRight(waxing: Boolean, latDeg: Double): Boolean = if (latDeg < 0) !waxing else waxing
+
     fun nameFor(elongationDeg: Double): MoonPhaseName {
         val e = mod360(elongationDeg)
         fun near(target: Double) = abs(angleDiff(target, e)) <= PRINCIPAL_WINDOW_DEG
@@ -93,6 +100,32 @@ object LunarPhase {
         }.firstOrNull { it.rising }?.epochMs
     }
 }
+
+/** One of the four principal phases, at the instant the elongation reaches [targetDeg]. */
+data class PrincipalPhase(val name: MoonPhaseName, val epochMs: Long) {
+    val targetDeg: Double get() = LunarPhase.typicalElongation(name)
+}
+
+/** The next four principal phases (new, first quarter, full, last quarter, starting from whichever comes first). */
+fun LunarPhase.upcoming(fromMs: Long): List<PrincipalPhase> =
+    listOf(MoonPhaseName.NewMoon, MoonPhaseName.FirstQuarter, MoonPhaseName.FullMoon, MoonPhaseName.LastQuarter)
+        .mapNotNull { n -> next(fromMs, typicalElongation(n))?.let { PrincipalPhase(n, it) } }
+        .sortedBy { it.epochMs }
+
+/** The elongation that names each phase: the principal angles, and the midpoints between them for the others. */
+fun LunarPhase.typicalElongation(name: MoonPhaseName): Double = when (name) {
+    MoonPhaseName.NewMoon -> 0.0
+    MoonPhaseName.WaxingCrescent -> 45.0
+    MoonPhaseName.FirstQuarter -> 90.0
+    MoonPhaseName.WaxingGibbous -> 135.0
+    MoonPhaseName.FullMoon -> 180.0
+    MoonPhaseName.WaningGibbous -> 225.0
+    MoonPhaseName.LastQuarter -> 270.0
+    MoonPhaseName.WaningCrescent -> 315.0
+}
+
+/** Lit fraction for drawing a phase icon: (1 − cos elongation) / 2, which ignores the Moon's small latitude. */
+fun LunarPhase.illuminationFor(name: MoonPhaseName): Double = (1 - kotlin.math.cos(typicalElongation(name) * DEG)) / 2
 
 object LunarEvents {
     fun day(latDeg: Double, lonDeg: Double, windowStartMs: Long, windowEndMs: Long): LunarDay {

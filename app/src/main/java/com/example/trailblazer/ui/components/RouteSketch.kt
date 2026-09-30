@@ -18,17 +18,14 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.trailblazer.core.geo.Geo
-import com.trailblazer.core.math.DEG
+import com.trailblazer.core.plot.LocalPlane
+import com.trailblazer.core.plot.SeriesPlot
 import com.trailblazer.core.trip.Stop
 import com.trailblazer.core.trip.StopKind
-import kotlin.math.cos
-import kotlin.math.floor
-import kotlin.math.log10
 import kotlin.math.max
-import kotlin.math.pow
 
 /** Letter label for the i-th stop: A…Z, then AA, AB… */
-fun stopLetter(i: Int): String = if (i < 26) ('A' + i).toString() else stopLetter(i / 26 - 1) + ('A' + i % 26)
+fun stopLetter(i: Int): String = com.trailblazer.core.trip.StopLabel.of(i)
 
 /**
  * Offline route sketch: stops projected onto a local plane (north up), straight legs between them,
@@ -42,24 +39,22 @@ fun RouteSketch(stops: List<Stop>, distanceLabel: (Double) -> String, modifier: 
     val small = TextStyle(fontSize = 11.sp, color = cs.onSurfaceVariant)
     val letter = TextStyle(fontSize = 11.sp, color = cs.onPrimary)
     Canvas(modifier.fillMaxWidth().aspectRatio(1.4f).semantics { contentDescription = "Route sketch with ${stops.size} stops" }) {
-        val lat0 = stops.map { it.position.lat }.average()
-        val lon0 = stops.first().position.lon
-        val kx = cos(lat0 * DEG) * Geo.EARTH_RADIUS_M * DEG
-        val ky = Geo.EARTH_RADIUS_M * DEG
-        fun wrapLon(d: Double) = ((d + 540.0) % 360.0) - 180.0
-        val pts = stops.map { (wrapLon(it.position.lon - lon0) * kx) to (it.position.lat - lat0) * ky }
-        val minX = pts.minOf { it.first }
-        val maxX = pts.maxOf { it.first }
-        val minY = pts.minOf { it.second }
-        val maxY = pts.maxOf { it.second }
+        val pts = LocalPlane.project(stops.map { it.position })
+        if (pts.isEmpty()) return@Canvas
+        val minX = pts.minOf { it.eastM }
+        val maxX = pts.maxOf { it.eastM }
+        val minY = pts.minOf { it.northM }
+        val maxY = pts.maxOf { it.northM }
         val pad = 28.dp.toPx()
+        val drawable = minOf(size.width, size.height) - 2 * pad
+        if (drawable <= 0f) return@Canvas
         val spanM = max(max(maxX - minX, maxY - minY), 200.0)
-        val scale = (minOf(size.width, size.height) - 2 * pad) / spanM
+        val scale = drawable / spanM
         val cx = (minX + maxX) / 2
         val cy = (minY + maxY) / 2
-        fun screen(p: Pair<Double, Double>) = Offset(
-            (size.width / 2 + (p.first - cx) * scale).toFloat(),
-            (size.height / 2 - (p.second - cy) * scale).toFloat(),
+        fun screen(p: com.trailblazer.core.plot.PlanePoint) = Offset(
+            (size.width / 2 + (p.eastM - cx) * scale).toFloat(),
+            (size.height / 2 - (p.northM - cy) * scale).toFloat(),
         )
         val sp = pts.map(::screen)
         for (i in 0 until sp.size - 1) {
@@ -91,8 +86,7 @@ fun RouteSketch(stops: List<Stop>, distanceLabel: (Double) -> String, modifier: 
         drawText(nl, topLeft = Offset(n.x - nl.size.width / 2f, n.y + 8.dp.toPx()))
         // Scale bar: a 1-2-5 length near a quarter of the width.
         val target = (size.width / 4) / scale
-        val mag = 10.0.pow(floor(log10(target)))
-        val nice = listOf(1.0, 2.0, 5.0, 10.0).map { it * mag }.last { it <= target * 1.5 }
+        val nice = SeriesPlot.niceLength(target)
         val len = (nice * scale).toFloat()
         val y = size.height - 12.dp.toPx()
         val x0 = 12.dp.toPx()

@@ -91,10 +91,62 @@ data class OmResponse(
     val latitude: Double? = null,
     val longitude: Double? = null,
     val timezone: String? = null,
+    /** The place's offset from UTC; hourly and daily times are wall-clock times there. */
+    @SerialName("utc_offset_seconds") val utcOffsetSeconds: Int? = null,
     val current: OmCurrent? = null,
     val hourly: OmHourly? = null,
     val daily: OmDaily? = null,
 )
+
+/**
+ * Physical plausibility at the network boundary. A value no weather station can report (500 % humidity, a
+ * temperature of 10³⁰⁰ °C, a negative wind speed, a weather code outside WMO 0–99) becomes null, which the screen
+ * shows as not reported, instead of being displayed. Wind direction is normalised into [0, 360).
+ */
+/** Real zones run from UTC−12 to UTC+14; ±18 h is java.time's own bound. */
+private const val MAX_UTC_OFFSET_S = 18 * 3_600
+
+internal fun OmResponse.sanitized(): OmResponse {
+    fun Double?.within(r: ClosedFloatingPointRange<Double>) = this?.takeIf { it.isFinite() && it in r }
+    fun List<Double?>.within(r: ClosedFloatingPointRange<Double>) = map { it.within(r) }
+    fun Int?.wmo() = this?.takeIf { it in 0..99 }
+    val temp = -95.0..65.0
+    val pct = 0.0..100.0
+    val wind = 0.0..500.0
+    val rain = 0.0..2_000.0
+    return copy(
+        latitude = latitude.within(-90.0..90.0),
+        longitude = longitude.within(-180.0..180.0),
+        utcOffsetSeconds = utcOffsetSeconds?.takeIf { it in -MAX_UTC_OFFSET_S..MAX_UTC_OFFSET_S },
+        current = current?.let { c ->
+            c.copy(
+                temperatureC = c.temperatureC.within(temp),
+                humidityPct = c.humidityPct.within(pct),
+                apparentC = c.apparentC.within(temp),
+                weatherCode = c.weatherCode.wmo(),
+                windKmh = c.windKmh.within(wind),
+                windDirDeg = c.windDirDeg?.takeIf { it.isFinite() }?.let { com.trailblazer.core.math.mod360(it) },
+                gustKmh = c.gustKmh.within(wind),
+                pressureMslHpa = c.pressureMslHpa.within(850.0..1_090.0),
+                precipitation = c.precipitation.within(rain),
+            )
+        },
+        hourly = hourly?.let { h ->
+            h.copy(temperatureC = h.temperatureC.within(temp), precipProbPct = h.precipProbPct.within(pct), weatherCode = h.weatherCode.map { it.wmo() })
+        },
+        daily = daily?.let { d ->
+            d.copy(
+                weatherCode = d.weatherCode.map { it.wmo() },
+                maxC = d.maxC.within(temp),
+                minC = d.minC.within(temp),
+                precipProbPct = d.precipProbPct.within(pct),
+                precipMm = d.precipMm.within(rain),
+                windMaxKmh = d.windMaxKmh.within(wind),
+                uvMax = d.uvMax.within(0.0..20.0),
+            )
+        },
+    )
+}
 
 data class Forecast(val response: OmResponse, val fetchedMs: Long, val requestedFor: LatLon)
 
@@ -136,7 +188,7 @@ class OpenMeteoClient(private val http: HttpTransport, private val clock: Clock)
             }
             try {
                 val body = http.get(url(key))
-                val parsed = json.decodeFromString(OmResponse.serializer(), body)
+                val parsed = json.decodeFromString(OmResponse.serializer(), body).sanitized()
                 val f = Forecast(parsed, clock.nowMs(), key)
                 cache = f
                 ForecastResult.Ok(f, fromCache = false)

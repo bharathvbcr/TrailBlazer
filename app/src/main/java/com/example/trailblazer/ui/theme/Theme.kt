@@ -1,9 +1,15 @@
 package com.example.trailblazer.ui.theme
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -11,12 +17,16 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
 import com.example.trailblazer.data.ThemeMode
 
 private val ForestLight = lightColorScheme(
@@ -135,6 +145,12 @@ private fun typography(): Typography {
     )
 }
 
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
 @Composable
 fun TrailTheme(
     mode: ThemeMode = ThemeMode.System,
@@ -159,7 +175,31 @@ fun TrailTheme(
         dark -> StatusColors(Color(0xFF81C995), Color(0xFFFFB871), Color(0xFFFFB4AB), false)
         else -> StatusColors(Color(0xFF2E7D32), Color(0xFF9A5B00), Color(0xFFBA1A1A), false)
     }
-    CompositionLocalProvider(LocalStatusColors provides status) {
-        MaterialTheme(colorScheme = scheme, typography = typography(), content = content)
+
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = ctx.findActivity()?.window ?: return@SideEffect
+            val insetsController = WindowCompat.getInsetsController(window, view)
+            insetsController.isAppearanceLightStatusBars = !dark && !nightRed
+            insetsController.isAppearanceLightNavigationBars = !dark && !nightRed
+        }
+    }
+
+    CompositionLocalProvider(
+        LocalContentColor provides scheme.onBackground,
+        LocalStatusColors provides status,
+    ) {
+        MaterialTheme(colorScheme = scheme, typography = typography()) {
+            CompositionLocalProvider(LocalContentColor provides scheme.onBackground) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = Color.Transparent,
+                    contentColor = scheme.onBackground,
+                    content = content,
+                )
+            }
+        }
     }
 }
+

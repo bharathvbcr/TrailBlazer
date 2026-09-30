@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -40,12 +41,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.trailblazer.container
 import com.example.trailblazer.data.NorthReference
@@ -61,12 +67,14 @@ import com.example.trailblazer.ui.Fmt
 import com.example.trailblazer.ui.components.Dial
 import com.example.trailblazer.ui.components.DialMarker
 import com.example.trailblazer.ui.components.GlassCard
+import com.example.trailblazer.ui.components.SatelliteSky
 import com.example.trailblazer.ui.components.LabelValue
 import com.example.trailblazer.ui.components.PermissionGate
 import com.example.trailblazer.ui.components.ScreenScaffold
 import com.example.trailblazer.ui.components.TrailIcons
 import com.example.trailblazer.ui.components.ValueTile
 import com.example.trailblazer.ui.label
+import com.example.trailblazer.ui.nav.LevelRoute
 import com.example.trailblazer.ui.nav.Navigator
 import com.example.trailblazer.ui.nav.SettingsRoute
 import com.example.trailblazer.ui.nav.SightingRoute
@@ -74,11 +82,14 @@ import com.example.trailblazer.ui.theme.LocalStatusColors
 import com.trailblazer.core.atmo.Isa
 import com.trailblazer.core.geo.Dms
 import com.trailblazer.core.geo.Geo
+import com.trailblazer.core.plot.SkyBody
+import com.trailblazer.core.plot.SkyPolar
 import com.trailblazer.core.intents.MapLinks
 import com.trailblazer.core.math.angleDiff
 import java.text.DateFormat
 import java.util.Date
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @Composable
 fun NowScreen(nav: Navigator) {
@@ -98,10 +109,14 @@ fun NowScreen(nav: Navigator) {
     var calibrationOpen by rememberSaveable { mutableStateOf(false) }
     var lastMessage by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(vm) {
-        vm.speedAlerts.collect { v ->
-            vibrate(ctx)
-            lastMessage = "Over speed limit: ${fmt.speed(v)}"
+    // Only while the screen is started: the alert must never hold GPS on in the background (see NowViewModelTest).
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(vm, lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            vm.speedAlerts.collect { v ->
+                vibrate(ctx)
+                lastMessage = "Over speed limit: ${fmt.speed(v)}"
+            }
         }
     }
 
@@ -109,14 +124,46 @@ fun NowScreen(nav: Navigator) {
         title = "Now",
         actions = { IconButton(onClick = { nav.go(SettingsRoute) }) { Icon(TrailIcons.Settings, "Settings") } },
     ) {
-        item { CompassCard(heading, settings, fmt, sky, target, fix, onToggleNorth = { vm.toggleNorth() }, onCalibrate = { calibrationOpen = true }, fieldAccuracy = (field as? Reading.Value)?.accuracy) }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = { markOpen = true }, modifier = Modifier.weight(1f), enabled = fix is Reading.Value) {
+            CompassCard(
+                heading = heading,
+                settings = settings,
+                fmt = fmt,
+                sky = sky,
+                target = target,
+                fix = fix,
+                onToggleNorth = { vm.toggleNorth() },
+                onCalibrate = { calibrationOpen = true },
+                onSetLevelZero = { p, r -> vm.setLevelZero(p, r) },
+                onResetLevelZero = { vm.resetLevelZero() },
+                fieldAccuracy = (field as? Reading.Value)?.accuracy,
+            )
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = { markOpen = true },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = CircleShape,
+                    enabled = fix is Reading.Value,
+                ) {
                     Icon(TrailIcons.Pin, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Mark waypoint")
                 }
-                FilledTonalButton(onClick = { nav.go(SightingRoute) }, modifier = Modifier.weight(1f)) {
-                    Icon(TrailIcons.Camera, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Sight")
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    FilledTonalButton(
+                        onClick = { nav.go(SightingRoute) },
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = CircleShape,
+                    ) {
+                        Icon(TrailIcons.Camera, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Sight")
+                    }
+                    FilledTonalButton(
+                        onClick = { nav.go(LevelRoute) },
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = CircleShape,
+                    ) {
+                        Icon(TrailIcons.Level, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Level")
+                    }
                 }
             }
         }
@@ -130,7 +177,7 @@ fun NowScreen(nav: Navigator) {
         target?.let { t -> item { TargetCard(t.name, fix, t.position, heading, fmt, onClear = { vm.setTarget(null) }) } }
         item {
             PermissionGate(AppPermission.Location, "Location shows your position, speed and GPS altitude, gives true north, and lets you mark waypoints. It stays on this phone.") {
-                PositionCard(fix, gnss, settings, fmt, ctx)
+                PositionCard(fix, gnss, settings, fmt, ctx, onCompact = { vm.setCompactPosition(it) })
             }
         }
         item {
@@ -175,10 +222,14 @@ private fun CompassCard(
     fix: Reading<Fix>,
     onToggleNorth: () -> Unit,
     onCalibrate: () -> Unit,
+    onSetLevelZero: (Double, Double) -> Unit,
+    onResetLevelZero: () -> Unit,
     fieldAccuracy: Accuracy?,
 ) {
+    var zeroLevelDialogOpen by rememberSaveable { mutableStateOf(false) }
+    val h = (heading as? Reading.Value)?.value
+
     GlassCard {
-        val h = (heading as? Reading.Value)?.value
         val wantTrue = settings.north == NorthReference.True
         val shown: Double? = h?.let { if (wantTrue) it.trueDeg ?: it.magneticDeg else it.magneticDeg }
         val isTrue = wantTrue && h?.trueDeg != null
@@ -193,8 +244,27 @@ private fun CompassCard(
             val f = (fix as? Reading.Value)?.value
             if (target != null && f != null) add(DialMarker(Geo.initialBearing(f.position, target.position) + offset, MaterialTheme.colorScheme.primary, target.name.take(10)))
         }
+        val haptic = LocalHapticFeedback.current
+        val isLevel = h != null && !h.upright && h.isLevel
+        var wasLevel by rememberSaveable { mutableStateOf(false) }
+        LaunchedEffect(isLevel) {
+            if (isLevel && !wasLevel) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            }
+            wasLevel = isLevel
+        }
+
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Dial(shown, markers, Modifier.widthIn(max = 320.dp).fillMaxWidth(0.86f).padding(8.dp), dimmed = heading !is Reading.Value || heading.stale)
+            Dial(
+                headingDeg = shown,
+                markers = markers,
+                modifier = Modifier.widthIn(max = 320.dp).fillMaxWidth(0.86f).padding(8.dp),
+                dimmed = heading !is Reading.Value || heading.stale,
+                pitchDeg = h?.calibratedPitchDeg,
+                rollDeg = h?.calibratedRollDeg,
+                accuracyDeg = h?.accuracyDeg,
+                upright = h?.upright == true,
+            )
         }
         Spacer(Modifier.height(8.dp))
         when (heading) {
@@ -210,7 +280,15 @@ private fun CompassCard(
                     if (wantTrue && h?.trueDeg == null) append(" · true north needs a location fix")
                     h?.declinationDeg?.let { append(" · declination ${fmt.angle(abs(it))} ${if (it >= 0) "E" else "W"}") }
                     h?.accuracyDeg?.let { append(" · ±${fmt.angle(it, 0)}") }
-                    if (h?.upright == true) append(" · camera direction")
+                    if (h?.upright == true) {
+                        append(" · camera direction")
+                    } else if (h != null) {
+                        if (h.isLevel) {
+                            append(if (h.isCalibrated) " · Level (zero calibrated)" else " · Level (accurate)")
+                        } else if (h.tiltDeg >= 3.0) {
+                            append(" · Hold level for accuracy")
+                        }
+                    }
                 }
                 Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
             }
@@ -219,7 +297,34 @@ private fun CompassCard(
         }
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
-            AssistChip(onClick = onToggleNorth, label = { Text(if (wantTrue) "True N" else "Magnetic N") })
+            AssistChip(
+                onClick = onToggleNorth,
+                label = { Text(if (wantTrue) "True N" else "Magnetic N") },
+                leadingIcon = { Icon(TrailIcons.Compass, null, Modifier.size(16.dp)) },
+            )
+            if (h != null && !h.upright) {
+                if (h.isLevel) {
+                    AssistChip(
+                        onClick = { zeroLevelDialogOpen = true },
+                        label = { Text(if (h.isCalibrated) "Level · Zeroed" else "Level") },
+                        leadingIcon = { Icon(TrailIcons.Check, null, Modifier.size(16.dp)) },
+                        colors = AssistChipDefaults.assistChipColors(
+                            labelColor = LocalStatusColors.current.good,
+                            leadingIconContentColor = LocalStatusColors.current.good,
+                        ),
+                    )
+                } else if (h.tiltDeg >= 2.0) {
+                    AssistChip(
+                        onClick = { zeroLevelDialogOpen = true },
+                        label = { Text("Tilt ${fmt.angle(h.tiltDeg, 0)}") },
+                        leadingIcon = { Icon(TrailIcons.Level, null, Modifier.size(16.dp)) },
+                        colors = AssistChipDefaults.assistChipColors(
+                            labelColor = LocalStatusColors.current.caution,
+                            leadingIconContentColor = LocalStatusColors.current.caution,
+                        ),
+                    )
+                }
+            }
             if (h?.source == HeadingSource.GameRotation) {
                 AssistChip(onClick = {}, label = { Text("Relative only: no magnetometer") })
             } else if (fieldAccuracy == Accuracy.Low || fieldAccuracy == Accuracy.Unreliable) {
@@ -231,6 +336,48 @@ private fun CompassCard(
                 )
             }
         }
+    }
+
+    if (zeroLevelDialogOpen) {
+        val rawPitch = h?.pitchDeg ?: 0.0
+        val rawRoll = h?.rollDeg ?: 0.0
+        AlertDialog(
+            onDismissRequest = { zeroLevelDialogOpen = false },
+            title = { Text("Level Zero Calibration") },
+            text = {
+                Column {
+                    Text("Place the device flat on a known level surface. Setting zero compensates for camera bars (like on Google Pixel devices) or uneven cases so the compass reaches peak leveling accuracy.")
+                    Spacer(Modifier.height(10.dp))
+                    Text("Current sensor tilt: Pitch ${fmt.angle(rawPitch)}, Roll ${fmt.angle(rawRoll)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (h?.isCalibrated == true) {
+                        Spacer(Modifier.height(4.dp))
+                        Text("Active offsets: Pitch ${fmt.angle(h.pitchOffsetDeg)}, Roll ${fmt.angle(h.rollOffsetDeg)}", style = MaterialTheme.typography.labelSmall, color = LocalStatusColors.current.good)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    onSetLevelZero(rawPitch, rawRoll)
+                    zeroLevelDialogOpen = false
+                }) {
+                    Text("Set zero")
+                }
+            },
+            dismissButton = {
+                if (h?.isCalibrated == true) {
+                    TextButton(onClick = {
+                        onResetLevelZero()
+                        zeroLevelDialogOpen = false
+                    }) {
+                        Text("Reset offset")
+                    }
+                } else {
+                    TextButton(onClick = { zeroLevelDialogOpen = false }) {
+                        Text("Cancel")
+                    }
+                }
+            },
+        )
     }
 }
 
@@ -279,7 +426,16 @@ private fun TargetCard(name: String, fix: Reading<Fix>, dest: com.trailblazer.co
 }
 
 @Composable
-private fun PositionCard(fix: Reading<Fix>, gnss: Reading<com.example.trailblazer.location.GnssSnapshot>, settings: Settings, fmt: Fmt, ctx: Context) {
+private fun PositionCard(
+    fix: Reading<Fix>,
+    gnss: Reading<com.example.trailblazer.location.GnssSnapshot>,
+    settings: Settings,
+    fmt: Fmt,
+    ctx: Context,
+    onCompact: (Boolean) -> Unit,
+) {
+    val compact = settings.compactPosition
+    val sats = (gnss as? Reading.Value)?.value
     GlassCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(TrailIcons.MyLocation, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
@@ -292,6 +448,23 @@ private fun PositionCard(fix: Reading<Fix>, gnss: Reading<com.example.trailblaze
                     ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, MapLinks.shareText("My position", v.value.position)), "Share position"))
                 }) { Icon(TrailIcons.Share, "Share position") }
             }
+            IconButton(onClick = { onCompact(!compact) }) {
+                Icon(if (compact) TrailIcons.Down else TrailIcons.Up, if (compact) "Show satellites and details" else "Show position on one line")
+            }
+        }
+        if (compact) {
+            val line = when (fix) {
+                is Reading.Value -> listOfNotNull(
+                    Dms.format(fix.value.position, settings.coordinateFormat),
+                    fix.value.accuracyM?.let { "±${fmt.elevation(it)}" },
+                    sats?.let { "${it.used}/${it.inView} sats" },
+                    if (fix.stale) "last known" else null,
+                ).joinToString(" · ")
+                Reading.Acquiring -> "Searching for satellites…"
+                is Reading.Unavailable -> fix.reason.label("location")
+            }
+            Text(line, style = MaterialTheme.typography.bodyLarge, color = if (fix is Reading.Value && fix.stale) LocalStatusColors.current.caution else MaterialTheme.colorScheme.onSurface)
+            return@GlassCard
         }
         when (fix) {
             is Reading.Value -> {
@@ -304,9 +477,26 @@ private fun PositionCard(fix: Reading<Fix>, gnss: Reading<com.example.trailblaze
             is Reading.Unavailable -> Text(fix.reason.label("location"), style = MaterialTheme.typography.bodyLarge)
         }
         when (gnss) {
-            is Reading.Value -> LabelValue("Satellites", "${gnss.value.used} used · ${gnss.value.inView} in view")
-            is Reading.Unavailable -> LabelValue("Satellites", gnss.reason.label("GNSS status"))
-            Reading.Acquiring -> LabelValue("Satellites", "Waiting…")
+            is Reading.Value -> {
+                val bodies = gnss.value.satellites.map {
+                    SkyBody(
+                        it.azimuthDeg,
+                        it.elevationDeg,
+                        it.usedInFix,
+                        "${constellationName(it.constellation)} ${it.svid} · ${it.cn0DbHz.roundToInt()} dB",
+                    )
+                }
+                if (SkyPolar.layout(bodies).isEmpty()) {
+                    Text("No satellites above the horizon", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    Text("${gnss.value.used} of ${gnss.value.inView} satellites used", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        SatelliteSky(bodies, Modifier.widthIn(max = 240.dp))
+                    }
+                }
+            }
+            is Reading.Unavailable -> Text(gnss.reason.label("GNSS status"), style = MaterialTheme.typography.bodyMedium)
+            Reading.Acquiring -> Text("Waiting for satellites…", style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
@@ -331,12 +521,20 @@ private fun CalibrationDialog(onDismiss: () -> Unit) {
         title = { Text("Calibrate the compass") },
         text = {
             Text(
-                "Android reports low magnetometer accuracy. Hold the phone away from metal, magnets, cars and power lines, " +
-                    "then slowly trace a figure-8 in the air, turning the phone through every orientation, until this warning clears.",
+                "Android reports low magnetometer accuracy. Move away from metal cases, magnets, car mounts, and electronics. " +
+                    "Slowly trace a figure-8 in the air until recalibrated. Holding the phone level also ensures the most accurate direction.",
             )
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
     )
+}
+
+private fun constellationName(constellation: Int) = when (constellation) {
+    1 -> "GPS"
+    3 -> "GLONASS"
+    5 -> "BeiDou"
+    6 -> "Galileo"
+    else -> "Sat"
 }
 
 private fun copy(ctx: Context, text: String) {

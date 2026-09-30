@@ -4,11 +4,16 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -23,7 +28,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.room.withTransaction
@@ -36,6 +44,7 @@ import com.example.trailblazer.ui.Fmt
 import com.example.trailblazer.ui.components.GlassCard
 import com.example.trailblazer.ui.components.ScreenScaffold
 import com.example.trailblazer.ui.components.SectionTitle
+import com.example.trailblazer.ui.components.TrailIcons
 import com.example.trailblazer.ui.nav.DocsRoute
 import com.example.trailblazer.ui.nav.Navigator
 import com.example.trailblazer.weather.OpenMeteoClient
@@ -73,6 +82,22 @@ fun SettingsScreen(nav: Navigator) {
                     when (it) { CoordinateFormat.Decimal -> "Decimal degrees"; CoordinateFormat.DegreesMinutes -> "Degrees, minutes"; CoordinateFormat.DegreesMinutesSeconds -> "Degrees, minutes, seconds" }
                 }) { v -> set { it.copy(coordinateFormat = v) } }
                 Choice("Compass north", s.north, NorthReference.entries, { if (it == NorthReference.True) "True north" else "Magnetic north" }) { v -> set { it.copy(north = v) } }
+                if (s.levelPitchOffsetDeg != 0.0 || s.levelRollOffsetDeg != 0.0) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Level zero calibration", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "Pitch ${fmt.angle(s.levelPitchOffsetDeg)} · Roll ${fmt.angle(s.levelRollOffsetDeg)} (camera visor / case)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        TextButton(onClick = { set { it.copy(levelPitchOffsetDeg = 0.0, levelRollOffsetDeg = 0.0) } }) {
+                            Text("Reset")
+                        }
+                    }
+                }
             }
         }
         item { SectionTitle("Appearance") }
@@ -112,18 +137,21 @@ fun SettingsScreen(nav: Navigator) {
                     set { it.copy(forecastConsent = v) }
                     if (!v) c.weather.clearCache()
                 }
+                Toggle("Place search", "Sends only the words you search for, when you ask, to this phone's place-search service (on Pixel, Google); never your location. Off by default.", s.placeSearchConsent) { v ->
+                    set { it.copy(placeSearchConsent = v) }
+                }
                 Text(
                     "TrailBlazer has no account, analytics or ads. Location, tracks and waypoints stay on this phone and are excluded from cloud backup.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                TextButton(onClick = { wipe = true }) { Text("Delete all data…", color = MaterialTheme.colorScheme.error) }
+                TextButton(onClick = { wipe = true }, modifier = Modifier.fillMaxWidth()) { Text("Delete all data…", color = MaterialTheme.colorScheme.error) }
             }
         }
         item { SectionTitle("About") }
         item {
             GlassCard {
-                TextButton(onClick = { nav.go(DocsRoute(null)) }) { Text("Developer docs") }
+                TextButton(onClick = { nav.go(DocsRoute(null)) }, modifier = Modifier.fillMaxWidth()) { Text("Developer docs") }
                 Text(OpenMeteoClient.ATTRIBUTION + ", when the forecast is on.", style = MaterialTheme.typography.bodySmall)
                 Text("Sun and moon: NOAA / Meeus algorithms, checked against US Naval Observatory data.", style = MaterialTheme.typography.bodySmall)
             }
@@ -153,9 +181,13 @@ fun SettingsScreen(nav: Navigator) {
 @Composable
 private fun <T> Choice(label: String, value: T, options: List<T>, name: (T) -> String, onPick: (T) -> Unit) {
     var open by remember { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-        TextButton(onClick = { open = true }) { Text(name(value)) }
+        AssistChip(
+            onClick = { open = true },
+            label = { Text(name(value)) },
+            trailingIcon = { Icon(TrailIcons.Chevron, null, Modifier.size(14.dp).rotate(90f)) },
+        )
         DropdownMenu(open, { open = false }) {
             options.forEach { o -> DropdownMenuItem(text = { Text(name(o)) }, onClick = { onPick(o); open = false }) }
         }
@@ -164,11 +196,18 @@ private fun <T> Choice(label: String, value: T, options: List<T>, name: (T) -> S
 
 @Composable
 private fun Toggle(label: String, detail: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
+    val haptic = LocalHapticFeedback.current
     Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(label, style = MaterialTheme.typography.bodyLarge)
             detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
-        Switch(checked, onChange)
+        Switch(
+            checked = checked,
+            onCheckedChange = {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onChange(it)
+            },
+        )
     }
 }

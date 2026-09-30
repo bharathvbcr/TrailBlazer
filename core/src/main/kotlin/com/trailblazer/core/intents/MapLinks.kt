@@ -35,7 +35,7 @@ object MapLinks {
      * links that chain (each link's destination is the next link's origin).
      */
     fun googleDirections(points: List<LatLon>, mode: TravelMode): List<String> {
-        require(points.size >= 2) { "need at least two points" }
+        if (points.size < 2) return emptyList()
         val chunk = GOOGLE_MAX_WAYPOINTS + 2
         val links = ArrayList<String>()
         var i = 0
@@ -55,7 +55,7 @@ object MapLinks {
 
     /** OpenStreetMap directions support exactly two points, so one link per leg. */
     fun osmDirections(points: List<LatLon>, mode: TravelMode): List<String> {
-        require(points.size >= 2) { "need at least two points" }
+        if (points.size < 2) return emptyList()
         return points.zipWithNext { a, b ->
             "https://www.openstreetmap.org/directions?engine=${mode.osrm}&route=${c(a)}%3B${c(b)}"
         }

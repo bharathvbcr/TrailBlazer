@@ -27,7 +27,14 @@ import com.example.trailblazer.sensors.MotionRepository
 import com.example.trailblazer.sensors.OrientationRepository
 import com.example.trailblazer.sensors.SensorSource
 import com.example.trailblazer.sensors.StepRepository
+import com.example.trailblazer.sensors.ThermalRepository
 import com.example.trailblazer.tracking.TrackingController
+import com.example.trailblazer.links.LinkLookup
+import com.example.trailblazer.places.GeocoderBackend
+import com.example.trailblazer.places.PlaceSearch
+import com.example.trailblazer.places.PlaceSearchBackend
+import com.example.trailblazer.links.RedirectProbe
+import com.example.trailblazer.links.UrlConnectionRedirectProbe
 import com.example.trailblazer.weather.HttpTransport
 import com.example.trailblazer.weather.OpenMeteoClient
 import com.example.trailblazer.weather.UrlConnectionTransport
@@ -45,6 +52,9 @@ class AppContainer(
     http: HttpTransport = UrlConnectionTransport(),
     val clock: Clock = Clock.System,
     val db: TrailDb = TrailDb.create(context),
+    redirects: RedirectProbe = UrlConnectionRedirectProbe(),
+    placeBackend: PlaceSearchBackend = GeocoderBackend(context),
+    placeSearchAvailable: () -> Boolean = GeocoderBackend::isPresent,
 ) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val permissions = Permissions(context)
@@ -59,6 +69,7 @@ class AppContainer(
     val magnetic by lazy { MagneticRepository(sensorSource, scope, clock) }
     val environment by lazy { EnvironmentRepository(sensorSource, scope, clock) }
     val motion by lazy { MotionRepository(sensorSource, scope, clock) }
+    val thermal by lazy { ThermalRepository(context, sensorSource, clock) }
     val orientation by lazy { OrientationRepository(sensorSource, clock, ::displayRotation) }
     val steps by lazy { StepRepository(sensorSource, scope, clock, permissions.flowOf(AppPermission.ActivityRecognition)) }
     val acoustic by lazy { AcousticRepository(clock) { permissions.isGranted(AppPermission.Microphone) } }
@@ -73,6 +84,8 @@ class AppContainer(
     val importExport by lazy { ImportExport(context.contentResolver, db, waypoints, trips, tracks) }
 
     val weather by lazy { OpenMeteoClient(http, clock) }
+    val linkLookup by lazy { LinkLookup(redirects) }
+    val placeSearch by lazy { PlaceSearch(placeBackend, placeSearchAvailable) }
     val tracking by lazy { TrackingController(context, tracks, permissions) }
 }
 

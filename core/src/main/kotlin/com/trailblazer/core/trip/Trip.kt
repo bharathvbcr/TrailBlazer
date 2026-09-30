@@ -32,22 +32,70 @@ object LegCalculator {
 
 /** Rules a trip must satisfy before it is saved or handed to a map app. */
 object TripRules {
+    /** Matches the import cap: a planned trip stays editable and linkable. */
+    const val MAX_STOPS = 50
+
+    /**
+     * Consecutive stops closer than this are the same place. One metre covers GPS noise,
+     * the antimeridian (180° and −180°), and both poles, without merging a trailhead and its parking.
+     */
+    const val SAME_PLACE_M = 1.0
+
     sealed interface Problem {
         data object TooFewStops : Problem
+        data object TooManyStops : Problem
         data class DuplicateAdjacent(val index: Int) : Problem
         data class DatesOutOfOrder(val index: Int) : Problem
+        data class DuplicateId(val index: Int) : Problem
     }
 
     fun check(stops: List<Stop>): List<Problem> {
         val out = ArrayList<Problem>()
         if (stops.size < 2) out += Problem.TooFewStops
-        stops.zipWithNext().forEachIndexed { i, (a, b) ->
-            if (a.position == b.position) out += Problem.DuplicateAdjacent(i + 1)
-            val da = a.plannedDay
-            val db = b.plannedDay
-            if (da != null && db != null && db < da) out += Problem.DatesOutOfOrder(i + 1)
+        if (stops.size > MAX_STOPS) out += Problem.TooManyStops
+        val seen = HashSet<String>()
+        var lastDated: Long? = null
+        stops.forEachIndexed { i, stop ->
+            if (!seen.add(stop.id)) out += Problem.DuplicateId(i)
+            if (i > 0) {
+                val gap = Geo.distanceM(stops[i - 1].position, stop.position)
+                if (!gap.isFinite() || gap < SAME_PLACE_M) out += Problem.DuplicateAdjacent(i)
+            }
+            val day = stop.plannedDay
+            if (day != null) {
+                val earlier = lastDated
+                if (earlier != null && day < earlier) out += Problem.DatesOutOfOrder(i)
+                lastDated = day
+            }
         }
         return out
+    }
+}
+
+/** Spreadsheet-style stop letters: A…Z, AA… The UI must not crash on a bad index. */
+object StopLabel {
+    fun of(index: Int): String {
+        if (index < 0) return "?"
+        var n = index
+        val chars = ArrayDeque<Char>()
+        do {
+            chars.addFirst('A' + (n % 26))
+            n = n / 26 - 1
+        } while (n >= 0)
+        return chars.joinToString("")
+    }
+}
+
+/** File name stem for a trip export. Strips path characters and control characters. */
+object TripFiles {
+    fun exportBase(name: String): String {
+        val cleaned = name.trim()
+            .replace(Regex("""[^\p{L}\p{N}._ -]+"""), " ")
+            .replace(Regex("""\s+"""), " ")
+            .trim(' ', '.', '_')
+            .take(60)
+            .trim(' ', '.', '_')
+        return cleaned.ifBlank { "trip" }
     }
 }
 
@@ -58,7 +106,9 @@ object DaylightPlanner {
     fun plan(stops: List<Stop>, window: (Long) -> Pair<Long, Long>): List<Row> =
         stops.mapNotNull { s ->
             val d = s.plannedDay ?: return@mapNotNull null
-            val (start, end) = window(d)
-            Row(s, SolarEvents.day(s.position.lat, s.position.lon, start, end))
+            val span = runCatching { window(d) }.getOrNull() ?: return@mapNotNull null
+            val (start, end) = span
+            if (end <= start) return@mapNotNull null
+            runCatching { Row(s, SolarEvents.day(s.position.lat, s.position.lon, start, end)) }.getOrNull()
         }
 }

@@ -3,7 +3,6 @@ package com.example.trailblazer.ui.tools
 import android.hardware.SensorManager
 import android.location.GnssStatus
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -28,13 +27,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
@@ -44,11 +43,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.trailblazer.container
 import com.example.trailblazer.location.GnssSnapshot
 import com.example.trailblazer.permissions.AppPermission
+import com.example.trailblazer.ui.Fmt
 import com.example.trailblazer.sensors.Reading
+import com.example.trailblazer.sensors.chipLabel
 import com.example.trailblazer.sensors.SensorInfo
 import com.example.trailblazer.ui.components.GlassCard
 import com.example.trailblazer.ui.components.LabelValue
 import com.example.trailblazer.ui.components.PermissionGate
+import com.example.trailblazer.ui.components.orbit
 import com.example.trailblazer.ui.components.ScreenScaffold
 import com.example.trailblazer.ui.components.SectionTitle
 import com.example.trailblazer.ui.label
@@ -72,7 +74,7 @@ fun DiagnosticsScreen(nav: Navigator) {
     val ctx = LocalContext.current
     val c = ctx.container
     val sensors = remember { c.sensorSource.all().sortedBy { it.type } }
-    val rates = remember { mutableStateMapOf<Int, Double>() }
+    val rates = remember { mutableStateMapOf<String, Double>() }
     val scope = rememberCoroutineScope()
     val gnss by c.gnss.status.collectAsStateWithLifecycle()
     var showPlot by rememberSaveable { mutableStateOf(false) }
@@ -100,25 +102,50 @@ fun DiagnosticsScreen(nav: Navigator) {
                 GnssList(gnss)
             }
         }
+        item { SectionTitle("Temperature inside the phone") }
+        item { ThermalCard() }
         item { SectionTitle("${sensors.size} hardware sensors") }
         items(sensors, key = { "${it.type}-${it.name}" }) { s ->
             GlassCard(padding = 12.dp) {
                 Text(s.name, style = MaterialTheme.typography.titleSmall)
-                Text("${typeName(s.type)} · ${s.vendor} v${s.version}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                LabelValue("Range / resolution", "${fmt(s.maxRange, locale)} / ${fmt(s.resolution, locale)}")
-                LabelValue("Power", "${fmt(s.powerMa, locale)} mA${if (s.isWakeUp) " · wake-up" else ""}")
-                LabelValue("Fastest rate", if (s.minDelayUs > 0) "${fmt(1_000_000f / s.minDelayUs, locale)} Hz" else if (s.minDelayUs == 0) "On change" else "One-shot")
-                val measured = rates[s.type]
-                Row {
+                Text("${typeName(s.type, s.stringType)} · ${s.vendor} v${s.version}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                LabelValue("Range", sensorNumber(s.maxRange, locale))
+                LabelValue("Resolution", sensorNumber(s.resolution, locale))
+                LabelValue("Power", "${sensorNumber(s.powerMa, locale)} mA${if (s.isWakeUp) " · wake-up" else ""}")
+                LabelValue("Fastest rate", if (s.minDelayUs > 0) "${sensorNumber(1_000_000f / s.minDelayUs, locale)} Hz" else if (s.minDelayUs == 0) "On change" else "One-shot")
+                // Several sensors can share a type (Camera V-Sync 0–3); only the default one can be sampled by type,
+                // so the others offer no Measure button rather than a number that belongs to a different sensor.
+                val key = "${s.type}-${s.name}"
+                val measurable = s.minDelayUs > 0 && c.sensorSource.info(s.type)?.name == s.name
+                val measured = rates[key]
+                if (measurable || measured != null) Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(measured?.let { "Measured: ${String.format(locale, "%.1f", it)} Hz at game rate" } ?: "", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                    if (s.minDelayUs > 0) TextButton(onClick = { scope.launch { rates[s.type] = measureRate(c.sensorSource, s) } }) { Text("Measure") }
+                    if (measurable) TextButton(onClick = { scope.launch { rates[key] = measureRate(c.sensorSource, s) } }) { Text("Measure") }
                 }
             }
         }
     }
 }
 
-private fun fmt(v: Float, locale: Locale) = String.format(locale, if (v >= 100) "%.0f" else if (v >= 1) "%.2f" else "%.4f", v)
+/**
+ * A sensor's advertised number. Vendors report "no limit" as Float.MAX_VALUE (3.4 × 10³⁸), which printed in full is
+ * 39 digits; anything from a million up, or below a ten-thousandth, is shown in powers of ten instead.
+ */
+internal fun sensorNumber(v: Float, locale: Locale): String {
+    if (!v.isFinite()) return "—"
+    val a = kotlin.math.abs(v)
+    if (v == 0f) return "0"
+    // From a million up, and below a ten-thousandth (which "%.4f" would print as 0.0000), in powers of ten.
+    if (a >= 1e6f || a < 1e-4f) {
+        val exp = kotlin.math.floor(kotlin.math.log10(a.toDouble())).toInt()
+        val mantissa = v / Math.pow(10.0, exp.toDouble())
+        val sup = exp.toString().map { if (it == '-') '⁻' else SUPERSCRIPT[it - '0'] }.joinToString("")
+        return String.format(locale, "%.1f", mantissa) + " × 10" + sup
+    }
+    return String.format(locale, if (a >= 100) "%.0f" else if (a >= 1) "%.2f" else "%.4f", v)
+}
+
+private const val SUPERSCRIPT = "⁰¹²³⁴⁵⁶⁷⁸⁹"
 
 /** Counts samples for 2 s at the game rate. */
 private suspend fun measureRate(source: com.example.trailblazer.sensors.SensorSource, s: SensorInfo): Double {
@@ -137,7 +164,8 @@ private suspend fun measureRate(source: com.example.trailblazer.sensors.SensorSo
     return if (n > 1 && last > first) (n - 1) / ((last - first) / 1e9) else 0.0
 }
 
-private fun typeName(t: Int): String = when (t) {
+/** Android's name for the standard types; a vendor type is named from its string type, e.g. "Camera vsync (vendor)". */
+internal fun typeName(t: Int, stringType: String? = null): String = when (t) {
     android.hardware.Sensor.TYPE_ACCELEROMETER -> "Accelerometer"
     android.hardware.Sensor.TYPE_MAGNETIC_FIELD -> "Magnetometer"
     android.hardware.Sensor.TYPE_GYROSCOPE -> "Gyroscope"
@@ -154,7 +182,8 @@ private fun typeName(t: Int): String = when (t) {
     android.hardware.Sensor.TYPE_STEP_COUNTER -> "Step counter"
     android.hardware.Sensor.TYPE_STEP_DETECTOR -> "Step detector"
     android.hardware.Sensor.TYPE_SIGNIFICANT_MOTION -> "Significant motion"
-    else -> "Type $t"
+    else -> stringType?.substringAfterLast('.')?.replace('_', ' ')?.trim()?.takeIf { it.isNotEmpty() }
+        ?.let { it.replaceFirstChar { c -> c.uppercase() } + " (vendor)" } ?: "Type $t"
 }
 
 @Composable
@@ -196,7 +225,43 @@ private fun constellation(t: Int) = when (t) {
     else -> "Other"
 }
 
-/** Live accelerometer vector in 3D with a 1 g reference ring; drag to orbit the camera. */
+/**
+ * Battery and chip temperatures. They measure the phone, not the air: the screen says so, and nothing else in the app
+ * uses them.
+ */
+@Composable
+private fun ThermalCard() {
+    val ctx = LocalContext.current
+    val c = ctx.container
+    val settings = c.prefs.settings.collectAsStateWithLifecycle(null).value ?: return
+    val fmt = remember(settings) { Fmt(ctx, settings) }
+    val chips = remember { c.thermal.chips() }
+    val battery by remember { c.thermal.battery() }.collectAsStateWithLifecycle(Reading.Acquiring)
+    GlassCard {
+        @Composable
+        fun row(label: String, r: Reading<Double>) = LabelValue(
+            label,
+            when (r) {
+                is Reading.Value -> fmt.temperature(r.value)
+                Reading.Acquiring -> "…"
+                is Reading.Unavailable -> "Not available"
+            },
+        )
+        row("Battery", battery)
+        for (info in chips) {
+            val r by remember(info) { c.thermal.chip(info) }.collectAsStateWithLifecycle(Reading.Acquiring)
+            row(chipLabel(info), r)
+        }
+        Text(
+            "These follow the phone's own warmth (charging, use, your hand), not the air. The infrared thermometer on " +
+                "Pixel 8 Pro and later is reserved for Google's Thermometer app; Android does not let other apps read it.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** Live accelerometer vector in 3D with a 1 g reference ring; drag sideways to turn, hold and drag to tilt. */
 @Composable
 private fun AccelPlot() {
     val ctx = LocalContext.current
@@ -224,8 +289,8 @@ private fun AccelPlot() {
             val color = when (GForce.severity(g)) { GSeverity.Normal -> cs.primary; GSeverity.Elevated -> status.caution; GSeverity.High -> status.danger }
             Box(
                 Modifier.fillMaxWidth().aspectRatio(1.2f).clip(RoundedCornerShape(16.dp))
-                    .pointerInput(Unit) { detectDragGestures { _, d -> yaw += d.x / 3; pitch = (pitch + d.y / 3).coerceIn(-89.0, 89.0) } }
-                    .semantics { contentDescription = "Accelerometer vector plot; drag to rotate" },
+                    .orbit { dx, dy -> yaw += dx / 3; pitch = (pitch + dy / 3).coerceIn(-89.0, 89.0) }
+                    .semantics { contentDescription = "Accelerometer vector plot; drag sideways to turn, hold and drag to tilt" },
             ) {
                 Canvas(Modifier.fillMaxWidth().aspectRatio(1.2f)) {
                     val cam = OrbitCamera(yaw, pitch, size.minDimension / (2.6 * STANDARD_GRAVITY))

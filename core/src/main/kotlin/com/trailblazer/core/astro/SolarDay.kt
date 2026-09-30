@@ -5,6 +5,9 @@ import kotlin.math.sin
 
 enum class DayType { Normal, PolarDay, PolarNight }
 
+/** What the day plot is showing at one instant, innermost band first. */
+enum class DaySlice { PolarDay, PolarNight, Day, Golden, Blue, Civil, Nautical, Astronomical, Night }
+
 /** Sun altitudes (degrees, true altitude of the centre) that define the day's events. */
 object SunAltitude {
     /** Upper limb on the horizon with standard refraction (34′) and semidiameter (16′). */
@@ -114,6 +117,42 @@ object SolarEvents {
     /** A band exists only if at least one of its edges happens inside the day. */
     private fun bandBetween(start: Long?, end: Long?): Band? =
         if (start == null && end == null) null else Band(start, end)
+
+    /** Innermost daylight band containing [ms], matching the nested bands drawn on the day plot. */
+    fun slice(day: SolarDay, ms: Long): DaySlice = when (day.dayType) {
+        DayType.PolarDay -> DaySlice.PolarDay
+        DayType.PolarNight -> DaySlice.PolarNight
+        DayType.Normal -> when {
+            contains(day.goldenMorning, ms, day) || contains(day.goldenEvening, ms, day) -> DaySlice.Golden
+            contains(day.blueMorning, ms, day) || contains(day.blueEvening, ms, day) -> DaySlice.Blue
+            inDaylight(day, ms) -> DaySlice.Day
+            contains(day.civil, ms, day) -> DaySlice.Civil
+            contains(day.nautical, ms, day) -> DaySlice.Nautical
+            contains(day.astronomical, ms, day) -> DaySlice.Astronomical
+            else -> DaySlice.Night
+        }
+    }
+
+    private fun contains(band: Band?, ms: Long, day: SolarDay): Boolean {
+        if (band == null) return false
+        val start = band.startMs
+        val end = band.endMs
+        if (start == null && end == null) return false
+        val a = start ?: day.windowStartMs
+        val b = end ?: day.windowEndMs
+        return if (b >= a) ms in a..b else ms >= a || ms <= b
+    }
+
+    private fun inDaylight(day: SolarDay, ms: Long): Boolean {
+        val rise = day.sunriseMs
+        val set = day.sunsetMs
+        return when {
+            rise != null && set != null -> if (set >= rise) ms in rise..set else ms >= rise || ms <= set
+            rise != null -> ms >= rise
+            set != null -> ms <= set
+            else -> false
+        }
+    }
 
     fun status(day: SolarDay, nowMs: Long): DaylightStatus = when (day.dayType) {
         DayType.PolarDay -> DaylightStatus.PolarDay

@@ -53,7 +53,7 @@ class AnglesTest {
     fun circularFilterAveragesAcrossNorth() {
         val f = CircularLowPass(0.5)
         f.update(359.0)
-        val v = f.update(1.0)
+        val v = f.update(1.0)!!
         assertTrue("got $v", v > 359.5 || v < 0.5)
     }
 

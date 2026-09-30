@@ -93,4 +93,30 @@ class LocationRepositoryTest {
         awaitUntil(1_000) { false }
         assertTrue(seen.none { it is Reading.Value })
     }
+
+    /**
+     * Mock providers and buggy chipsets report NaN accuracy, -1 speed, NaN altitude or bearings past 360. The position
+     * is still good, so the fix is kept, but every impossible optional field becomes "not reported" (null).
+     */
+    @Test
+    fun impossibleOptionalFieldsBecomeNotReported() {
+        shadowOf(app).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+        shadowOf(manager).setLocationEnabled(true)
+        val repo = LocationRepository(app, manager, Permissions(app).also { it.refresh() }, scope)
+        val seen = collect(repo)
+        for (provider in listOf(LocationManager.FUSED_PROVIDER, LocationManager.GPS_PROVIDER)) {
+            shadowOf(manager).simulateLocation(Location(provider).apply {
+                latitude = 46.5; longitude = 7.8; accuracy = Float.NaN; altitude = Double.NaN; speed = -1f; bearing = 720.5f
+                verticalAccuracyMeters = Float.POSITIVE_INFINITY; time = System.currentTimeMillis()
+            })
+        }
+        awaitUntil { seen.any { it is Reading.Value } }
+        val f = seen.filterIsInstance<Reading.Value<Fix>>().last().value
+        assertEquals(46.5, f.position.lat, 0.0)
+        assertEquals(null, f.accuracyM)
+        assertEquals(null, f.altitudeM)
+        assertEquals(null, f.speedMps)
+        assertEquals(null, f.verticalAccuracyM)
+        assertEquals("bearing is normalised", 0.5, f.bearingDeg!!, 1e-3)
+    }
 }

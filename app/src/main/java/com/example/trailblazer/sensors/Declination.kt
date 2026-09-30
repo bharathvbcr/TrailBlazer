@@ -21,6 +21,34 @@ data class Heading(
     val source: HeadingSource,
     val accuracyDeg: Double?,
     val upright: Boolean,
+    val pitchDeg: Double = 0.0,
+    val rollDeg: Double = 0.0,
+    val pitchOffsetDeg: Double = 0.0,
+    val rollOffsetDeg: Double = 0.0,
 ) {
     val trueDeg: Double? get() = declinationDeg?.let { mod360(magneticDeg + it) }
+
+    /** Pitch calibrated for camera bump (e.g. Pixel 10 Pro XL visor) or case offset. */
+    val calibratedPitchDeg: Double get() = pitchDeg - pitchOffsetDeg
+
+    /** Roll calibrated for camera bump or case offset. */
+    val calibratedRollDeg: Double get() = rollDeg - rollOffsetDeg
+
+    /** Whether zero level calibration is currently active. */
+    val isCalibrated: Boolean get() = pitchOffsetDeg != 0.0 || rollOffsetDeg != 0.0
+
+    /** Whether the phone is held flat and level enough for maximum compass accuracy (<= 2° tilt after calibration). */
+    val isLevel: Boolean
+        get() = !upright && calibratedPitchDeg.isFinite() && calibratedRollDeg.isFinite() &&
+            kotlin.math.abs(calibratedPitchDeg) <= LEVEL_THRESHOLD_DEG && kotlin.math.abs(calibratedRollDeg) <= LEVEL_THRESHOLD_DEG
+
+    /** Calibrated tilt angle away from flat in degrees. */
+    val tiltDeg: Double get() = kotlin.math.hypot(calibratedPitchDeg, calibratedRollDeg)
+
+    /** Raw uncalibrated tilt angle away from flat in degrees. */
+    val rawTiltDeg: Double get() = kotlin.math.hypot(pitchDeg, rollDeg)
+
+    companion object {
+        const val LEVEL_THRESHOLD_DEG = 2.0
+    }
 }

@@ -24,6 +24,8 @@ data class SensorInfo(
     val powerMa: Float,
     val minDelayUs: Int,
     val isWakeUp: Boolean,
+    /** The sensor's type name, e.g. "android.sensor.pressure" or a vendor's "com.google.sensor.pressure_temp". */
+    val stringType: String? = null,
 )
 
 /** Seam between repositories and Android's SensorManager; tests substitute a fake. */
@@ -43,7 +45,7 @@ interface SensorSource {
 class AndroidSensorSource(private val manager: SensorManager) : SensorSource {
     override fun has(type: Int) = manager.getDefaultSensor(type) != null
 
-    private fun Sensor.toInfo() = SensorInfo(type, name, vendor, version, maximumRange, resolution, power, minDelay, isWakeUpSensor)
+    private fun Sensor.toInfo() = SensorInfo(type, name, vendor, version, maximumRange, resolution, power, minDelay, isWakeUpSensor, stringType)
 
     override fun info(type: Int): SensorInfo? = manager.getDefaultSensor(type)?.toInfo()
 

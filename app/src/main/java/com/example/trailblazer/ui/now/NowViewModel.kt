@@ -16,16 +16,16 @@ import com.trailblazer.core.alerts.SpeedAlert
 import com.trailblazer.core.astro.LunarPosition
 import com.trailblazer.core.astro.SolarPosition
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -43,10 +43,12 @@ class NowViewModel(private val c: AppContainer) : ViewModel() {
     val magneticField = c.magnetic.fieldMicroTesla
     val headingSource = c.orientation.headingSource
 
-    /** Heading combined with declination from the latest fix (declination stays null without a position). */
-    val heading: StateFlow<Reading<Heading>> = combine(c.orientation.orientation(Hold.Auto), fix) { o, f ->
+    /** Heading combined with declination from the latest fix and level calibration offsets from settings. */
+    val heading: StateFlow<Reading<Heading>> = combine(c.orientation.orientation(Hold.Auto), fix, settings) { o, f, s ->
         val decl = (f as? Reading.Value)?.value?.let { Declination.degrees(it) }
-        o.map { Heading(it.azimuthDeg, decl, it.source, it.headingAccuracyDeg, it.upright) }
+        val pOff = s?.levelPitchOffsetDeg ?: 0.0
+        val rOff = s?.levelRollOffsetDeg ?: 0.0
+        o.map { Heading(it.azimuthDeg, decl, it.source, it.headingAccuracyDeg, it.upright, it.pitchDeg, it.rollDeg, pOff, rOff) }
     }.stateIn(viewModelScope, started, Reading.Acquiring)
 
     val waypoints: StateFlow<List<Waypoint>> = c.waypoints.all.stateIn(viewModelScope, started, emptyList())
@@ -78,35 +80,39 @@ class NowViewModel(private val c: AppContainer) : ViewModel() {
         }
     }.stateIn(viewModelScope, started, null)
 
-    private val alerts = Channel<Double>(Channel.CONFLATED)
-    /** Emits the speed (m/s) each time the overspeed alert fires. */
-    val speedAlerts: Flow<Double> = alerts.receiveAsFlow()
-
-    init {
-        viewModelScope.launch {
-            var alert: SpeedAlert? = null
-            var limit = 0.0
-            combine(settings, fix) { s, f -> s to f }.collect { (s, f) ->
-                if (s == null || !s.speedAlertEnabled) {
-                    alert = null
-                    return@collect
+    /**
+     * Emits the speed (m/s) each time the overspeed alert fires. Cold: it listens to location only while collected
+     * and only while the alert is on, so a ViewModel left alive in the background never keeps GPS running. The screen
+     * collects it while started; the hysteresis state lives in the collection and re-arms on each start.
+     */
+    val speedAlerts: Flow<Double> = settings
+        .map { s -> s?.takeIf { it.speedAlertEnabled }?.speedAlertLimitMps }
+        .distinctUntilChanged()
+        .flatMapLatest { limit ->
+            if (limit == null) emptyFlow() else flow {
+                val alert = SpeedAlert(limit)
+                fix.collect { f ->
+                    val v = f as? Reading.Value ?: return@collect
+                    if (!v.stale && alert.update(v.value.speedMps)) emit(v.value.speedMps ?: 0.0)
                 }
-                if (alert == null || limit != s.speedAlertLimitMps) {
-                    limit = s.speedAlertLimitMps
-                    alert = SpeedAlert(limit)
-                }
-                val v = f as? Reading.Value ?: return@collect
-                if (v.stale) return@collect
-                if (alert?.update(v.value.speedMps) == true) alerts.trySend(v.value.speedMps ?: 0.0)
             }
         }
-    }
+
+    fun setCompactPosition(on: Boolean) = viewModelScope.launch { c.prefs.update { it.copy(compactPosition = on) } }
 
     fun toggleNorth() = viewModelScope.launch {
         c.prefs.update { it.copy(north = if (it.north == NorthReference.True) NorthReference.Magnetic else NorthReference.True) }
     }
 
     fun setTarget(id: String?) = viewModelScope.launch { c.prefs.update { it.copy(targetWaypointId = id) } }
+
+    fun setLevelZero(pitch: Double, roll: Double) = viewModelScope.launch {
+        c.prefs.update { it.copy(levelPitchOffsetDeg = pitch, levelRollOffsetDeg = roll) }
+    }
+
+    fun resetLevelZero() = viewModelScope.launch {
+        c.prefs.update { it.copy(levelPitchOffsetDeg = 0.0, levelRollOffsetDeg = 0.0) }
+    }
 
     /** Saves the current fix as a waypoint. Returns false when there is no fresh fix. */
     fun markWaypoint(name: String, onDone: (Boolean) -> Unit) {

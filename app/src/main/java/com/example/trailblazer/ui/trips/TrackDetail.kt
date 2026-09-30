@@ -51,7 +51,8 @@ import com.example.trailblazer.ui.components.TrailIcons
 import com.example.trailblazer.ui.nav.Navigator
 import com.trailblazer.core.geo.Geo
 import com.trailblazer.core.geo.LatLon
-import com.trailblazer.core.math.DEG
+import com.trailblazer.core.plot.LocalPlane
+import com.trailblazer.core.plot.SeriesPlot
 import com.trailblazer.core.track.DouglasPeucker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -60,10 +61,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.cos
 
 /** Chart series derived from a track, each with at most [TrackDetailViewModel.BUCKETS] points. */
-data class TrackCharts(val elevationByDistance: List<Double>, val speedByTime: List<Double>, val path: List<LatLon>)
+data class TrackCharts(val elevationByDistance: List<Double?>, val speedByTime: List<Double?>, val path: List<LatLon>)
 
 class TrackDetailViewModel(private val c: AppContainer, private val id: String) : ViewModel() {
     private val started = SharingStarted.WhileSubscribed(5_000)
@@ -103,8 +103,8 @@ class TrackDetailViewModel(private val c: AppContainer, private val id: String) 
                 spdSum[b] += v; spdN[b]++
             }
         }
-        val ele = (0 until BUCKETS).filter { eleN[it] > 0 }.map { eleSum[it] / eleN[it] }
-        val spd = (0 until BUCKETS).filter { spdN[it] > 0 }.map { spdSum[it] / spdN[it] }
+        val ele = SeriesPlot.alignedMeans(eleSum, eleN)
+        val spd = SeriesPlot.alignedMeans(spdSum, spdN)
         prev?.let { if (path.lastOrNull() != it) path += it }
         return TrackCharts(ele, spd, DouglasPeucker.simplifyToMax(path, 500) { it })
     }
@@ -170,29 +170,23 @@ fun TrackDetailScreen(nav: Navigator, trackId: String) {
         if (ch == null) item { Text("Preparing charts…") }
         else {
             if (ch.path.size >= 2) item { GlassCard(padding = 8.dp) { TrackPath(ch.path) } }
-            if (ch.elevationByDistance.size >= 2) {
-                item { SectionTitle("Elevation over distance") }
-                item {
-                    GlassCard {
-                        Sparkline(ch.elevationByDistance, minSpan = 20.0)
-                        Text("${fmt.elevation(ch.elevationByDistance.min())} – ${fmt.elevation(ch.elevationByDistance.max())}", style = MaterialTheme.typography.bodySmall)
-                    }
-                }
+            if (SeriesPlot.frame(ch.elevationByDistance, 20.0) != null) {
+                item { SectionTitle("Elevation") }
+                item { GlassCard { Sparkline(ch.elevationByDistance, minSpan = 20.0, valueText = { fmt.elevation(it) }) } }
             }
-            if (ch.speedByTime.size >= 2) {
-                item { SectionTitle("Speed over time") }
+            if (SeriesPlot.frame(ch.speedByTime, 1.0) != null) {
+                item { SectionTitle("Speed") }
                 item {
                     GlassCard {
-                        Sparkline(ch.speedByTime, minSpan = 1.0, color = MaterialTheme.colorScheme.secondary)
-                        Text("Up to ${fmt.speed(ch.speedByTime.max())} (averaged)", style = MaterialTheme.typography.bodySmall)
+                        Sparkline(ch.speedByTime, minSpan = 1.0, color = MaterialTheme.colorScheme.secondary, valueText = { fmt.speed(it) })
                     }
                 }
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { format = GeoFormat.Gpx; exporter.launch("${track.name}.gpx") }) { Text("Export GPX") }
-                OutlinedButton(onClick = { format = GeoFormat.Kml; exporter.launch("${track.name}.kml") }) { Text("Export KML") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { format = GeoFormat.Gpx; exporter.launch("${track.name}.gpx") }, modifier = Modifier.weight(1f)) { Text("Export GPX") }
+                OutlinedButton(onClick = { format = GeoFormat.Kml; exporter.launch("${track.name}.kml") }, modifier = Modifier.weight(1f)) { Text("Export KML") }
             }
         }
     }
@@ -221,17 +215,20 @@ fun TrackDetailScreen(nav: Navigator, trackId: String) {
 private fun TrackPath(path: List<LatLon>) {
     val cs = MaterialTheme.colorScheme
     Canvas(Modifier.fillMaxWidth().aspectRatio(1.4f).semantics { contentDescription = "Track shape" }) {
-        val lat0 = path.map { it.lat }.average()
-        val kx = cos(lat0 * DEG)
-        val xs = path.map { it.lon * kx }
-        val ys = path.map { it.lat }
-        val minX = xs.min(); val maxX = xs.max(); val minY = ys.min(); val maxY = ys.max()
-        val span = maxOf(maxX - minX, maxY - minY, 1e-6)
+        val pts = LocalPlane.project(path)
+        if (pts.size < 2) return@Canvas
+        val minX = pts.minOf { it.eastM }
+        val maxX = pts.maxOf { it.eastM }
+        val minY = pts.minOf { it.northM }
+        val maxY = pts.maxOf { it.northM }
+        val span = maxOf(maxX - minX, maxY - minY, 1.0)
         val pad = 16.dp.toPx()
-        val s = (minOf(size.width, size.height) - 2 * pad) / span
+        val drawable = minOf(size.width, size.height) - 2 * pad
+        if (drawable <= 0f) return@Canvas
+        val s = drawable / span
         fun o(i: Int) = Offset(
-            (size.width / 2 + (xs[i] - (minX + maxX) / 2) * s).toFloat(),
-            (size.height / 2 - (ys[i] - (minY + maxY) / 2) * s).toFloat(),
+            (size.width / 2 + (pts[i].eastM - (minX + maxX) / 2) * s).toFloat(),
+            (size.height / 2 - (pts[i].northM - (minY + maxY) / 2) * s).toFloat(),
         )
         val p = Path().apply { moveTo(o(0).x, o(0).y); for (i in 1 until path.size) lineTo(o(i).x, o(i).y) }
         drawPath(p, cs.primary, style = Stroke(3.dp.toPx(), cap = StrokeCap.Round))

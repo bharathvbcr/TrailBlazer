@@ -36,6 +36,7 @@ object Dms {
 
     /** Degrees + minutes + seconds to decimal degrees; null for out-of-range parts. */
     fun toDecimal(deg: Double, min: Double, sec: Double, negative: Boolean): Double? {
+        if (!deg.isFinite() || !min.isFinite() || !sec.isFinite()) return null
         if (deg < 0 || min < 0 || min >= 60 || sec < 0 || sec >= 60) return null
         if (deg != floor(deg) && (min != 0.0 || sec != 0.0)) return null
         if (min != floor(min) && sec != 0.0) return null

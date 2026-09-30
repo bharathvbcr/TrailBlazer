@@ -58,6 +58,8 @@ class AppSmokeTest {
         rule.onNodeWithText("Level & tilt").performClick()
         rule.onNodeWithText("Set zero").assertIsDisplayed()
         rule.activityRule.scenario.recreate()
+        // Still asserts the screen is back and visible; it may take a transition frame or two under a loaded test JVM.
+        rule.waitUntil(5_000) { runCatching { rule.onNodeWithText("Set zero").assertIsDisplayed() }.isSuccess }
         rule.onNodeWithText("Set zero").assertIsDisplayed()
     }
 
@@ -88,5 +90,26 @@ class AppSmokeTest {
         rule.onAllNodesWithText("Sky").onFirst().performClick()
         rule.onNode(hasScrollAction()).performScrollToNode(hasText("Turn on forecast…"))
         rule.onNodeWithText("Turn on forecast…").assertIsDisplayed()
+    }
+
+    @Test
+    fun quickLevelButtonOnNowOpensTheLevel() {
+        // On the small default test screen the button row sits below the fold.
+        rule.onNode(hasScrollAction()).performScrollToNode(hasText("Level"))
+        rule.onNodeWithText("Level").performClick()
+        rule.onNodeWithText("Set zero").assertIsDisplayed()
+        rule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        rule.onNodeWithText("Mark waypoint").assertIsDisplayed()
+    }
+
+    @Test
+    fun stargazingOpensFromToolsWithoutAskingForAnything() {
+        rule.onAllNodesWithText("Tools").onFirst().performClick()
+        rule.onNode(hasScrollAction()).performScrollToNode(hasText("Stargazing"))
+        rule.onNodeWithText("Stargazing").performClick()
+        rule.onNodeWithText("Night vision (red)").assertIsDisplayed()
+        // No position and no permission: it asks in context instead of drawing a made-up sky.
+        assertTrue(rule.onAllNodesWithText("Allow").fetchSemanticsNodes().isNotEmpty())
+        assertNull(shadowOf(rule.activity).lastRequestedPermission)
     }
 }

@@ -1,5 +1,6 @@
 package com.example.trailblazer.ui.tools
 
+import android.os.SystemClock
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +21,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -37,6 +39,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -65,6 +69,9 @@ import com.trailblazer.core.atmo.BoilingPoint
 import com.trailblazer.core.atmo.DensityAltitude
 import com.trailblazer.core.atmo.Isa
 import com.trailblazer.core.motion.Inclination
+import com.trailblazer.core.motion.LevelCue
+import com.trailblazer.core.motion.LevelHaptics
+import com.trailblazer.core.motion.SteepLimit
 import com.trailblazer.core.sos.Morse
 import com.trailblazer.core.units.Length
 import com.trailblazer.core.units.UnitSystem
@@ -77,69 +84,153 @@ import kotlin.math.min
 @Composable
 fun LevelScreen(nav: Navigator) {
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     val settings = ctx.container.prefs.settings.collectAsStateWithLifecycle(null).value ?: return
     val fmt = remember(settings) { Fmt(ctx, settings) }
     val gravity by ctx.container.motion.gravity.collectAsStateWithLifecycle()
     var vehicle by rememberSaveable { mutableStateOf(false) }
-    var zeroPitch by rememberSaveable { mutableDoubleStateOf(0.0) }
-    var zeroRoll by rememberSaveable { mutableDoubleStateOf(0.0) }
+    var vehicleZeroPitch by rememberSaveable { mutableDoubleStateOf(0.0) }
+    var vehicleZeroRoll by rememberSaveable { mutableDoubleStateOf(0.0) }
     KeepScreenOn()
 
     val raw = (gravity as? Reading.Value)?.value?.let { Inclination.fromGravity(it, flat = !vehicle) }
-    val inc = raw?.let { it - Inclination(zeroPitch, zeroRoll) }
+    val effectiveZero = if (vehicle) {
+        Inclination(vehicleZeroPitch, vehicleZeroRoll)
+    } else {
+        Inclination(settings.levelPitchOffsetDeg, settings.levelRollOffsetDeg)
+    }
+    val inc = raw?.let { it - effectiveZero }
+    val haptic = LocalHapticFeedback.current
+    // New cues state per mode: the vehicle zero and the steep limit only apply upright.
+    val cues = remember(vehicle) { LevelHaptics() }
+    val steep = if (vehicle) VehicleSteep else null
+    LaunchedEffect(inc, settings.levelHaptics) {
+        if (!settings.levelHaptics || inc == null) return@LaunchedEffect
+        when (cues.update(inc.pitchDeg, inc.rollDeg, SystemClock.uptimeMillis(), steep)) {
+            LevelCue.Detent -> haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
+            LevelCue.Level -> haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+            LevelCue.Steep -> haptic.performHapticFeedback(HapticFeedbackType.Reject)
+            null -> Unit
+        }
+    }
+    fun confirm() { if (settings.levelHaptics) haptic.performHapticFeedback(HapticFeedbackType.Confirm) }
+    val isCalibrated = if (vehicle) (vehicleZeroPitch != 0.0 || vehicleZeroRoll != 0.0) else (settings.levelPitchOffsetDeg != 0.0 || settings.levelRollOffsetDeg != 0.0)
 
     ScreenScaffold(title = "Level & tilt", onBack = { nav.back() }) {
         item {
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                SegmentedButton(!vehicle, { vehicle = false; zeroPitch = 0.0; zeroRoll = 0.0 }, SegmentedButtonDefaults.itemShape(0, 2)) { Text("Flat (bubble)") }
-                SegmentedButton(vehicle, { vehicle = true; zeroPitch = 0.0; zeroRoll = 0.0 }, SegmentedButtonDefaults.itemShape(1, 2)) { Text("Upright (vehicle)") }
+                SegmentedButton(!vehicle, { vehicle = false }, SegmentedButtonDefaults.itemShape(0, 2)) { Text("Flat (bubble)") }
+                SegmentedButton(vehicle, { vehicle = true }, SegmentedButtonDefaults.itemShape(1, 2)) { Text("Upright (vehicle)") }
             }
         }
         item {
-            GlassCard {
+            GlassCard(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 when (gravity) {
-                    is Reading.Unavailable -> Text((gravity as Reading.Unavailable).reason.label("accelerometer"))
-                    Reading.Acquiring -> Text("Starting…")
-                    is Reading.Value -> if (inc == null) Text("Hold still — no stable gravity reading") else {
-                        if (!vehicle) Bubble(inc) else VehicleGauge(inc)
+                    is Reading.Unavailable -> Text((gravity as Reading.Unavailable).reason.label("accelerometer"), textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                    Reading.Acquiring -> Text("Starting…", textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                    is Reading.Value -> if (inc == null) Text("Hold still — no stable gravity reading", textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) else {
+                        if (!vehicle) Bubble(inc, modifier = Modifier.fillMaxWidth(0.75f).aspectRatio(1f).align(Alignment.CenterHorizontally)) else VehicleGauge(inc)
                         Spacer(Modifier.height(12.dp))
-                        val level = abs(inc.pitchDeg) < 0.5 && abs(inc.rollDeg) < 0.5
+                        val level = abs(inc.pitchDeg) < LevelHaptics.LEVEL_DEG && abs(inc.rollDeg) < LevelHaptics.LEVEL_DEG
                         Text(
-                            if (level) "Level" else "Pitch ${fmt.angle(inc.pitchDeg)} · Roll ${fmt.angle(inc.rollDeg)}",
+                            if (level) (if (isCalibrated) "Level (calibrated)" else "Level") else "Pitch ${fmt.angle(inc.pitchDeg)} · Roll ${fmt.angle(inc.rollDeg)}",
                             style = MaterialTheme.typography.headlineSmall,
                             color = if (level) LocalStatusColors.current.good else MaterialTheme.colorScheme.onSurface,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.fillMaxWidth(),
                         )
                         if (vehicle) {
+                            Spacer(Modifier.height(4.dp))
                             LabelValue("Road gradient", "${fmt.num(inc.gradePercent, 1)} %")
                             LabelValue("Side tilt", fmt.angle(inc.rollDeg))
-                            val warn = abs(inc.rollDeg) > 20 || abs(inc.pitchDeg) > 25
-                            if (warn) Text("Steep: check your vehicle’s rated limits.", color = LocalStatusColors.current.danger)
+                            val warn = VehicleSteep.exceeded(inc.pitchDeg, inc.rollDeg)
+                            if (warn) Text("Steep: check your vehicle’s rated limits.", color = LocalStatusColors.current.danger, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                        } else if (isCalibrated) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "Zero offset: Pitch ${fmt.angle(settings.levelPitchOffsetDeg)} · Roll ${fmt.angle(settings.levelRollOffsetDeg)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = LocalStatusColors.current.good,
+                                textAlign = TextAlign.Center,
+                            )
                         }
                     }
                 }
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilledTonalButton(onClick = { raw?.let { zeroPitch = it.pitchDeg; zeroRoll = it.rollDeg } }, enabled = raw != null) { Text("Set zero") }
-                    OutlinedButton(onClick = { zeroPitch = 0.0; zeroRoll = 0.0 }) { Text("Reset") }
+                Spacer(Modifier.height(12.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally)) {
+                    FilledTonalButton(
+                        onClick = {
+                            raw?.let {
+                                confirm()
+                                if (vehicle) {
+                                    vehicleZeroPitch = it.pitchDeg
+                                    vehicleZeroRoll = it.rollDeg
+                                } else {
+                                    scope.launch {
+                                        ctx.container.prefs.update { s ->
+                                            s.copy(levelPitchOffsetDeg = it.pitchDeg, levelRollOffsetDeg = it.rollDeg)
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        enabled = raw != null,
+                    ) { Text("Set zero") }
+                    OutlinedButton(
+                        onClick = {
+                            confirm()
+                            if (vehicle) {
+                                vehicleZeroPitch = 0.0
+                                vehicleZeroRoll = 0.0
+                            } else {
+                                scope.launch {
+                                    ctx.container.prefs.update { s ->
+                                        s.copy(levelPitchOffsetDeg = 0.0, levelRollOffsetDeg = 0.0)
+                                    }
+                                }
+                            }
+                        },
+                        enabled = isCalibrated,
+                    ) { Text("Reset") }
+                }
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
+                    Text("Haptics", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 8.dp))
+                    Switch(
+                        checked = settings.levelHaptics,
+                        onCheckedChange = { on -> scope.launch { ctx.container.prefs.update { it.copy(levelHaptics = on) } } },
+                        modifier = Modifier.semantics { contentDescription = "Level haptics" },
+                    )
                 }
                 Text(
+                    if (settings.levelHaptics) "A tick each degree near level, a firm pulse when level" + (if (vehicle) ", a buzz when steep." else ".") else "Haptics off.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
                     if (vehicle) "Mount the phone upright facing forward, park on level ground and tap Set zero so the mount’s angle is ignored."
-                    else "Lay the phone on its back. Tap Set zero on a known-level surface to correct for a bumpy case.",
+                    else "Lay the phone on its back on a known flat surface. Tap Set zero to calibrate for camera visors (e.g. Pixel 10 Pro XL) or bumpy cases across the app and compass.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         }
     }
 }
 
+/** Steep for a vehicle: side tilt is the rollover risk, so it warns earlier than nose-up or nose-down. */
+private val VehicleSteep = SteepLimit(pitchDeg = 25.0, rollDeg = 20.0)
+
 @Composable
-private fun Bubble(inc: Inclination) {
+private fun Bubble(inc: Inclination, modifier: Modifier = Modifier) {
     val cs = MaterialTheme.colorScheme
     val good = LocalStatusColors.current.good
-    Canvas(Modifier.fillMaxWidth(0.8f).aspectRatio(1f).semantics { contentDescription = "Bubble level" }) {
+    Canvas(modifier.semantics { contentDescription = "Bubble level" }) {
         val r = min(size.width, size.height) / 2
         val c = center
         drawCircle(cs.surfaceContainerHighest, r, c)
@@ -150,7 +241,7 @@ private fun Bubble(inc: Inclination) {
         // 10° of tilt moves the bubble to the rim; the bubble floats uphill.
         val dx = (-inc.rollDeg / 10.0).coerceIn(-1.0, 1.0).toFloat() * (r * 0.85f)
         val dy = (inc.pitchDeg / 10.0).coerceIn(-1.0, 1.0).toFloat() * (r * 0.85f)
-        val level = abs(inc.pitchDeg) < 0.5 && abs(inc.rollDeg) < 0.5
+        val level = abs(inc.pitchDeg) < LevelHaptics.LEVEL_DEG && abs(inc.rollDeg) < LevelHaptics.LEVEL_DEG
         drawCircle(if (level) good else cs.primary, r * 0.13f, Offset(c.x + dx, c.y + dy))
     }
 }
@@ -202,36 +293,52 @@ fun AltimeterScreen(nav: Navigator) {
         }
         item { SectionTitle("Calibrate") }
         item {
-            GlassCard {
+            GlassCard(modifier = Modifier.fillMaxWidth()) {
                 Text("Enter your current elevation from a map or trail sign, or the local QNH from a weather report.", style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     elevationText, { elevationText = it.take(8) },
                     label = { Text("Known elevation (${if (metric) "m" else "ft"})") }, singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
                 )
-                Button(enabled = p != null && elevationText.replace(',', '.').toDoubleOrNull() != null, onClick = {
-                    val e = elevationText.replace(',', '.').toDouble().let { if (metric) it else it * Length.M_PER_FT }
-                    Isa.qnhHpa(p!!, e)?.let { q -> scope.launch { c.prefs.update { it.copy(calibration = AltimeterCalibration(q, c.clock.nowMs())) } } }
-                }) { Text("Set from elevation") }
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    enabled = p != null && elevationText.replace(',', '.').toDoubleOrNull() != null,
+                    onClick = {
+                        val e = elevationText.replace(',', '.').toDouble().let { if (metric) it else it * Length.M_PER_FT }
+                        Isa.qnhHpa(p!!, e)?.let { q -> scope.launch { c.prefs.update { it.copy(calibration = AltimeterCalibration(q, c.clock.nowMs())) } } }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Set from elevation") }
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     qnhText, { qnhText = it.take(8) },
                     label = { Text("QNH (${settings.pressureUnit.symbol})") }, singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(enabled = qnhText.replace(',', '.').toDoubleOrNull()?.let { settings.pressureUnit.toHpa(it) in 900.0..1100.0 } == true, onClick = {
-                        val q = settings.pressureUnit.toHpa(qnhText.replace(',', '.').toDouble())
-                        scope.launch { c.prefs.update { it.copy(calibration = AltimeterCalibration(q, c.clock.nowMs())) } }
-                    }) { Text("Set QNH") }
-                    TextButton(onClick = { scope.launch { c.prefs.update { it.copy(calibration = null) } } }, enabled = calib != null) { Text("Reset") }
+                Spacer(Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        enabled = qnhText.replace(',', '.').toDoubleOrNull()?.let { settings.pressureUnit.toHpa(it) in 900.0..1100.0 } == true,
+                        onClick = {
+                            val q = settings.pressureUnit.toHpa(qnhText.replace(',', '.').toDouble())
+                            scope.launch { c.prefs.update { it.copy(calibration = AltimeterCalibration(q, c.clock.nowMs())) } }
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Set QNH") }
+                    TextButton(
+                        onClick = { scope.launch { c.prefs.update { it.copy(calibration = null) } } },
+                        enabled = calib != null,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Reset") }
                 }
             }
         }
         item { SectionTitle("From station pressure") }
         item {
-            GlassCard {
+            GlassCard(modifier = Modifier.fillMaxWidth()) {
                 if (p == null) {
                     Text(when (val r = pressure) { is Reading.Unavailable -> r.reason.label("barometer"); else -> "Waiting for barometer…" })
                 } else {
@@ -244,6 +351,7 @@ fun AltimeterScreen(nav: Navigator) {
                         label = { Text("Outside air temperature (${settings.temperatureUnit.symbol})") }, singleLine = true,
                         supportingText = { Text(if ((ambient as? Reading.Value) != null && oatText.isBlank()) "Using the phone’s temperature sensor" else "Needed for density altitude and air density") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                     LabelValue("Density altitude", DensityAltitude.meters(p, oat)?.let { fmt.elevation(it) } ?: "Enter temperature")
                     LabelValue("Air density", AirDensity.kgPerM3(p, oat)?.let { "${fmt.num(it, 3)} kg/m³" } ?: "Enter temperature")

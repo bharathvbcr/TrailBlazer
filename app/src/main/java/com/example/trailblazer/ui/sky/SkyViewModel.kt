@@ -9,11 +9,15 @@ import com.example.trailblazer.location.Fix
 import com.example.trailblazer.sensors.Reading
 import com.example.trailblazer.ui.LocalDays
 import com.example.trailblazer.weather.ForecastResult
+import com.trailblazer.core.astro.DayType
 import com.trailblazer.core.astro.DaylightStatus
 import com.trailblazer.core.astro.Horizontal
 import com.trailblazer.core.astro.LunarDay
 import com.trailblazer.core.astro.LunarEvents
 import com.trailblazer.core.astro.LunarPhase
+import com.trailblazer.core.astro.MoonPhaseName
+import com.trailblazer.core.astro.PrincipalPhase
+import com.trailblazer.core.astro.upcoming
 import com.trailblazer.core.astro.LunarPhaseInfo
 import com.trailblazer.core.astro.LunarPosition
 import com.trailblazer.core.astro.SolarDay
@@ -51,12 +55,24 @@ data class SkyState(
     val sun: SolarDay,
     val moon: LunarDay,
     val phase: LunarPhaseInfo,
-    val nextNewMs: Long?,
-    val nextFullMs: Long?,
+    /** The next four principal phases from the shown day, in time order. */
+    val upcomingPhases: List<PrincipalPhase>,
     val sunNow: Horizontal,
     val moonNow: Horizontal,
     val status: DaylightStatus,
-)
+    /** Where the Sun and Moon are through the shown day, every [PATH_STEP_MS] from the window start (apparent altitude). */
+    val sunPath: List<Horizontal> = emptyList(),
+    val moonPath: List<Horizontal> = emptyList(),
+    /** Day length minus the previous day's; null when either day has no sunrise or sunset. */
+    val daylightChangeMs: Long? = null,
+    val moonriseAzDeg: Double? = null,
+    val moonsetAzDeg: Double? = null,
+    /** How high the Moon gets when it crosses the meridian on the shown day. */
+    val moonTransitAltDeg: Double? = null,
+) {
+    val nextNewMs: Long? get() = upcomingPhases.firstOrNull { it.name == MoonPhaseName.NewMoon }?.epochMs
+    val nextFullMs: Long? get() = upcomingPhases.firstOrNull { it.name == MoonPhaseName.FullMoon }?.epochMs
+}
 
 /** Sea-level pressure (QNH) now, and how it was obtained. */
 data class Qnh(val hpa: Double, val approximate: Boolean)
@@ -69,6 +85,9 @@ data class WeatherState(
     val zambretti: ZambrettiForecast?,
     val stormAlert: Boolean,
 )
+
+/** Sampling step of [SkyState.sunPath] and [SkyState.moonPath]: 15 minutes, 97 points a day. */
+const val PATH_STEP_MS = 15 * 60_000L
 
 class SkyViewModel(private val c: AppContainer) : ViewModel() {
     private val started = SharingStarted.WhileSubscribed(5_000)
@@ -106,6 +125,13 @@ class SkyViewModel(private val c: AppContainer) : ViewModel() {
         val sun = SolarEvents.day(p.position.lat, p.position.lon, start, end)
         val moon = LunarEvents.day(p.position.lat, p.position.lon, start, end)
         val ref = if (offset == 0) now else start + (end - start) / 2
+        val lat = p.position.lat
+        val lon = p.position.lon
+        val (yStart, yEnd) = LocalDays.window(day - 1)
+        val yesterday = SolarEvents.day(lat, lon, yStart, yEnd)
+        val change = if (sun.dayType == DayType.Normal && yesterday.dayType == DayType.Normal) sun.daylightMs - yesterday.daylightMs else null
+        fun apparent(h: Horizontal) = Horizontal(h.azimuthDeg, h.apparentAltitudeDeg)
+        val times = (start..end step PATH_STEP_MS).toList()
         return SkyState(
             place = p,
             epochDay = day,
@@ -114,11 +140,16 @@ class SkyViewModel(private val c: AppContainer) : ViewModel() {
             sun = sun,
             moon = moon,
             phase = LunarPhase.at(ref),
-            nextNewMs = LunarPhase.next(ref, 0.0),
-            nextFullMs = LunarPhase.next(ref, 180.0),
+            upcomingPhases = LunarPhase.upcoming(ref),
             sunNow = SolarPosition.horizontal(now, p.position.lat, p.position.lon),
             moonNow = LunarPosition.horizontal(now, p.position.lat, p.position.lon),
             status = SolarEvents.status(sun, now),
+            sunPath = times.map { apparent(SolarPosition.horizontal(it, lat, lon)) },
+            moonPath = times.map { apparent(LunarPosition.horizontal(it, lat, lon)) },
+            daylightChangeMs = change,
+            moonriseAzDeg = moon.moonriseMs?.let { LunarPosition.horizontal(it, lat, lon).azimuthDeg },
+            moonsetAzDeg = moon.moonsetMs?.let { LunarPosition.horizontal(it, lat, lon).azimuthDeg },
+            moonTransitAltDeg = moon.transitMs?.let { LunarPosition.horizontal(it, lat, lon).apparentAltitudeDeg },
         )
     }
 

@@ -8,16 +8,21 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
@@ -57,7 +62,11 @@ fun GlassChrome(modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape
             },
         )
     }
-    Box(m.border(0.5.dp, edgeBrush(), shape), content = content)
+    Box(m.border(0.5.dp, edgeBrush(), shape)) {
+        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+            content()
+        }
+    }
 }
 
 @Composable
@@ -76,6 +85,7 @@ fun GlassCard(
     modifier: Modifier = Modifier,
     corner: Dp = 24.dp,
     padding: Dp = 16.dp,
+    horizontalAlignment: Alignment.Horizontal = Alignment.Start,
     onClick: (() -> Unit)? = null,
     onClickLabel: String? = null,
     content: @Composable ColumnScope.() -> Unit,
@@ -86,21 +96,41 @@ fun GlassCard(
         if (isDarkSurface) listOf(cs.surfaceContainerHigh.copy(alpha = 0.82f), cs.surfaceContainer.copy(alpha = 0.66f))
         else listOf(cs.surfaceContainerLowest.copy(alpha = 0.86f), cs.surfaceContainerLow.copy(alpha = 0.72f)),
     )
-    var m = modifier.clip(shape).background(fill).border(1.dp, edgeBrush(), shape)
+    // Cards always span the column (a short card must not shrink to its text and sit at the start); callers that
+    // want less pass a width limit or a Row weight, which fillMaxWidth then fills.
+    var m = modifier.fillMaxWidth().clip(shape).background(fill).border(1.dp, edgeBrush(), shape)
     if (onClick != null) m = m.clickable(onClickLabel = onClickLabel, role = Role.Button, onClick = onClick)
-    Column(m.padding(padding), content = content)
+    Column(m.padding(padding), horizontalAlignment = horizontalAlignment) {
+        CompositionLocalProvider(LocalContentColor provides cs.onSurface) {
+            content()
+        }
+    }
+}
+
+/**
+ * The backdrop wash. [endY] is where the gradient ends in the drawing's own coordinates: the backdrop fills the
+ * window, so passing the window height lets another layer (the header) repaint exactly the same colours in place.
+ */
+@Composable
+fun backdropBrush(endY: Float = Float.POSITIVE_INFINITY): Brush {
+    val cs = MaterialTheme.colorScheme
+    return if (LocalStatusColors.current.isNight) SolidColor(Color.Black)
+    else Brush.verticalGradient(
+        0f to cs.secondaryContainer.copy(alpha = 0.55f),
+        0.45f to cs.background,
+        1f to cs.primaryContainer.copy(alpha = 0.35f),
+        endY = endY,
+    )
 }
 
 /** Full-screen backdrop: a soft sky-to-forest wash behind all content. */
 @Composable
 fun Backdrop(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
     val cs = MaterialTheme.colorScheme
-    val night = LocalStatusColors.current.isNight
-    val brush = if (night) Brush.verticalGradient(listOf(Color.Black, Color.Black))
-    else Brush.verticalGradient(
-        0f to cs.secondaryContainer.copy(alpha = 0.55f),
-        0.45f to cs.background,
-        1f to cs.primaryContainer.copy(alpha = 0.35f),
-    )
-    Box(modifier.fillMaxSize().background(cs.background).background(brush), content = content)
+    val brush = backdropBrush()
+    Box(modifier.fillMaxSize().background(cs.background).background(brush)) {
+        CompositionLocalProvider(LocalContentColor provides cs.onBackground) {
+            content()
+        }
+    }
 }

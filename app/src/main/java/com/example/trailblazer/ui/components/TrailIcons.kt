@@ -63,9 +63,13 @@ object TrailIcons {
     val Up = icon("up", "M12,19V5M6,11L12,5L18,11")
     val Down = icon("down", "M12,5V19M6,13L12,19L18,13")
     val Copy = icon("copy", "M8,8H20V20H8Z M4,16V4H16")
+    val Search = icon("search", circle(10.5f, 10.5f, 6.5f) + "M15.5,15.5L21,21")
     val Flag = icon("flag", "M6,21V4M6,4H17L15,8L17,12H6")
     val Speed = icon("speed", "M4,16A8,8 0 1,1 20,16M12,16L16,10")
     val Doc = icon("doc", "M7,3H14L19,8V21H7Z M14,3V8H19M10,13H16M10,17H16")
     val Chevron = icon("chevron", "M9,6L15,12L9,18")
+    val More = icon("more", circle(5f, 12f, 1.2f) + circle(12f, 12f, 1.2f) + circle(19f, 12f, 1.2f))
+    val Star = icon("star", "M12,3L14.6,9.2L21,9.7L16.1,13.9L17.6,20.3L12,16.9L6.4,20.3L7.9,13.9L3,9.7L9.4,9.2Z")
+    val Telescope = icon("telescope", "M3,13L17,6L19,10L5,17Z M11,14L8,21M12,14L15,21M17,6L20,4.5L22,8.5L19,10")
     val Waves = icon("waves", "M3,8C5,6 7,6 9,8S13,10 15,8S19,6 21,8M3,13C5,11 7,11 9,13S13,15 15,13S19,11 21,13M3,18C5,16 7,16 9,18S13,20 15,18S19,16 21,18")
 }

@@ -63,7 +63,12 @@ class CircularLowPass(private val alpha: Double) {
         primed = false
     }
 
-    fun update(deg: Double): Double {
+    /**
+     * Adds a sample and returns the smoothed angle. A non-finite sample (a glitching sensor) is skipped without
+     * touching the state and yields null, so one bad value can never poison every later reading.
+     */
+    fun update(deg: Double): Double? {
+        if (!deg.isFinite()) return null
         val c = cos(deg * DEG)
         val s = sin(deg * DEG)
         if (!primed) {

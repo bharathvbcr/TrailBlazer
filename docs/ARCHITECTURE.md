@@ -15,7 +15,7 @@
 |---|---|
 | `math` | `mod360`, `angleDiff` (−180, 180], `crossesNorth`, `CircularLowPass`, `MedianFilter` |
 | `time` | Julian day, ΔT, civil dates, ISO-8601 (always `Locale.ROOT`) |
-| `astro` | Sun (NOAA/Meeus 25), moon (Meeus 47), coordinate transforms, refraction, `RiseSetFinder`, `SolarEvents`, `LunarPhase`, `LunarEvents` |
+| `astro` | Sun (NOAA/Meeus 25), moon (Meeus 47), coordinate transforms, refraction, `RiseSetFinder`, `SolarEvents`, `LunarPhase`, `LunarEvents`; planets (JPL elements), the bright-star catalogue, precession and apparent place, `NightSky` (darkness intervals, planet and Milky Way visibility, polar alignment), `MeteorShowers` (IMO list), `SkyProjection` (sky chart) |
 | `geo` | `LatLon` (validated), haversine, bearings, destination, cross-track, DMS, `CoordinateParser` |
 | `atmo` | ISA, QNH, density altitude, air density, boiling point, dew point |
 | `weather` | `PressureTrend`, `Tendency`, `StormAlert`, `Zambretti` |
@@ -40,7 +40,9 @@ Every public function returns a *total* result: a value, `null`, or a sealed "wh
 | `tracking` | `TrackRecordingService` (foreground, type `location`), `TrackRecorder` (filtering and batching), `TrackingController` |
 | `weather` | `OpenMeteoClient` (consent-gated) and `PressureSampler` |
 | `sos` | `TorchController`, `WhistlePlayer` |
-| `ui` | Theme, glass components, Nav3 navigation, and one package per tab plus settings |
+| `links` | `LinkLookup`: resolves a short map link on the user's tap, through `RedirectProbe` (Location header only). The logic is `core/geo/ShortLinks`. |
+| `places` | `PlaceSearch` (consent-gated, bounded, validated) over `PlaceSearchBackend`; `GeocoderBackend` is Android's `Geocoder` (the API 33 listener, or the blocking call on IO below 33). `SavedPlaces` lists waypoints and other trips' stops, nearest first. |
+| `ui` | Theme, glass components, Nav3 navigation, one package per tab, `stars` (the stargazing screen, opened from the Sky tab with its place or from Tools with the live position) and settings |
 
 ## Data flow
 
@@ -59,6 +61,7 @@ Composable
 
 - **Sensors are only on while someone is looking.** `shareReading` stops the upstream flow (and so unregisters the Android listener) 5 s after the last collector leaves. The grace period covers configuration changes without re-registering.
 - **Location** is gated twice. `live()` combines the location permission flow with a "location enabled" flow, which is fed by the `PROVIDERS_CHANGED` and `MODE_CHANGED` broadcasts. Revoking permission or switching location off yields `Unavailable` immediately, rather than a silent stall.
+- **ViewModels never collect a sensor or location flow in `viewModelScope` on their own.** A ViewModel outlives its screen (another screen pushed on top, the app in the background), so a collection there would keep the hardware on. Side effects such as the speed alert are cold flows that the screen collects under `repeatOnLifecycle(STARTED)`. `NowViewModelTest` checks that no listener is registered with nobody watching.
 - **The recording service** collects `location.live(1 s)` itself, independently of the UI. It writes to Room in batches, and the Trips tab observes Room.
 
 ## The `Reading<T>` contract
@@ -94,10 +97,14 @@ Rules:
 
 ## UI
 
-- **Navigation:** Navigation 3 `NavDisplay` with `@Serializable` route keys, and a `ViewModelStoreNavEntryDecorator` so each entry owns its ViewModels. Back from a tab root returns to Now.
+- **Navigation:** Navigation 3 `NavDisplay` with `@Serializable` route keys, and a `ViewModelStoreNavEntryDecorator` so each entry owns its ViewModels. Back from a tab root returns to Now. Pushes slide in, pops slide back, and tab switches crossfade. The system back gesture drives `predictivePopTransitionSpec` frame by frame: the page shrinks and moves away from the edge the swipe started on, and a cancelled gesture leaves it where it was (`PredictiveBackTest`).
+- **Touch on plots:** every plot takes input only through `ui/components/Gestures.kt`. `scrubX` is tap plus a sideways drag; `pickPoint` is tap plus press-and-hold, then drag; `orbit` (the 3D plot) is a sideways drag, plus press-and-hold, then drag, to tilt. None of them claims a vertical drag, so a page scrolls from anywhere, including a plot. Do not use `detectDragGestures` on anything inside a scrolling page (`PlotGesturesTest`).
+- **Bottom inset:** `LocalBottomInset` is the tab pill's whole footprint (the gesture bar, the 12 dp gap and the pill), measured before its padding. Every `ScreenScaffold` list ends that far up, so its last item scrolls clear of the pill (`BottomInsetTest`, with a simulated 48 dp gesture bar).
 - **Glass:** Haze `hazeSource` on the content and `hazeBlur` on the chrome only (top bar, bottom bar, sheets). Real backdrop blur on API 31+, a tinted scrim below that. Content cards are not blurred, which keeps scrolling cheap.
 - **Theme:** Material 3 `MaterialTheme` (stable 1.4.0, no Expressive APIs). Dynamic colour on API 31+, a Forest fallback palette, and a red night-vision scheme. Figures use tabular numerals.
 - **Icons** are drawn as `ImageVector`s in `TrailIcons`, so there is no icon-font dependency.
+- **Choosing a place:** every screen that needs a place uses `PlacePicker` (`ui/components/PlacePicker.kt`): Trips' *Find a place*, Sky's *Change place* and the share screen. The caller decides what "here" means (`HereOption`): a stop at the current fix for a trip, following the live position for Sky.
+- **Shared text:** `MainActivity` (`singleTask`) takes `ACTION_SEND text/plain` on a fresh start or in `onNewIntent`, bounds it to 4,000 characters and hands it to `TrailNav`, which opens `ShareRoute` once. The place goes to the trip editor as `TripEditRoute.seed`; the editor adds it only after an existing trip has loaded, before its destination (`TripEditViewModelTest`).
 
 ## Adding a feature: checklist
 

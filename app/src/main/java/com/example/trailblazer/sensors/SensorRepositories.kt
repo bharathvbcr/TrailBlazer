@@ -82,7 +82,9 @@ class EnvironmentRepository(private val source: SensorSource, private val scope:
 /** Raw motion vectors for the level, vehicle tilt and the 3D plot. */
 class MotionRepository(private val source: SensorSource, scope: CoroutineScope, private val clock: Clock) {
     private fun vec(type: Int, periodUs: Int) = source.reading(type, periodUs, clock) { s ->
-        if (s.values.size < 3) null else Vec3(s.values[0].toDouble(), s.values[1].toDouble(), s.values[2].toDouble())
+        // A non-finite axis is a driver glitch; dropping it here also keeps it out of the gravity low-pass, which would never recover.
+        if (s.values.size < 3 || !s.values[0].isFinite() || !s.values[1].isFinite() || !s.values[2].isFinite()) null
+        else Vec3(s.values[0].toDouble(), s.values[1].toDouble(), s.values[2].toDouble())
     }
 
     val acceleration: StateFlow<Reading<Vec3>> = vec(Sensor.TYPE_ACCELEROMETER, SensorManager.SENSOR_DELAY_GAME).shareReading(scope)
@@ -118,7 +120,8 @@ class StepRepository(source: SensorSource, scope: CoroutineScope, clock: Clock, 
     val stepsSinceBoot: StateFlow<Reading<Long>> = permitted.flatMapLatest { ok ->
         if (!ok) flowOf(Reading.Unavailable(UnavailableReason.PermissionDenied))
         else source.reading(Sensor.TYPE_STEP_COUNTER, SensorManager.SENSOR_DELAY_NORMAL, clock) { s ->
-            s.values.firstOrNull()?.toLong()?.takeIf { it >= 0 }
+            // NaN.toLong() is 0, which would look like a counter reset and corrupt the user's baseline.
+            s.values.firstOrNull()?.takeIf { it.isFinite() && it >= 0f }?.toLong()
         }
     }.shareReading(scope)
 }

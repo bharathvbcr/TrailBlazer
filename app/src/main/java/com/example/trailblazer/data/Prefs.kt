@@ -37,6 +37,8 @@ data class Settings(
     val dynamicColor: Boolean = true,
     val nightRed: Boolean = false,
     val forecastConsent: Boolean = false,
+    /** Place search by name (Android's Geocoder). Off until the user turns it on. */
+    val placeSearchConsent: Boolean = false,
     val speedAlertEnabled: Boolean = false,
     val speedAlertLimitMps: Double = 100 / 3.6,
     val stepsEnabled: Boolean = false,
@@ -44,6 +46,12 @@ data class Settings(
     val stepsBaseline: Long? = null,
     val calibration: AltimeterCalibration? = null,
     val targetWaypointId: String? = null,
+    val levelPitchOffsetDeg: Double = 0.0,
+    val levelRollOffsetDeg: Double = 0.0,
+    /** Opt-in: the Now tab shows position as one line, without the satellite sky. */
+    val compactPosition: Boolean = false,
+    /** Ticks, a confirm on level and a steep warning on the Level screen. */
+    val levelHaptics: Boolean = true,
 )
 
 private val Context.store: DataStore<Preferences> by preferencesDataStore(name = "settings")
@@ -61,13 +69,18 @@ class PrefsRepository(private val context: Context) {
         val dynamicColor = booleanPreferencesKey("dynamic_color")
         val nightRed = booleanPreferencesKey("night_red")
         val forecastConsent = booleanPreferencesKey("forecast_consent")
+        val placeSearchConsent = booleanPreferencesKey("place_search_consent")
         val speedAlertEnabled = booleanPreferencesKey("speed_alert_enabled")
         val speedAlertLimit = doublePreferencesKey("speed_alert_limit_mps")
         val stepsEnabled = booleanPreferencesKey("steps_enabled")
+        val compactPosition = booleanPreferencesKey("compact_position")
+        val levelHaptics = booleanPreferencesKey("level_haptics")
         val stepsBaseline = longPreferencesKey("steps_baseline")
         val qnh = doublePreferencesKey("calibration_qnh_hpa")
         val qnhSetAt = longPreferencesKey("calibration_set_at_ms")
         val target = stringPreferencesKey("target_waypoint")
+        val levelPitch = doublePreferencesKey("level_pitch_offset_deg")
+        val levelRoll = doublePreferencesKey("level_roll_offset_deg")
     }
 
     private inline fun <reified E : Enum<E>> Preferences.enum(key: Preferences.Key<String>, default: E): E =
@@ -91,15 +104,20 @@ class PrefsRepository(private val context: Context) {
             p[K.dynamicColor] = n.dynamicColor
             p[K.nightRed] = n.nightRed
             p[K.forecastConsent] = n.forecastConsent
+            p[K.placeSearchConsent] = n.placeSearchConsent
             p[K.speedAlertEnabled] = n.speedAlertEnabled
             p[K.speedAlertLimit] = n.speedAlertLimitMps
             p[K.stepsEnabled] = n.stepsEnabled
+            p[K.compactPosition] = n.compactPosition
+            p[K.levelHaptics] = n.levelHaptics
             val b = n.stepsBaseline
             if (b == null) p.remove(K.stepsBaseline) else p[K.stepsBaseline] = b
             val c = n.calibration
             if (c == null) { p.remove(K.qnh); p.remove(K.qnhSetAt) } else { p[K.qnh] = c.qnhHpa; p[K.qnhSetAt] = c.setAtMs }
             val t = n.targetWaypointId
             if (t == null) p.remove(K.target) else p[K.target] = t
+            p[K.levelPitch] = n.levelPitchOffsetDeg
+            p[K.levelRoll] = n.levelRollOffsetDeg
         }
     }
 
@@ -116,12 +134,17 @@ class PrefsRepository(private val context: Context) {
             dynamicColor = p[K.dynamicColor] ?: d.dynamicColor,
             nightRed = p[K.nightRed] ?: d.nightRed,
             forecastConsent = p[K.forecastConsent] ?: d.forecastConsent,
+            placeSearchConsent = p[K.placeSearchConsent] ?: d.placeSearchConsent,
             speedAlertEnabled = p[K.speedAlertEnabled] ?: d.speedAlertEnabled,
             speedAlertLimitMps = p[K.speedAlertLimit]?.takeIf { it.isFinite() && it > 0 } ?: d.speedAlertLimitMps,
             stepsEnabled = p[K.stepsEnabled] ?: d.stepsEnabled,
+            compactPosition = p[K.compactPosition] ?: d.compactPosition,
+            levelHaptics = p[K.levelHaptics] ?: d.levelHaptics,
             stepsBaseline = p[K.stepsBaseline]?.takeIf { it >= 0 },
             calibration = p[K.qnh]?.takeIf { it.isFinite() && it in 900.0..1100.0 }?.let { AltimeterCalibration(it, p[K.qnhSetAt] ?: 0L) },
             targetWaypointId = p[K.target],
+            levelPitchOffsetDeg = p[K.levelPitch]?.takeIf { it.isFinite() } ?: d.levelPitchOffsetDeg,
+            levelRollOffsetDeg = p[K.levelRoll]?.takeIf { it.isFinite() } ?: d.levelRollOffsetDeg,
         )
     }
 

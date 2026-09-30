@@ -89,19 +89,30 @@ class Fmt(private val context: Context, val settings: Settings) {
 
 /** Local-day windows in the device time zone; DST days are 23 or 25 hours long. */
 object LocalDays {
-    fun window(epochDay: Long, tz: TimeZone = TimeZone.getDefault()): Pair<Long, Long> {
-        fun start(day: Long): Long {
-            val (y, m, d) = com.trailblazer.core.time.CivilDate.civilFromDays(day)
-            val c = Calendar.getInstance(tz)
-            c.clear()
-            c.set(y, m - 1, d, 0, 0, 0)
-            return c.timeInMillis
-        }
-        return start(epochDay) to start(epochDay + 1)
+    /** The instant of [hour]:00 local time on [epochDay] (days since 1970-01-01 in the local calendar). */
+    private fun at(epochDay: Long, hour: Int, tz: TimeZone): Long {
+        val (y, m, d) = com.trailblazer.core.time.CivilDate.civilFromDays(epochDay)
+        val c = Calendar.getInstance(tz)
+        c.clear()
+        c.set(y, m - 1, d, hour, 0, 0)
+        return c.timeInMillis
     }
+
+    fun window(epochDay: Long, tz: TimeZone = TimeZone.getDefault()): Pair<Long, Long> =
+        at(epochDay, 0, tz) to at(epochDay + 1, 0, tz)
 
     fun today(nowMs: Long, tz: TimeZone = TimeZone.getDefault()): Long =
         Math.floorDiv(nowMs + tz.getOffset(nowMs), 86_400_000L)
+
+    /** Local noon of [epochDay] to local noon of the next day: one whole night, never split at midnight. */
+    fun noonToNoon(epochDay: Long, tz: TimeZone = TimeZone.getDefault()): Pair<Long, Long> =
+        at(epochDay, 12, tz) to at(epochDay + 1, 12, tz)
+
+    /** The local date whose evening starts the night containing [nowMs]: before local noon, that is yesterday. */
+    fun nightOf(nowMs: Long, tz: TimeZone = TimeZone.getDefault()): Long {
+        val day = today(nowMs, tz)
+        return if (nowMs < noonToNoon(day, tz).first) day - 1 else day
+    }
 }
 
 fun UnavailableReason.label(what: String): String = when (this) {

@@ -18,12 +18,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -31,12 +31,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalContext
+import com.example.trailblazer.weather.ForecastTimes
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -51,33 +52,43 @@ import com.example.trailblazer.ui.LocalDays
 import com.example.trailblazer.ui.components.GlassCard
 import com.example.trailblazer.ui.components.LabelValue
 import com.example.trailblazer.ui.components.PermissionGate
+import com.example.trailblazer.ui.components.RangeBars
 import com.example.trailblazer.ui.components.ScreenScaffold
+import com.example.trailblazer.ui.components.HereOption
+import com.example.trailblazer.ui.components.PlacePicker
+import com.example.trailblazer.ui.components.scrubX
 import com.example.trailblazer.ui.components.SectionTitle
 import com.example.trailblazer.ui.components.Sparkline
 import com.example.trailblazer.ui.components.TrailIcons
+import com.example.trailblazer.ui.components.WindArrow
 import com.example.trailblazer.ui.components.ValueTile
 import com.example.trailblazer.ui.nav.Navigator
 import com.example.trailblazer.ui.nav.SettingsRoute
+import com.example.trailblazer.ui.nav.StargazeRoute
 import com.example.trailblazer.ui.theme.LocalStatusColors
 import com.example.trailblazer.weather.ForecastResult
 import com.example.trailblazer.weather.OpenMeteoClient
 import com.example.trailblazer.weather.WmoCode
 import com.trailblazer.core.astro.Band
+import com.trailblazer.core.astro.DaySlice
 import com.trailblazer.core.astro.DayType
 import com.trailblazer.core.astro.DaylightStatus
+import com.trailblazer.core.astro.LunarDay
+import com.trailblazer.core.astro.LunarPhase
+import com.trailblazer.core.astro.SolarEvents
 import com.trailblazer.core.astro.MoonPhaseName
 import com.trailblazer.core.astro.SolarDay
 import com.trailblazer.core.atmo.DewPoint
-import com.trailblazer.core.geo.CoordinateParse
-import com.trailblazer.core.geo.CoordinateParser
 import com.trailblazer.core.geo.Dms
-import com.trailblazer.core.geo.RefusalReason
-import com.trailblazer.core.math.cardinal16
+import com.trailblazer.core.plot.SeriesPlot
 import com.trailblazer.core.weather.Tendency
 import com.trailblazer.core.weather.TrendBasis
 import com.trailblazer.core.weather.TrendResult
 import com.trailblazer.core.weather.ZambrettiForecast
 import kotlin.math.roundToInt
+import androidx.compose.foundation.layout.Box
+import com.trailblazer.core.math.cardinal16
+import com.trailblazer.core.astro.Horizontal
 
 @Composable
 fun SkyScreen(nav: Navigator) {
@@ -135,6 +146,10 @@ fun SkyScreen(nav: Navigator) {
         } else {
             item { SunCard(s, fmt) }
             item { MoonCard(s, fmt) }
+            item {
+                val pl = s.place
+                StargazeLinkCard { nav.go(if (pl.manual) StargazeRoute(pl.position.lat, pl.position.lon, pl.label) else StargazeRoute()) }
+            }
         }
         item { SectionTitle("Weather from your barometer") }
         item { WeatherCard(weather, fmt) }
@@ -161,10 +176,12 @@ fun SkyScreen(nav: Navigator) {
         }
     }
 
-    if (placeDialog) PlaceDialog(
+    if (placeDialog) PlacePicker(
+        title = "Choose a place",
         onDismiss = { placeDialog = false },
-        onUseHere = { vm.manualPlace.value = null; placeDialog = false },
-        onPick = { vm.manualPlace.value = it; placeDialog = false },
+        onPick = { places -> places.firstOrNull()?.let { vm.manualPlace.value = SkyPlace(it.position, it.label, true) }; placeDialog = false },
+        // Here means follow the live position, not a fixed copy of it.
+        here = HereOption("Use my location") { vm.manualPlace.value = null; placeDialog = false; null },
     )
     if (consentDialog) AlertDialog(
         onDismissRequest = { consentDialog = false },
@@ -184,6 +201,10 @@ fun SkyScreen(nav: Navigator) {
 @Composable
 private fun SunCard(s: SkyState, fmt: Fmt) {
     val sun = s.sun
+    val colors = sunColors()
+    val last = (sun.windowEndMs - 1).coerceAtLeast(sun.windowStartMs)
+    val marker = if (s.isToday) s.nowMs else sun.solarNoonMs
+    var at by remember(sun.windowStartMs, sun.windowEndMs) { mutableLongStateOf((marker ?: sun.windowStartMs).coerceIn(sun.windowStartMs, last)) }
     GlassCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(TrailIcons.Sun, null, tint = LocalStatusColors.current.caution)
@@ -210,57 +231,172 @@ private fun SunCard(s: SkyState, fmt: Fmt) {
             )
         }
         Spacer(Modifier.height(10.dp))
-        DayBar(sun, if (s.isToday) s.nowMs else null)
-        Spacer(Modifier.height(10.dp))
-        fun t(ms: Long?) = ms?.let { fmt.time(it) } ?: "—"
-        fun az(d: Double?) = d?.let { " · ${it.roundToInt()}° ${cardinal16(it)}" } ?: ""
-        LabelValue("Sunrise", t(sun.sunriseMs) + az(sun.sunriseAzimuthDeg))
-        LabelValue("Solar noon", t(sun.solarNoonMs) + (sun.noonAltitudeDeg?.let { " · ${fmt.angle(it)} high" } ?: ""))
-        LabelValue("Sunset", t(sun.sunsetMs) + az(sun.sunsetAzimuthDeg))
-        if (sun.dayType == DayType.Normal) LabelValue("Day length", fmt.duration(sun.daylightMs))
-        fun band(b: Band?) = b?.let { "${t(it.startMs)} – ${t(it.endMs)}" } ?: "—"
-        LabelValue("Golden hour (am)", band(sun.goldenMorning))
-        LabelValue("Golden hour (pm)", band(sun.goldenEvening))
-        LabelValue("Blue hour (am)", band(sun.blueMorning))
-        LabelValue("Blue hour (pm)", band(sun.blueEvening))
-        LabelValue("Civil twilight", "${t(sun.civil.startMs)} / ${t(sun.civil.endMs)}")
-        LabelValue("Nautical twilight", "${t(sun.nautical.startMs)} / ${t(sun.nautical.endMs)}")
-        LabelValue("Astronomical twilight", "${t(sun.astronomical.startMs)} / ${t(sun.astronomical.endMs)}")
-        if (s.isToday) LabelValue("Sun now", "${fmt.bearing(s.sunNow.azimuthDeg)} · ${fmt.angle(s.sunNow.apparentAltitudeDeg)} elevation")
+        SkyArc(
+            path = s.sunPath, sunPath = s.sunPath, windowStartMs = sun.windowStartMs, stepMs = PATH_STEP_MS, atMs = at, fmt = fmt,
+            lineColor = colors.sun, golden = colors.golden,
+            description = "Sun's height through the day, highest ${sun.noonAltitudeDeg?.roundToInt() ?: 0} degrees",
+            modifier = Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(16.dp))
+                .scrubX(sun.windowStartMs, sun.windowEndMs) { f -> at = SeriesPlot.fractionToEpoch(f, sun.windowStartMs, sun.windowEndMs) },
+        ) { p, r, below -> sunGlyph(p, r, colors, dim = below) }
+        Spacer(Modifier.height(8.dp))
+        DayPlot(sun, s.moon, marker, at, { at = it }, fmt, heightAt = { t -> altitudeAt(s.sunPath, sun.windowStartMs, t) })
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            HorizonCompass(
+                path = s.sunPath,
+                riseAzDeg = sun.sunriseAzimuthDeg,
+                setAzDeg = sun.sunsetAzimuthDeg,
+                now = if (s.isToday) Horizontal(s.sunNow.azimuthDeg, s.sunNow.apparentAltitudeDeg) else null,
+                bodyColor = colors.sun,
+                description = listOfNotNull(
+                    sun.sunriseAzimuthDeg?.let { "Rises in the ${cardinal16(it)}" },
+                    sun.sunsetAzimuthDeg?.let { "sets in the ${cardinal16(it)}" },
+                ).joinToString(", ").ifEmpty { "Sun's path" },
+                modifier = Modifier.size(132.dp),
+            ) { p, r, below -> sunGlyph(p, r, colors, dim = below) }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                sun.sunriseMs?.let { Fact("Sunrise", fmt.time(it), sun.sunriseAzimuthDeg?.let { a -> "from the ${fmt.bearing(a)}" }) }
+                sun.solarNoonMs?.let { Fact("Highest", fmt.time(it), sun.noonAltitudeDeg?.let { a -> "${a.roundToInt()}° up" + (s.sunPath.maxByOrNull { it.altitudeDeg }?.let { p -> " in the ${cardinal16(p.azimuthDeg)}" } ?: "") }) }
+                sun.sunsetMs?.let { Fact("Sunset", fmt.time(it), sun.sunsetAzimuthDeg?.let { a -> "to the ${fmt.bearing(a)}" }) }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        FactGrid(
+            listOfNotNull(
+                sun.civil.startMs?.let { Triple("First light", fmt.time(it), "civil dawn") },
+                sun.civil.endMs?.let { Triple("Last light", fmt.time(it), "civil dusk") },
+                sun.goldenEvening?.let { b -> bandText(b, fmt)?.let { Triple("Golden hour", it, "evening") } },
+                sun.blueEvening?.let { b -> bandText(b, fmt)?.let { Triple("Blue hour", it, "evening") } },
+                if (sun.dayType == DayType.Normal) Triple("Day length", fmt.duration(sun.daylightMs), s.daylightChangeMs?.let { changeText(it) }) else null,
+                if (s.isToday) Triple("Now", "${kotlin.math.abs(s.sunNow.apparentAltitudeDeg.roundToInt())}° ${if (s.sunNow.apparentAltitudeDeg >= 0) "up" else "below"}", fmt.bearing(s.sunNow.azimuthDeg)) else null,
+                shadowText(s)?.let { Triple("Your shadow", it, "of your height") },
+            ),
+        )
     }
 }
 
-/** A 24-hour band: night → twilights → day, with a marker at the current time. */
+private fun bandText(b: Band, fmt: Fmt): String? {
+    val a = b.startMs ?: return null
+    val e = b.endMs ?: return null
+    return "${fmt.time(a)}–${fmt.time(e)}"
+}
+
+/** "+2 min 5 s vs yesterday": near the solstices the change is seconds, so seconds are kept. */
+internal fun changeText(ms: Long): String {
+    val sign = if (ms >= 0) "+" else "−"
+    val s = kotlin.math.abs(ms) / 1000
+    val body = if (s < 60) "$s s" else "${s / 60} min ${s % 60} s"
+    return "$sign$body vs yesterday"
+}
+
+/** Shadow length for something upright, now: 1 / tan(altitude); only while the Sun is usefully high. */
+private fun shadowText(s: SkyState): String? {
+    if (!s.isToday) return null
+    val alt = s.sunNow.apparentAltitudeDeg
+    if (alt < 3.0) return null
+    val ratio = 1 / kotlin.math.tan(Math.toRadians(alt))
+    return if (ratio >= 10) "${ratio.roundToInt()}×" else String.format(java.util.Locale.getDefault(), "%.1f×", ratio)
+}
+
+/** Linear interpolation in a 15-minute path. */
+private fun altitudeAt(path: List<Horizontal>, startMs: Long, t: Long): Double? {
+    if (path.size < 2) return null
+    val f = ((t - startMs).toDouble() / PATH_STEP_MS).coerceIn(0.0, path.size - 1.0)
+    val lo = f.toInt().coerceAtMost(path.size - 2)
+    return path[lo].altitudeDeg + (path[lo + 1].altitudeDeg - path[lo].altitudeDeg) * (f - lo)
+}
+
 @Composable
-private fun DayBar(sun: SolarDay, nowMs: Long?) {
+private fun Fact(label: String, value: String, detail: String?) {
+    Column {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.titleMedium)
+        detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    }
+}
+
+/** Facts two to a row. */
+@Composable
+private fun FactGrid(facts: List<Triple<String, String, String?>>) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        for (row in facts.chunked(2)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                for ((label, value, detail) in row) Box(Modifier.weight(1f)) { Fact(label, value, detail) }
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+/** Daylight bands you can scrub. The caption names the innermost band under your finger and the Sun's height. */
+@Composable
+private fun DayPlot(sun: SolarDay, moon: LunarDay, markerMs: Long?, at: Long, onAt: (Long) -> Unit, fmt: Fmt, heightAt: (Long) -> Double?) {
     val cs = MaterialTheme.colorScheme
     val night = LocalStatusColors.current.isNight
     val day = if (night) cs.primary.copy(alpha = 0.6f) else Color(0xFFFFD27A)
+    val golden = if (night) cs.tertiary else Color(0xFFE8A317)
+    val blue = if (night) cs.primary.copy(alpha = 0.35f) else Color(0xFF6A8FD4)
     val civil = if (night) cs.primary.copy(alpha = 0.4f) else Color(0xFF8FB8E8)
     val naut = if (night) cs.primary.copy(alpha = 0.25f) else Color(0xFF4F6FA8)
     val astro = if (night) cs.primary.copy(alpha = 0.15f) else Color(0xFF2B3B66)
     val dark = if (night) Color.Black else Color(0xFF141A2E)
-    Canvas(
-        Modifier.fillMaxWidth().height(22.dp).clip(RoundedCornerShape(11.dp))
-            .semantics { contentDescription = "Daylight timeline" },
-    ) {
-        val span = (sun.windowEndMs - sun.windowStartMs).toFloat()
-        fun x(ms: Long?) = ms?.let { ((it - sun.windowStartMs) / span * size.width).coerceIn(0f, size.width) }
-        drawRect(if (sun.dayType == DayType.PolarDay) day else dark)
-        fun seg(b: Band, c: Color) {
-            val a = x(b.startMs) ?: 0f
-            val e = x(b.endMs) ?: size.width
-            if (b.startMs == null && b.endMs == null) return
-            drawRect(c, Offset(a, 0f), Size((e - a).coerceAtLeast(0f), size.height))
+    Column {
+        Text(
+            listOfNotNull(fmt.time(at), sliceLabel(SolarEvents.slice(sun, at)), heightAt(at)?.let { "Sun ${it.roundToInt()}°" }).joinToString(" · "),
+            style = MaterialTheme.typography.labelLarge,
+            color = cs.primary,
+        )
+        Spacer(Modifier.height(6.dp))
+        Canvas(
+            Modifier
+                .fillMaxWidth()
+                .height(40.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .semantics { contentDescription = "Daylight timeline" }
+                .scrubX(sun.windowStartMs, sun.windowEndMs) { f -> onAt(SeriesPlot.fractionToEpoch(f, sun.windowStartMs, sun.windowEndMs)) },
+        ) {
+            val span = (sun.windowEndMs - sun.windowStartMs).toFloat().coerceAtLeast(1f)
+            fun x(ms: Long?) = ms?.let { ((it - sun.windowStartMs) / span * size.width).coerceIn(0f, size.width) }
+            drawRect(if (sun.dayType == DayType.PolarDay) day else dark)
+            fun seg(b: Band?, c: Color) {
+                if (b == null || (b.startMs == null && b.endMs == null)) return
+                val a = x(b.startMs) ?: 0f
+                val e = x(b.endMs) ?: size.width
+                drawRect(c, Offset(a, 0f), Size((e - a).coerceAtLeast(0f), size.height))
+            }
+            if (sun.dayType != DayType.PolarDay) {
+                seg(sun.astronomical, astro)
+                seg(sun.nautical, naut)
+                seg(sun.civil, civil)
+                seg(sun.blueMorning, blue)
+                seg(sun.blueEvening, blue)
+                if (sun.sunriseMs != null || sun.sunsetMs != null) seg(Band(sun.sunriseMs, sun.sunsetMs), day)
+                seg(sun.goldenMorning, golden)
+                seg(sun.goldenEvening, golden)
+            }
+            x(markerMs)?.let { nx -> drawRect(cs.error.copy(alpha = 0.85f), Offset(nx - 1.5f, 0f), Size(3f, size.height)) }
+            x(at)?.let { nx ->
+                drawRect(cs.onSurface, Offset(nx - 1.5f, 0f), Size(3f, size.height))
+                drawCircle(cs.onSurface, 5.dp.toPx(), Offset(nx, size.height / 2f))
+            }
+            for (ms in listOf(moon.moonriseMs, moon.moonsetMs)) {
+                x(ms)?.let { nx -> drawCircle(cs.secondary, 4.dp.toPx(), Offset(nx, 10.dp.toPx())) }
+            }
         }
-        if (sun.dayType != DayType.PolarDay) {
-            seg(sun.astronomical, astro)
-            seg(sun.nautical, naut)
-            seg(sun.civil, civil)
-            if (sun.sunriseMs != null || sun.sunsetMs != null) seg(Band(sun.sunriseMs, sun.sunsetMs), day)
-        }
-        x(nowMs)?.let { nx -> drawRect(cs.error, Offset(nx - 1.5f, 0f), Size(3f, size.height)) }
     }
+}
+
+private fun sliceLabel(slice: DaySlice) = when (slice) {
+    DaySlice.PolarDay -> "Midnight sun"
+    DaySlice.PolarNight -> "Polar night"
+    DaySlice.Day -> "Day"
+    DaySlice.Golden -> "Golden hour"
+    DaySlice.Blue -> "Blue hour"
+    DaySlice.Civil -> "Civil twilight"
+    DaySlice.Nautical -> "Nautical twilight"
+    DaySlice.Astronomical -> "Astronomical twilight"
+    DaySlice.Night -> "Night"
 }
 
 @Composable
@@ -268,38 +404,96 @@ private fun MoonCard(s: SkyState, fmt: Fmt) {
     val p = s.phase
     GlassCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            MoonDisc(p.illumination, p.waxing, Modifier.size(56.dp))
+            MoonDisc(p.illumination, LunarPhase.litOnRight(p.waxing, s.place.position.lat), Modifier.size(56.dp))
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
                 Text(phaseName(p.name), style = MaterialTheme.typography.titleLarge)
                 Text("${(p.illumination * 100).roundToInt()} % lit · ${fmt.num(p.ageDays, 1)} days old", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        Spacer(Modifier.height(10.dp))
-        val m = s.moon
-        fun t(ms: Long?) = ms?.let { fmt.time(it) } ?: "—"
-        when {
-            m.alwaysUp -> LabelValue("Moon", "Above the horizon all day")
-            m.alwaysDown -> LabelValue("Moon", "Below the horizon all day")
-            else -> {
-                LabelValue("Moonrise", t(m.moonriseMs))
-                LabelValue("Moonset", t(m.moonsetMs))
-            }
+        val moons = listOfNotNull(s.nextFullMs?.let { "Full ${fmt.date(it)}" }, s.nextNewMs?.let { "New ${fmt.date(it)}" })
+        if (moons.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                moons.joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
-        LabelValue("Highest (transit)", t(m.transitMs))
-        LabelValue("Next full moon", s.nextFullMs?.let { fmt.dateTime(it) } ?: "—")
-        LabelValue("Next new moon", s.nextNewMs?.let { fmt.dateTime(it) } ?: "—")
-        if (s.isToday) LabelValue("Moon now", "${fmt.bearing(s.moonNow.azimuthDeg)} · ${fmt.angle(s.moonNow.altitudeDeg)} elevation")
-        val dark = p.illumination < 0.25
-        Text(
-            if (dark) "Dark sky: good for stars and the Milky Way." else "Bright moonlight washes out faint stars.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Spacer(Modifier.height(12.dp))
+        MoonCompass(s, fmt)
+        Spacer(Modifier.height(4.dp))
+        MoonPhasesDropdown(p, s.upcomingPhases, s.place.position.lat, fmt)
     }
 }
 
-private fun phaseName(n: MoonPhaseName) = when (n) {
+/** Where the Moon rises, peaks and sets on the shown day, as compass directions, with its path drawn looking up. */
+@Composable
+private fun MoonCompass(s: SkyState, fmt: Fmt) {
+    val m = s.moon
+    val lit = LunarPhase.litOnRight(s.phase.waxing, s.place.position.lat)
+    val moonColor = if (LocalStatusColors.current.isNight) MaterialTheme.colorScheme.primary else Color(0xFFE9E1C4)
+    val now = if (s.isToday) Horizontal(s.moonNow.azimuthDeg, s.moonNow.apparentAltitudeDeg) else null
+    // The unlit part is drawn dark enough to read against the blue dome and the night sky.
+    val shade = if (LocalStatusColors.current.isNight) Color.Black else Color(0xFF2B3140)
+    val start = s.sun.windowStartMs
+    val end = s.sun.windowEndMs
+    val initial = (if (s.isToday) s.nowMs else m.transitMs ?: (start + end) / 2).coerceIn(start, end - 1)
+    var at by remember(start, end) { mutableLongStateOf(initial) }
+    Text(
+        listOfNotNull(fmt.time(at), altitudeAt(s.moonPath, start, at)?.let { if (it >= 0) "Moon ${it.roundToInt()}° up" else "Moon below the horizon" }).joinToString(" · "),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+    )
+    Spacer(Modifier.height(6.dp))
+    SkyArc(
+        path = s.moonPath, sunPath = s.sunPath, windowStartMs = start, stepMs = PATH_STEP_MS, atMs = at, fmt = fmt,
+        lineColor = moonColor,
+        fillAlpha = 0.18f,
+        description = "Moon's height through the day" + (s.moonTransitAltDeg?.let { ", highest ${it.roundToInt()} degrees" } ?: ""),
+        modifier = Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(16.dp))
+            .scrubX(start, end) { f -> at = SeriesPlot.fractionToEpoch(f, start, end) },
+    ) { c, r, below ->
+        drawCircle(Brush.radialGradient(listOf(moonColor.copy(alpha = if (below) 0.1f else 0.35f), Color.Transparent), c, r * 2.8f), r * 2.8f, c)
+        drawMoon(c, r * 1.2f, s.phase.illumination, lit, moonColor, shade, alpha = if (below) 0.5f else 1f)
+    }
+    Spacer(Modifier.height(12.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        HorizonCompass(
+            path = s.moonPath,
+            riseAzDeg = s.moonriseAzDeg,
+            setAzDeg = s.moonsetAzDeg,
+            now = now,
+            bodyColor = moonColor,
+            description = listOfNotNull(
+                s.moonriseAzDeg?.let { "Moon rises in the ${cardinal16(it)}" },
+                s.moonsetAzDeg?.let { "sets in the ${cardinal16(it)}" },
+                now?.let { "now ${it.altitudeDeg.roundToInt()} degrees ${if (it.altitudeDeg >= 0) "up" else "below the horizon"} in the ${cardinal16(it.azimuthDeg)}" },
+            ).joinToString(", ").ifEmpty { "Moon's path" },
+            modifier = Modifier.size(132.dp),
+        ) { c, r, below ->
+            drawCircle(Brush.radialGradient(listOf(moonColor.copy(alpha = if (below) 0.15f else 0.4f), Color.Transparent), c, r * 2.6f), r * 2.6f, c)
+            drawMoon(c, r * 1.25f, s.phase.illumination, lit, moonColor, shade, alpha = if (below) 0.5f else 1f)
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            when {
+                m.alwaysUp -> Fact("All day", "Up", "never sets on this day")
+                m.alwaysDown -> Fact("All day", "Down", "never rises on this day")
+            }
+            // In time order: on many days the Moon sets in the morning and rises again in the evening.
+            val events = listOfNotNull(
+                m.moonriseMs?.let { t -> Triple(t, "Moonrise", s.moonriseAzDeg?.let { a -> "from the ${fmt.bearing(a)}" }) },
+                m.transitMs?.let { t -> Triple(t, "Highest", s.moonTransitAltDeg?.let { a -> if (a >= 0) "${a.roundToInt()}° up" + (s.moonPath.maxByOrNull { it.altitudeDeg }?.let { p -> " in the ${cardinal16(p.azimuthDeg)}" } ?: "") else "stays below the horizon" }) },
+                m.moonsetMs?.let { t -> Triple(t, "Moonset", s.moonsetAzDeg?.let { a -> "to the ${fmt.bearing(a)}" }) },
+            ).sortedBy { it.first }
+            for ((t, label, detail) in events) Fact(label, fmt.time(t), detail)
+            now?.let { Fact("Now", fmt.bearing(it.azimuthDeg), if (it.altitudeDeg >= 0) "${it.altitudeDeg.roundToInt()}° up" else "below the horizon") }
+        }
+    }
+}
+
+internal fun phaseName(n: MoonPhaseName) = when (n) {
     MoonPhaseName.NewMoon -> "New moon"
     MoonPhaseName.WaxingCrescent -> "Waxing crescent"
     MoonPhaseName.FirstQuarter -> "First quarter"
@@ -310,25 +504,16 @@ private fun phaseName(n: MoonPhaseName) = when (n) {
     MoonPhaseName.WaningCrescent -> "Waning crescent"
 }
 
-/** Moon disc lit by [illumination], on the right when waxing (northern-hemisphere view). */
+/**
+ * Moon disc lit by [illumination], on the side the observer sees lit (see [LunarPhase.litOnRight]). [describe] is off
+ * where the parent already names the phase, so a screen reader does not read it twice.
+ */
 @Composable
-private fun MoonDisc(illumination: Double, waxing: Boolean, modifier: Modifier) {
+internal fun MoonDisc(illumination: Double, litOnRight: Boolean, modifier: Modifier, describe: Boolean = true) {
     val lit = if (LocalStatusColors.current.isNight) MaterialTheme.colorScheme.primary else Color(0xFFF2EBD3)
     val shade = MaterialTheme.colorScheme.surfaceContainerHighest
-    Canvas(modifier.semantics { contentDescription = "Moon ${(illumination * 100).roundToInt()} percent lit" }.rotate(if (waxing) 0f else 180f)) {
-        val r = size.minDimension / 2
-        val c = center
-        drawCircle(shade, r, c)
-        // Terminator: an ellipse whose half-width goes from +r (new) through 0 (quarter) to −r (full).
-        val k = (1 - 2 * illumination).toFloat()
-        val path = Path().apply {
-            moveTo(c.x, c.y - r)
-            arcTo(androidx.compose.ui.geometry.Rect(c.x - r, c.y - r, c.x + r, c.y + r), -90f, 180f, false)
-            val w = r * k
-            arcTo(androidx.compose.ui.geometry.Rect(c.x - kotlin.math.abs(w), c.y - r, c.x + kotlin.math.abs(w), c.y + r), 90f, if (w >= 0) 180f else -180f, false)
-            close()
-        }
-        drawPath(path, lit)
+    Canvas(if (describe) modifier.semantics { contentDescription = "Moon ${(illumination * 100).roundToInt()} percent lit" } else modifier) {
+        drawMoon(center, size.minDimension / 2, illumination, litOnRight, lit, shade)
     }
 }
 
@@ -352,29 +537,25 @@ private fun WeatherCard(w: WeatherState?, fmt: Fmt) {
         w.qnh?.let { LabelValue(if (it.approximate) "Sea-level pressure (approx.)" else "Sea-level pressure", fmt.pressure(it.hpa)) }
         when (val t = w.trend) {
             is TrendResult.Insufficient -> Text(
-                "Collecting history: the trend needs an hour of readings (have ${t.spanMinutes} min, ${t.samples} samples). " +
-                    "Readings are saved every 10 minutes while the app is open.",
+                "Need an hour of readings (${t.spanMinutes} min).",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            is TrendResult.Trend -> {
-                LabelValue("3-hour trend", "${tendencyName(t.tendency)} (${fmt.pressureDelta(t.hpaPer3h)} / 3 h)")
-                Text(
+            is TrendResult.Trend -> Text(
+                "${tendencyName(t.tendency)} · ${fmt.pressureDelta(t.hpaPer3h)} / 3 h · ${
                     when (t.basis) {
-                        TrendBasis.Station -> "You stayed at about the same elevation, so this is the raw barometer trend."
-                        TrendBasis.SeaLevel -> "Elevation changed, so readings were corrected to sea level using GPS height; treat small changes with caution."
-                        TrendBasis.StationElevationUnknown -> "No GPS height recorded: only valid if you stayed at the same elevation."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+                        TrendBasis.Station -> "same elevation"
+                        TrendBasis.SeaLevel -> "sea level"
+                        TrendBasis.StationElevationUnknown -> "elevation unknown"
+                    }
+                }",
+                style = MaterialTheme.typography.bodyMedium,
+            )
         }
-        val series = w.history.map { it.stationHpa }
-        if (series.size >= 2) {
+        val series = w.history.map { it.stationHpa as Double? }
+        if (SeriesPlot.frame(series, 2.0) != null) {
             Spacer(Modifier.height(8.dp))
-            Text("Last 24 h", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Sparkline(series, minSpan = 2.0)
+            Sparkline(series, minSpan = 2.0, valueText = { fmt.pressure(it) })
         }
         w.zambretti?.let { z ->
             Spacer(Modifier.height(8.dp))
@@ -426,38 +607,7 @@ private fun ForecastCard(
             null -> Text(if (loading) "Loading forecast…" else "No forecast yet.")
             ForecastResult.NotConsented -> Text("Forecast is off.")
             is ForecastResult.Failed -> Text("Couldn’t load the forecast (${result.message}). You may be offline.", color = LocalStatusColors.current.caution)
-            is ForecastResult.Ok -> {
-                val r = result.forecast.response
-                r.current?.let { cur ->
-                    Text(WmoCode.describe(cur.weatherCode), style = MaterialTheme.typography.titleLarge)
-                    cur.temperatureC?.let { LabelValue("Temperature", fmt.temperature(it) + (cur.apparentC?.let { a -> " (feels ${fmt.temperature(a)})" } ?: "")) }
-                    cur.windKmh?.let { LabelValue("Wind", fmt.speed(it / 3.6) + (cur.windDirDeg?.let { d -> " from ${cardinal16(d)}" } ?: "") + (cur.gustKmh?.let { g -> ", gusts ${fmt.speed(g / 3.6)}" } ?: "")) }
-                    cur.precipitation?.let { LabelValue("Precipitation", "${fmt.num(it, 1)} mm") }
-                    cur.pressureMslHpa?.let { LabelValue("Sea-level pressure", fmt.pressure(it)) }
-                }
-                r.daily?.let { d ->
-                    Spacer(Modifier.height(8.dp))
-                    d.time.indices.forEach { i ->
-                        val hi = d.maxC.getOrNull(i)
-                        val lo = d.minC.getOrNull(i)
-                        val pp = d.precipProbPct.getOrNull(i)
-                        LabelValue(
-                            d.time[i],
-                            listOfNotNull(
-                                WmoCode.describe(d.weatherCode.getOrNull(i)),
-                                if (hi != null && lo != null) "${fmt.temperature(lo)}–${fmt.temperature(hi)}" else null,
-                                pp?.let { "${it.roundToInt()} % rain" },
-                            ).joinToString(" · "),
-                        )
-                    }
-                }
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "Updated ${fmt.time(result.forecast.fetchedMs)}" + if (result.fromCache) " (cached)" else "",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            is ForecastResult.Ok -> ForecastBody(result, fmt)
         }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -470,32 +620,99 @@ private fun ForecastCard(
     }
 }
 
+/** A loaded forecast: now, the next hours as a line, the next days as bars. Times are labelled for people, not ISO. */
 @Composable
-private fun PlaceDialog(onDismiss: () -> Unit, onUseHere: () -> Unit, onPick: (SkyPlace) -> Unit) {
-    var text by rememberSaveable { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Choose a place") },
-        text = {
-            Column {
-                Text("Paste coordinates or a map link (Google Maps, OpenStreetMap, Apple Maps, geo:). Nothing is looked up online.", style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(text, { text = it.take(2000); error = null }, label = { Text("Coordinates or link") }, isError = error != null, supportingText = error?.let { e -> { Text(e) } })
+internal fun ForecastBody(result: ForecastResult.Ok, fmt: Fmt) {
+    val r = result.forecast.response
+    val locale = LocalConfiguration.current.locales[0]
+    val offset = r.utcOffsetSeconds
+    r.current?.let { cur ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            WeatherGlyph(cur.weatherCode, Modifier.size(56.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(cur.temperatureC?.let { fmt.temperature(it) } ?: "—", style = MaterialTheme.typography.headlineMedium)
+                Text(WmoCode.describe(cur.weatherCode), style = MaterialTheme.typography.bodyMedium)
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                when (val r = CoordinateParser.parse(text)) {
-                    is CoordinateParse.Found -> r.places.first().let { onPick(SkyPlace(it.position, it.label, true)) }
-                    is CoordinateParse.Refused -> error = when (r.reason) {
-                        RefusalReason.ShortLinkNeedsNetwork -> "Short links need a lookup online. Open the link and share the full URL instead."
-                        RefusalReason.NoCoordinatesInLink -> "This link has no coordinates."
-                    }
-                    CoordinateParse.NotRecognized -> error = "Not recognised. Try 46.5582, 7.8352"
+            cur.windDirDeg?.let { dir ->
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    WindArrow(dir, Modifier.size(48.dp))
+                    cur.windKmh?.let { Text(fmt.speed(it / 3.6), style = MaterialTheme.typography.labelMedium) }
+                    Text("from ${cardinal16(dir)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            }) { Text("Use") }
-        },
-        dismissButton = { TextButton(onClick = onUseHere) { Text("Use my location") } },
+            }
+        }
+        val details = listOfNotNull(
+            cur.apparentC?.let { "Feels like ${fmt.temperature(it)}" },
+            cur.humidityPct?.let { "Humidity ${it.roundToInt()} %" },
+            cur.gustKmh?.let { "Gusts ${fmt.speed(it / 3.6)}" },
+        )
+        if (details.isNotEmpty()) Text(details.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    r.hourly?.let { h ->
+        val hours = h.time.map { ForecastTimes.epochMs(it, offset) }
+        if (SeriesPlot.frame(h.temperatureC, 1.0) != null) {
+            Spacer(Modifier.height(12.dp))
+            Text("Next ${h.time.size} hours", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(4.dp))
+            Sparkline(
+                h.temperatureC,
+                minSpan = 1.0,
+                color = MaterialTheme.colorScheme.tertiary,
+                caption = { i, t ->
+                    listOfNotNull(
+                        hours.getOrNull(i)?.let { fmt.time(it) } ?: (if (i == 0) "Now" else "+$i h"),
+                        fmt.temperature(t),
+                        h.precipProbPct.getOrNull(i)?.let { "rain ${it.roundToInt()} %" },
+                        h.weatherCode.getOrNull(i)?.let { WmoCode.describe(it) },
+                    ).joinToString(" · ")
+                },
+                axis = listOfNotNull(hours.firstOrNull()?.let { fmt.time(it) } ?: "Now", hours.lastOrNull()?.let { fmt.time(it) }),
+            )
+        }
+    }
+    r.daily?.let { d ->
+        val today = r.current?.time?.take(10) ?: d.time.firstOrNull()
+        Spacer(Modifier.height(12.dp))
+        Text("Next ${d.time.size} days", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(4.dp))
+        RangeBars(
+            lows = d.minC,
+            highs = d.maxC,
+            labels = d.time.map { ForecastTimes.dayLabel(it, today, locale) ?: "—" },
+            valueLabel = { fmt.temperature(it) },
+            caption = { i, bar ->
+                listOfNotNull(
+                    d.time.getOrNull(i)?.let { ForecastTimes.dayLong(it, locale) },
+                    d.weatherCode.getOrNull(i)?.let { WmoCode.describe(it) },
+                    "${fmt.temperature(bar.low)} to ${fmt.temperature(bar.high)}",
+                    d.precipProbPct.getOrNull(i)?.let { "rain ${it.roundToInt()} %" },
+                ).joinToString(" · ")
+            },
+        )
+    }
+    Spacer(Modifier.height(6.dp))
+    Text(
+        listOfNotNull(
+            "Updated ${fmt.time(result.forecast.fetchedMs)}" + if (result.fromCache) " (saved copy)" else "",
+            if (ForecastTimes.differsFromPhone(offset, result.forecast.fetchedMs)) "hours in your phone's time, days in the place's" else null,
+        ).joinToString(" · "),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+@Composable
+private fun StargazeLinkCard(onOpen: () -> Unit) {
+    GlassCard(onClick = onOpen, onClickLabel = "Open stargazing") {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(TrailIcons.Telescope, null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Tonight’s sky", style = MaterialTheme.typography.titleMedium)
+                Text("Dark-sky times, planets, sky chart, meteor showers and polar alignment for this place", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(TrailIcons.Chevron, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }

@@ -16,6 +16,7 @@ import com.trailblazer.core.track.TrackStats
 import com.trailblazer.core.trip.Stop
 import com.trailblazer.core.trip.StopKind
 import com.trailblazer.core.trip.Trip
+import com.trailblazer.core.trip.TripRules
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
@@ -77,9 +78,9 @@ class ImportExport(
         val w = if (doc.waypoints.isNotEmpty()) waypoints.importAll(doc.waypoints) else 0
         var simplified = 0
         for (r in doc.routes) {
-            val pts = if (r.points.size > MAX_TRIP_STOPS) {
+            val pts = if (r.points.size > TripRules.MAX_STOPS) {
                 simplified++
-                DouglasPeucker.simplifyToMax(r.points, MAX_TRIP_STOPS) { it.position }
+                DouglasPeucker.simplifyToMax(r.points, TripRules.MAX_STOPS) { it.position }
             } else r.points
             if (pts.size < 2) continue
             val stops = pts.mapIndexed { i, p ->
@@ -164,10 +165,5 @@ class ImportExport(
             }
             n
         }
-    }
-
-    companion object {
-        /** Long imported routes are simplified to this many stops so the trip planner stays usable. */
-        const val MAX_TRIP_STOPS = 50
     }
 }
