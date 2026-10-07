@@ -4,6 +4,8 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.hardware.TriggerEvent
+import android.hardware.TriggerEventListener
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -40,6 +42,20 @@ interface SensorSource {
      * Completes immediately when the sensor does not exist.
      */
     fun samples(type: Int, periodUs: Int): Flow<SensorSample>
+
+    /**
+     * Every sample for [type], not conflated, for logic that must not miss one (a collapsed batch could hide motion).
+     * The sensor hub may hold samples for up to [maxReportLatencyUs] and deliver them together, each with its own
+     * timestamp, so the phone can sleep in between. Samples that do not fit the buffer are dropped, which shows up as a
+     * gap in the timestamps. Completes immediately when the sensor does not exist.
+     */
+    fun batchedSamples(type: Int, periodUs: Int, maxReportLatencyUs: Int): Flow<SensorSample>
+
+    /**
+     * One emission each time a one-shot trigger sensor such as significant motion fires; it is re-armed after every
+     * trigger and disarmed when collection stops. Completes immediately when the sensor does not exist.
+     */
+    fun triggers(type: Int): Flow<Unit>
 }
 
 class AndroidSensorSource(private val manager: SensorManager) : SensorSource {
@@ -51,7 +67,12 @@ class AndroidSensorSource(private val manager: SensorManager) : SensorSource {
 
     override fun all(): List<SensorInfo> = manager.getSensorList(Sensor.TYPE_ALL).map { it.toInfo() }
 
-    override fun samples(type: Int, periodUs: Int): Flow<SensorSample> = callbackFlow {
+    override fun samples(type: Int, periodUs: Int): Flow<SensorSample> = listen(type, periodUs, 0).buffer(Channel.CONFLATED)
+
+    override fun batchedSamples(type: Int, periodUs: Int, maxReportLatencyUs: Int): Flow<SensorSample> =
+        listen(type, periodUs, maxReportLatencyUs).buffer(BATCH_BUFFER)
+
+    private fun listen(type: Int, periodUs: Int, maxReportLatencyUs: Int): Flow<SensorSample> = callbackFlow {
         val sensor = manager.getDefaultSensor(type)
         if (sensor == null) {
             close()
@@ -65,10 +86,35 @@ class AndroidSensorSource(private val manager: SensorManager) : SensorSource {
             // Every subsequent SensorEvent carries the new accuracy, so nothing to do here.
             override fun onAccuracyChanged(s: Sensor, newAccuracy: Int) = Unit
         }
-        if (!manager.registerListener(listener, sensor, periodUs)) {
+        if (!manager.registerListener(listener, sensor, periodUs, maxReportLatencyUs)) {
             close()
             return@callbackFlow
         }
         awaitClose { manager.unregisterListener(listener) }
-    }.buffer(Channel.CONFLATED)
+    }
+
+    override fun triggers(type: Int): Flow<Unit> = callbackFlow {
+        val sensor = manager.getDefaultSensor(type)
+        if (sensor == null) {
+            close()
+            return@callbackFlow
+        }
+        val listener = object : TriggerEventListener() {
+            override fun onTrigger(event: TriggerEvent) {
+                trySend(Unit)
+                // A trigger request is cancelled once it fires; ask again to keep listening.
+                manager.requestTriggerSensor(this, sensor)
+            }
+        }
+        if (!manager.requestTriggerSensor(listener, sensor)) {
+            close()
+            return@callbackFlow
+        }
+        awaitClose { manager.cancelTriggerSensor(listener, sensor) }
+    }
+
+    private companion object {
+        /** About eight minutes of 2 Hz samples. A bigger batch loses its newest samples, which readers see as a gap. */
+        const val BATCH_BUFFER = 1_024
+    }
 }

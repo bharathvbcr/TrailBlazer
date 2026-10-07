@@ -23,6 +23,17 @@ import java.io.IOException
 enum class ThemeMode { System, Light, Dark }
 enum class NorthReference { True, Magnetic }
 
+/**
+ * How often the recording service asks for a fix. Every mode but [Continuous] also lets the GNSS receiver sleep
+ * once the accelerometer has seen the phone lie still for five minutes (see `MotionGate`). Stored by name.
+ */
+enum class TrackingMode(val intervalMs: Long, val motionGated: Boolean) {
+    Continuous(1_000L, false),
+    Balanced(15_000L, true),
+    Expedition(60_000L, true),
+    ExpeditionLong(300_000L, true),
+}
+
 /** A known reference for the barometric altimeter: either sea-level pressure (QNH) or the current elevation. */
 data class AltimeterCalibration(val qnhHpa: Double, val setAtMs: Long)
 
@@ -52,6 +63,7 @@ data class Settings(
     val compactPosition: Boolean = false,
     /** Ticks, a confirm on level and a steep warning on the Level screen. */
     val levelHaptics: Boolean = true,
+    val trackingMode: TrackingMode = TrackingMode.Continuous,
 )
 
 private val Context.store: DataStore<Preferences> by preferencesDataStore(name = "settings")
@@ -81,6 +93,7 @@ class PrefsRepository(private val context: Context) {
         val target = stringPreferencesKey("target_waypoint")
         val levelPitch = doublePreferencesKey("level_pitch_offset_deg")
         val levelRoll = doublePreferencesKey("level_roll_offset_deg")
+        val trackingMode = stringPreferencesKey("tracking_mode")
     }
 
     private inline fun <reified E : Enum<E>> Preferences.enum(key: Preferences.Key<String>, default: E): E =
@@ -118,6 +131,7 @@ class PrefsRepository(private val context: Context) {
             if (t == null) p.remove(K.target) else p[K.target] = t
             p[K.levelPitch] = n.levelPitchOffsetDeg
             p[K.levelRoll] = n.levelRollOffsetDeg
+            p[K.trackingMode] = n.trackingMode.name
         }
     }
 
@@ -145,6 +159,7 @@ class PrefsRepository(private val context: Context) {
             targetWaypointId = p[K.target],
             levelPitchOffsetDeg = p[K.levelPitch]?.takeIf { it.isFinite() } ?: d.levelPitchOffsetDeg,
             levelRollOffsetDeg = p[K.levelRoll]?.takeIf { it.isFinite() } ?: d.levelRollOffsetDeg,
+            trackingMode = p.enum(K.trackingMode, d.trackingMode),
         )
     }
 

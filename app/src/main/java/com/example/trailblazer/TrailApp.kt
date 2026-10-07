@@ -86,7 +86,7 @@ class AppContainer(
     val weather by lazy { OpenMeteoClient(http, clock) }
     val linkLookup by lazy { LinkLookup(redirects) }
     val placeSearch by lazy { PlaceSearch(placeBackend, placeSearchAvailable) }
-    val tracking by lazy { TrackingController(context, tracks, permissions) }
+    val tracking by lazy { TrackingController(context, tracks, permissions, sensorSource) }
 }
 
 class TrailApp : Application() {

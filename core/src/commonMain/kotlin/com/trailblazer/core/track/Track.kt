@@ -20,8 +20,17 @@ data class TrackPoint(
  * Streaming track statistics: O(1) memory per update, so a 100 000-point track costs the same to
  * summarize as a 10-point one. Elevation gain and loss use a 3 m hysteresis band so GPS/baro noise
  * does not accumulate as fake climbing.
+ *
+ * A step is moving time when its speed reaches [movingThresholdMps]. The device-reported speed is an instant, so it
+ * only speaks for a short step; a step longer than [instantSpeedMaxGapMs] (sparse expedition fixes, or a gap while
+ * the receiver slept, Battery Saver withheld fixes, recording was paused or the process died) is judged by its
+ * average speed, distance over time. Distance is the same either way: the straight line between the two fixes.
  */
-class TrackStats(private val hysteresisM: Double = 3.0, private val movingThresholdMps: Double = 0.5) {
+class TrackStats(
+    private val hysteresisM: Double = 3.0,
+    private val movingThresholdMps: Double = 0.5,
+    private val instantSpeedMaxGapMs: Long = 30_000,
+) {
     var points = 0; private set
     var distanceM = 0.0; private set
     var movingMs = 0L; private set
@@ -48,7 +57,7 @@ class TrackStats(private val hysteresisM: Double = 3.0, private val movingThresh
             val dt = p.epochMs - prev.epochMs
             distanceM += d
             val derived = d / (dt / 1000.0)
-            val speed = p.speedMps?.takeIf { it.isFinite() && it >= 0 } ?: derived
+            val speed = if (dt > instantSpeedMaxGapMs) derived else p.speedMps?.takeIf { it.isFinite() && it >= 0 } ?: derived
             if (speed >= movingThresholdMps) movingMs += dt
             // Only trust device-reported speed for the maximum; derived speed spikes on position jumps.
             p.speedMps?.takeIf { it.isFinite() && it >= 0 }?.let { maxSpeedMps = max(maxSpeedMps ?: 0.0, it) }

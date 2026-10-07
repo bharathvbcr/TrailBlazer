@@ -39,6 +39,7 @@ import com.example.trailblazer.container
 import com.example.trailblazer.data.NorthReference
 import com.example.trailblazer.data.Settings
 import com.example.trailblazer.data.ThemeMode
+import com.example.trailblazer.data.TrackingMode
 import com.example.trailblazer.permissions.AppPermission
 import com.example.trailblazer.ui.Fmt
 import com.example.trailblazer.ui.components.GlassCard
@@ -106,6 +107,28 @@ fun SettingsScreen(nav: Navigator) {
                 Choice("Theme", s.theme, ThemeMode.entries, { it.name }) { v -> set { it.copy(theme = v) } }
                 Toggle("Colours from wallpaper", "Android 12 and later", s.dynamicColor) { v -> set { it.copy(dynamicColor = v) } }
                 Toggle("Night vision (red)", "Keeps your eyes dark-adapted at camp", s.nightRed) { v -> set { it.copy(nightRed = v) } }
+            }
+        }
+        item { SectionTitle("Tracking") }
+        item {
+            GlassCard {
+                Choice("GPS fix interval", s.trackingMode, TrackingMode.entries, {
+                    when (it) {
+                        TrackingMode.Continuous -> "Continuous (1 s)"
+                        TrackingMode.Balanced -> "Balanced (15 s)"
+                        TrackingMode.Expedition -> "Expedition (60 s)"
+                        TrackingMode.ExpeditionLong -> "Expedition (5 min)"
+                    }
+                }) { v -> set { it.copy(trackingMode = v) } }
+                Text(
+                    if (c.tracking.canRestGps) {
+                        "Longer intervals save battery on multi-day trips. Balanced and Expedition also turn GPS off after 5 minutes lying still, and on again when you move. Applies to a recording in progress."
+                    } else {
+                        "Longer intervals save battery on multi-day trips. Applies to a recording in progress. This phone has no motion sensor that can wake it, so GPS stays on while you are still."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
         item { SectionTitle("Alerts") }

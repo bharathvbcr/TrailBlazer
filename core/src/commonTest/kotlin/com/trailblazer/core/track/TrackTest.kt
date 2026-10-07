@@ -42,6 +42,38 @@ class TrackTest {
     }
 
     @Test
+    fun aGapIsMovingOnlyIfTheAverageSpeedAcrossItIs() {
+        // Walk 60 m at 1.5 m/s, then the receiver is off for an hour (GPS asleep while standing, Battery Saver, pause or
+        // process death). The first fix afterwards reports walking speed, but nothing was observed during the gap.
+        val s = TrackStats()
+        val start = LatLon(46.0, 7.0)
+        var t = 0L
+        for (i in 0..4) {
+            s.add(TrackPoint(t, Geo.destination(start, 0.0, i * 15.0), speedMps = 1.5))
+            t += 10_000
+        }
+        assertEquals(40_000L, s.movingMs)
+        val beforeGap = s.distanceM
+        t += 3_600_000
+        s.add(TrackPoint(t, Geo.destination(start, 0.0, 70.0), speedMps = 1.5))
+        assertEquals(40_000L, s.movingMs, "an hour standing still must not become moving time")
+        assertEquals(beforeGap + 10.0, s.distanceM, 0.5)
+        // Afterwards fixes are close together again and the device speed counts as before.
+        s.add(TrackPoint(t + 10_000, Geo.destination(start, 0.0, 85.0), speedMps = 1.5))
+        assertEquals(50_000L, s.movingMs)
+    }
+
+    @Test
+    fun aGapCoveredAtWalkingPaceIsMoving() {
+        // Expedition mode: one fix every 5 minutes while walking. 360 m in 300 s is 1.2 m/s on average.
+        val s = TrackStats()
+        val start = LatLon(46.0, 7.0)
+        for (i in 0..3) s.add(TrackPoint(i * 300_000L, Geo.destination(start, 90.0, i * 360.0), speedMps = 0.2))
+        assertEquals(900_000L, s.movingMs)
+        assertEquals(1080.0, s.distanceM, 2.0)
+    }
+
+    @Test
     fun douglasPeuckerOnHundredThousandPointsStaysBounded() {
         val rnd = Random(3)
         var p = LatLon(46.0, 7.0)

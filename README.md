@@ -149,7 +149,7 @@ TrailBlazer enforces extensive automated test coverage across both JVM and Robol
 
 ```bash
 # Run JVM core tests and Robolectric unit tests
-./gradlew :core:test :app:testDebugUnitTest
+./gradlew :core:jvmTest :app:testDebugUnitTest
 
 # Run code style, linting, and assemble debug APK
 ./gradlew :app:lintDebug :app:assembleDebug

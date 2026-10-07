@@ -92,8 +92,13 @@ Rules:
 
 1. `TrackingController.start()` creates an open track row and starts the service. The service calls `startForeground` (type `location`) immediately.
 2. `TrackRecorder` keeps fixes with accuracy ≤ 30 m that moved at least max(3 m, accuracy / 2). It flushes every 10 points or every 5 s, in one transaction.
-3. If location becomes `Unavailable`, recording pauses and records an `InterruptReason` (`LocationPermissionRevoked` or `LocationDisabled`), which the Trips tab explains.
-4. After process death, `MainActivity` calls `resumeIfInterrupted()` on start. The service reattaches to the open track and never creates a new one on its own.
+3. `GnssDutyCycle` applies the **GPS fix interval** setting (`TrackingMode`): Continuous 1 s, Balanced 15 s, Expedition 60 s or 5 min. A change applies to a recording in progress. In every mode except Continuous, `MotionGate` watches the accelerometer; the samples are batched by the sensor hub and are never conflated.
+   - **Rest:** after 5 minutes lying still, the location request is removed and the GNSS receiver sleeps. The notification says "GPS resting". Stillness is only credited for time the samples cover; a gap restarts the count.
+   - **Wake:** the significant-motion trigger (a wake-up sensor, armed only while resting) or motion in the next samples brings the request back.
+   - **Fallback:** a phone without both an accelerometer and significant motion keeps GPS on at the chosen interval, and Settings says so.
+   - **Metrics:** the gap is stitched by `TrackStats` (see ALGORITHMS.md, Tracks), so it is not counted as moving time. The same applies when Battery Saver withholds fixes; the request stays registered and fixes continue in the same track.
+4. If location becomes `Unavailable`, recording pauses and records an `InterruptReason` (`LocationPermissionRevoked` or `LocationDisabled`), which the Trips tab explains.
+5. After process death, `MainActivity` calls `resumeIfInterrupted()` on start. The service reattaches to the open track and never creates a new one on its own.
 
 ## UI
 

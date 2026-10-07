@@ -27,6 +27,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -48,10 +49,15 @@ class TrackRecordingService : LifecycleService() {
     private var tickJob: Job? = null
     private val lock = Mutex()
     private var units = UnitSystem.Metric
+    private lateinit var dutyCycle: GnssDutyCycle
+
+    /** True while the GNSS receiver sleeps because the phone is lying still. */
+    private var resting = false
 
     override fun onCreate() {
         super.onCreate()
         recorder = TrackRecorder(container.db.tracks(), container.clock)
+        dutyCycle = GnssDutyCycle(container.sensorSource)
         ensureChannel(this)
         lifecycleScope.launch { container.prefs.settings.collect { units = it.units } }
     }
@@ -92,10 +98,17 @@ class TrackRecordingService : LifecycleService() {
         _interrupted.value = null
         if (collectJob?.isActive == true) return@withLock
         collectJob = lifecycleScope.launch {
-            container.location.live(1_000L).collect { r ->
+            val mode = container.prefs.settings.map { it.trackingMode }
+            dutyCycle.readings(mode) { interval -> container.location.live(interval) }.collect { r ->
+                if ((r == null) != resting) {
+                    resting = r == null
+                    updateNotification(TrackState.Recording)
+                }
                 when (r) {
+                    // The receiver sleeps while the phone lies still; TrackStats judges the gap by its average speed.
+                    null -> Unit
                     is Reading.Value -> lock.withLock {
-                        recorder.offer(r.value)
+                        if (recorder.offer(r.value)) dutyCycle.noteMovement()
                         if (recorder.flushDue()) recorder.flush()
                     }
                     is Reading.Unavailable -> {
@@ -120,6 +133,7 @@ class TrackRecordingService : LifecycleService() {
     private suspend fun pause(reason: InterruptReason?) {
         collectJob?.cancel()
         tickJob?.cancel()
+        resting = false
         lock.withLock {
             if (attachToOpenTrack()) recorder.setState(TrackState.Paused)
         }
@@ -186,7 +200,15 @@ class TrackRecordingService : LifecycleService() {
         )
         val b = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_track)
-            .setContentTitle(getString(if (state == TrackState.Paused) R.string.recording_paused else R.string.recording_track))
+            .setContentTitle(
+                getString(
+                    when {
+                        state == TrackState.Paused -> R.string.recording_paused
+                        resting -> R.string.recording_gps_resting
+                        else -> R.string.recording_track
+                    },
+                ),
+            )
             .setContentText(text)
             .setOngoing(true)
             .setOnlyAlertOnce(true)

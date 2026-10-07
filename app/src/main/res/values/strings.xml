@@ -3,6 +3,7 @@
     <string name="channel_tracking">Track recording</string>
     <string name="recording_track">Recording track</string>
     <string name="recording_paused">Recording paused</string>
+    <string name="recording_gps_resting">Recording · GPS resting while you are still</string>
     <string name="pause">Pause</string>
     <string name="resume">Resume</string>
     <string name="stop">Stop</string>

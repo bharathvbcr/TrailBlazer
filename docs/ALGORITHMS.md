@@ -171,7 +171,7 @@ The Negretti & Zambra forecaster. It needs sea-level pressure in 950–1050 hPa 
 
 - **`TrackStats`** streams over the points:
   - distance (haversine sum)
-  - moving time (speed ≥ 0.5 m/s)
+  - moving time (speed ≥ 0.5 m/s). A step of up to 30 s uses the device-reported speed. A longer step uses its average speed (distance / time), because an instantaneous speed says nothing about the time before it. Longer steps come from sparse Expedition fixes, GPS resting while still, Battery Saver withholding fixes, a pause, or process death. Distance is the straight line between fixes either way.
   - maximum speed
   - elevation gain and loss with a **3 m hysteresis** band, so GPS and barometer noise does not add up to phantom climbing
 - **`DouglasPeucker`** is iterative (no recursion, so a 100k-point track cannot overflow the stack). `simplifyToMax(n)` searches for the smallest tolerance that yields ≤ n points. Imported routes over 50 points are simplified to 50 stops. The track detail map path is stride-sampled while streaming, then simplified to at most 500 points. Charts average the points into fixed buckets. Stored tracks are never altered.
