@@ -23,12 +23,12 @@ Workflow for agents:
 This binds every agent working here, not only the one reading this file. When you delegate — a subagent, a worktree lane, a handoff plan — name DevMap and GitPulse Insights in the prompt with the same precedence, rather than leaving that agent to grep its way in. When either tool cannot answer (truncated, `walk_incomplete`, empty on a built index, or a capability it does not have), record the gap and say so; do not silently fall back to grep and report the result as if the graph had confirmed it.
 
 Important surfaces:
-1. `app/` — app: 96 files, mostly kotlin, json (2 api, 1 models)
-2. `app/src/main/java/com/example/trailblazer/` — app/src/main/java/com/example/trailblazer: 58 files, kotlin (2 api)
-3. `app/src/main/java/com/example/trailblazer/sos/` — app/src/main/java/com/example/trailblazer/sos: 1 file, kotlin
-4. `app/src/main/java/com/example/trailblazer/data/` — app/src/main/java/com/example/trailblazer/data: 4 files, kotlin
-5. `app/src/main/java/com/example/trailblazer/sensors/` — app/src/main/java/com/example/trailblazer/sensors: 7 files, kotlin
-6. `app/src/main/java/com/example/trailblazer/ui/sky/` — app/src/main/java/com/example/trailblazer/ui/sky: 4 files, kotlin
+1. `app/src/main/java/com/example/trailblazer/ui/` — app/src/main/java/com/example/trailblazer/ui: 35 files, kotlin (2 api)
+2. `app/src/main/java/com/example/trailblazer/` — app/src/main/java/com/example/trailblazer: 62 files, kotlin (2 api)
+3. `app/` — app: 114 files, mostly kotlin, json (2 api, 1 models)
+4. `app/src/main/java/com/example/trailblazer/places/` — app/src/main/java/com/example/trailblazer/places: 1 file, kotlin
+5. `app/src/main/java/com/example/trailblazer/data/` — app/src/main/java/com/example/trailblazer/data: 5 files, kotlin
+6. `app/src/main/java/com/example/trailblazer/links/` — app/src/main/java/com/example/trailblazer/links: 1 file, kotlin
 
 ## Repository hygiene
 
