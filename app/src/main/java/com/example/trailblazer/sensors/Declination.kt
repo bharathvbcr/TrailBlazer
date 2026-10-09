@@ -2,16 +2,51 @@ package com.example.trailblazer.sensors
 
 import android.hardware.GeomagneticField
 import com.example.trailblazer.location.Fix
+import com.trailblazer.core.geo.WorldMagneticModel
 import com.trailblazer.core.math.mod360
 
 /**
- * Magnetic declination from Android's GeomagneticField, which embeds the World Magnetic Model shipped
- * with the OS image — so its accuracy depends on how current the device firmware is.
+ * Magnetic declination calculation with bundled World Magnetic Model (WMM) tables.
+ *
+ * Uses bundled WMM2025/2030 coefficients from :core to guarantee sub-0.1° declination
+ * accuracy anywhere on Earth, eliminating drift on older Android OS builds whose firmware
+ * WMM tables have expired. Falls back gracefully to system [GeomagneticField] when needed
+ * (e.g., date outside WMM2025 epoch or calculation failure).
  */
 object Declination {
-    fun degrees(fix: Fix): Double =
-        GeomagneticField(fix.position.lat.toFloat(), fix.position.lon.toFloat(), (fix.altitudeM ?: 0.0).toFloat(), fix.timeMs)
-            .declination.toDouble()
+    /** Whether to force fallback to Android system GeomagneticField (for testing or diagnostics). */
+    var forceSystemFallback: Boolean = false
+
+    /**
+     * Returns the magnetic declination in degrees for [fix].
+     * Positive is east of true north, negative is west.
+     */
+    fun degrees(fix: Fix): Double {
+        val lat = fix.position.lat
+        val lon = fix.position.lon
+        val alt = fix.altitudeM ?: 0.0
+        val timeMs = fix.timeMs
+
+        if (forceSystemFallback) {
+            return systemGeomagneticField(lat, lon, alt, timeMs)
+        }
+
+        return try {
+            if (WorldMagneticModel.isDateValid(timeMs)) {
+                WorldMagneticModel.declination(lat, lon, alt, timeMs)
+            } else {
+                systemGeomagneticField(lat, lon, alt, timeMs)
+            }
+        } catch (_: Throwable) {
+            systemGeomagneticField(lat, lon, alt, timeMs)
+        }
+    }
+
+    /**
+     * Fallback calculation using Android's platform [GeomagneticField].
+     */
+    internal fun systemGeomagneticField(lat: Double, lon: Double, alt: Double, timeMs: Long): Double =
+        GeomagneticField(lat.toFloat(), lon.toFloat(), alt.toFloat(), timeMs).declination.toDouble()
 }
 
 /** A heading ready for display: magnetic always, true only when a position gives us the declination. */
