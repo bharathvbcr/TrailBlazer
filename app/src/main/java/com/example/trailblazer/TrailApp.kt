@@ -107,6 +107,7 @@ class AppContainer(
     val pressureHistory by lazy { PressureHistory(db.pressure(), clock) }
 
     val importExport by lazy { ImportExport(context.contentResolver, db, waypoints, trips, tracks) }
+    val offlineMaps by lazy { com.example.trailblazer.data.OfflineMapManager(context, prefs) }
 
     val weather by lazy { OpenMeteoClient(http, clock) }
     val linkLookup by lazy { LinkLookup(redirects) }

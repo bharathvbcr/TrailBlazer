@@ -5,10 +5,16 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -17,12 +23,15 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -138,6 +147,7 @@ fun TrackDetailScreen(nav: Navigator, trackId: String) {
     var renaming by rememberSaveable { mutableStateOf(false) }
     var deleting by rememberSaveable { mutableStateOf(false) }
     var format by rememberSaveable { mutableStateOf(GeoFormat.Gpx) }
+    var showMap by rememberSaveable { mutableStateOf(false) }
     val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri -> uri?.let { vm.export(it, format) } }
     val track = t
 
@@ -169,7 +179,44 @@ fun TrackDetailScreen(nav: Navigator, trackId: String) {
         val ch = charts
         if (ch == null) item { Text("Preparing charts…") }
         else {
-            if (ch.path.size >= 2) item { GlassCard(padding = 8.dp) { TrackPath(ch.path) } }
+            if (ch.path.size >= 2) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        FilterChip(
+                            selected = !showMap,
+                            onClick = { showMap = false },
+                            label = { Text("Shape") },
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        FilterChip(
+                            selected = showMap,
+                            onClick = { showMap = true },
+                            label = { Text("Topo Map") },
+                        )
+                    }
+                }
+                if (showMap) {
+                    item {
+                        val tileSource = remember { ctx.container.offlineMaps.openActiveSource() }
+                        DisposableEffect(tileSource) {
+                            onDispose { tileSource?.close() }
+                        }
+                        Box(modifier = Modifier.fillMaxWidth().height(320.dp).clip(RoundedCornerShape(16.dp))) {
+                            OfflineMapCanvas(
+                                tileSource = tileSource,
+                                tracks = listOf(ch.path),
+                                distanceFormatter = { fmt.distance(it) },
+                            )
+                        }
+                    }
+                } else {
+                    item { GlassCard(padding = 8.dp) { TrackPath(ch.path) } }
+                }
+            }
             if (SeriesPlot.frame(ch.elevationByDistance, 20.0) != null) {
                 item { SectionTitle("Elevation") }
                 item { GlassCard { Sparkline(ch.elevationByDistance, minSpan = 20.0, valueText = { fmt.elevation(it) }) } }

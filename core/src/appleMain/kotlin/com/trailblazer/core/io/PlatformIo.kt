@@ -50,3 +50,5 @@ actual class StringWriter actual constructor() : Writer() {
 
     actual override fun toString(): String = sb.toString()
 }
+
+actual fun decompressGzip(bytes: ByteArray): ByteArray = bytes

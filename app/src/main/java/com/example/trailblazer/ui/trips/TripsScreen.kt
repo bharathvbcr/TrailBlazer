@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.items
@@ -74,7 +75,7 @@ import com.trailblazer.core.trip.LegCalculator
 import com.trailblazer.core.trip.StopKind
 import com.trailblazer.core.trip.TripRules
 
-private enum class Segment(val label: String) { Trips("Trips"), Waypoints("Waypoints"), Tracks("Tracks") }
+private enum class Segment(val label: String) { Trips("Trips"), Waypoints("Waypoints"), Tracks("Tracks"), Map("Map") }
 
 @Composable
 fun TripsScreen(nav: Navigator) {
@@ -91,6 +92,9 @@ fun TripsScreen(nav: Navigator) {
     val interrupted by vm.interrupted.collectAsStateWithLifecycle()
     val fix by vm.fix.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
+    val availableMaps by vm.availableMaps.collectAsStateWithLifecycle()
+    val activeTileSource by vm.activeTileSource.collectAsStateWithLifecycle()
+    val trackPaths by vm.trackPaths.collectAsStateWithLifecycle()
     val granted by ctx.container.permissions.granted.collectAsStateWithLifecycle()
     var segment by rememberSaveable { mutableStateOf(Segment.Trips) }
     var menu by remember { mutableStateOf(false) }
@@ -101,6 +105,12 @@ fun TripsScreen(nav: Navigator) {
     var moreMenu by remember { mutableStateOf<String?>(null) }
 
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { vm.import(it) } }
+    val mapImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let {
+            vm.importMap(it)
+            segment = Segment.Map
+        }
+    }
     val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         uri?.let { vm.exportWaypoints(it, pendingFormat) }
     }
@@ -128,6 +138,10 @@ fun TripsScreen(nav: Navigator) {
                 DropdownMenuItem(text = { Text("Import GPX or KML…") }, onClick = {
                     menu = false
                     importer.launch(arrayOf("application/gpx+xml", "application/vnd.google-earth.kml+xml", "application/xml", "text/xml", "application/octet-stream"))
+                })
+                DropdownMenuItem(text = { Text("Import map tiles (.mbtiles, .pmtiles)…") }, onClick = {
+                    menu = false
+                    mapImporter.launch(arrayOf("application/octet-stream", "application/x-sqlite3", "application/vnd.sqlite3", "*/*"))
                 })
                 DropdownMenuItem(text = { Text("Export waypoints as GPX…") }, onClick = { menu = false; pendingFormat = GeoFormat.Gpx; exporter.launch("waypoints.gpx") })
                 DropdownMenuItem(text = { Text("Export waypoints as KML…") }, onClick = { menu = false; pendingFormat = GeoFormat.Kml; exporter.launch("waypoints.kml") })
@@ -300,6 +314,85 @@ fun TripsScreen(nav: Navigator) {
                                 )
                             }
                             Icon(TrailIcons.Chevron, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+            Segment.Map -> {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(500.dp)
+                            .clip(RoundedCornerShape(20.dp)),
+                    ) {
+                        OfflineMapCanvas(
+                            tileSource = activeTileSource,
+                            stops = trips.flatMap { it.stops },
+                            waypoints = waypoints,
+                            tracks = trackPaths,
+                            currentLocation = (fix as? Reading.Value)?.value?.position,
+                            accuracyM = (fix as? Reading.Value)?.value?.accuracyM,
+                            onImportClick = {
+                                mapImporter.launch(arrayOf("application/octet-stream", "application/x-sqlite3", "application/vnd.sqlite3", "*/*"))
+                            },
+                            distanceFormatter = { fmt.distance(it) },
+                        )
+                    }
+                }
+                item {
+                    Spacer(Modifier.height(8.dp))
+                    PillButton("Import map archive (.mbtiles, .pmtiles)", TrailIcons.Import) {
+                        mapImporter.launch(arrayOf("application/octet-stream", "application/x-sqlite3", "application/vnd.sqlite3", "*/*"))
+                    }
+                }
+                if (availableMaps.isNotEmpty()) {
+                    item {
+                        Text(
+                            "Installed offline maps",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                        )
+                    }
+                    items(availableMaps, key = { it.file.absolutePath }) { mapInfo ->
+                        val isActive = activeTileSource?.file?.absolutePath == mapInfo.file.absolutePath
+                        GlassCard(
+                            onClick = { vm.selectMap(mapInfo.file) },
+                            onClickLabel = "Select ${mapInfo.name}",
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconTile(if (isActive) TrailIcons.Route else TrailIcons.Map)
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            mapInfo.name,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false),
+                                        )
+                                        if (isActive) {
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(
+                                                "Active",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary,
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        "${mapInfo.format.extension.uppercase()} · z${mapInfo.minZoom}–z${mapInfo.maxZoom} · ${mapInfo.formattedSize}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                IconButton(onClick = {
+                                    confirmDelete = "Delete offline map “${mapInfo.name}”?" to { vm.deleteMap(mapInfo.file); Unit }
+                                }) {
+                                    Icon(TrailIcons.Delete, "Delete map")
+                                }
+                            }
                         }
                     }
                 }

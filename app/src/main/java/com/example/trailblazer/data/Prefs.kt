@@ -64,6 +64,7 @@ data class Settings(
     /** Ticks, a confirm on level and a steep warning on the Level screen. */
     val levelHaptics: Boolean = true,
     val trackingMode: TrackingMode = TrackingMode.Continuous,
+    val activeOfflineMapPath: String? = null,
 )
 
 private val Context.store: DataStore<Preferences> by preferencesDataStore(name = "settings")
@@ -94,6 +95,7 @@ class PrefsRepository(private val context: Context) {
         val levelPitch = doublePreferencesKey("level_pitch_offset_deg")
         val levelRoll = doublePreferencesKey("level_roll_offset_deg")
         val trackingMode = stringPreferencesKey("tracking_mode")
+        val activeOfflineMapPath = stringPreferencesKey("active_offline_map_path")
     }
 
     private inline fun <reified E : Enum<E>> Preferences.enum(key: Preferences.Key<String>, default: E): E =
@@ -132,6 +134,8 @@ class PrefsRepository(private val context: Context) {
             p[K.levelPitch] = n.levelPitchOffsetDeg
             p[K.levelRoll] = n.levelRollOffsetDeg
             p[K.trackingMode] = n.trackingMode.name
+            val mapPath = n.activeOfflineMapPath
+            if (mapPath == null) p.remove(K.activeOfflineMapPath) else p[K.activeOfflineMapPath] = mapPath
         }
     }
 
@@ -160,6 +164,7 @@ class PrefsRepository(private val context: Context) {
             levelPitchOffsetDeg = p[K.levelPitch]?.takeIf { it.isFinite() } ?: d.levelPitchOffsetDeg,
             levelRollOffsetDeg = p[K.levelRoll]?.takeIf { it.isFinite() } ?: d.levelRollOffsetDeg,
             trackingMode = p.enum(K.trackingMode, d.trackingMode),
+            activeOfflineMapPath = p[K.activeOfflineMapPath],
         )
     }
 

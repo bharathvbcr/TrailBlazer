@@ -24,3 +24,5 @@ expect class StringWriter() : Writer {
     override fun close()
     override fun toString(): String
 }
+
+expect fun decompressGzip(bytes: ByteArray): ByteArray

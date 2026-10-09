@@ -99,6 +99,7 @@ fun TripEditScreen(nav: Navigator, tripId: String?, seed: List<SeedPlace> = empt
     var discardAsk by remember { mutableStateOf(false) }
     var exportFormat by rememberSaveable { mutableStateOf(GeoFormat.Gpx) }
     var info by remember { mutableStateOf<String?>(null) }
+    var showMap by rememberSaveable { mutableStateOf(false) }
     val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         uri?.let { vm.export(it, exportFormat) }
     }
@@ -123,7 +124,42 @@ fun TripEditScreen(nav: Navigator, tripId: String?, seed: List<SeedPlace> = empt
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            item { GlassCard(padding = 8.dp) { RouteSketch(stops, { fmt.distance(it) }) } }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    FilterChip(
+                        selected = !showMap,
+                        onClick = { showMap = false },
+                        label = { Text("Sketch") },
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    FilterChip(
+                        selected = showMap,
+                        onClick = { showMap = true },
+                        label = { Text("Topo Map") },
+                    )
+                }
+            }
+            if (showMap) {
+                item {
+                    val tileSource = remember { ctx.container.offlineMaps.openActiveSource() }
+                    androidx.compose.runtime.DisposableEffect(tileSource) {
+                        onDispose { tileSource?.close() }
+                    }
+                    Box(modifier = Modifier.fillMaxWidth().height(320.dp).clip(RoundedCornerShape(16.dp))) {
+                        OfflineMapCanvas(
+                            tileSource = tileSource,
+                            stops = stops,
+                            distanceFormatter = { fmt.distance(it) },
+                        )
+                    }
+                }
+            } else {
+                item { GlassCard(padding = 8.dp) { RouteSketch(stops, { fmt.distance(it) }) } }
+            }
         }
         (message ?: info)?.let { m -> item { GlassCard(onClick = { vm.message.value = null; info = null }, onClickLabel = "Dismiss") { Text(m) } } }
         if (problems.isNotEmpty()) item {

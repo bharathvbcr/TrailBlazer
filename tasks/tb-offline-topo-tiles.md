@@ -6,7 +6,7 @@ Offline topographical & contour map tile support (MBTiles / Vector tiles)
 Task: ft-54b6c5af6f8e9db8fb8eadaaeafae947 (revision 1)
 Updated (Unix seconds): 1791254495
 Type: feature
-Status: backlog
+Status: completed
 Severity: medium
 Owner: Unassigned
 Priority: 1 (High)
@@ -27,7 +27,7 @@ TrailBlazer currently renders straight-line route sketches and relies on externa
 - core/src/main/kotlin/com/trailblazer/core/geo/TileUtils.kt
 
 ## Acceptance criteria
-- [ ] Support importing local .mbtiles or .pmtiles via Storage Access Framework (SAF)
-- [ ] Render offline raster/vector contour tiles smoothly on a Compose canvas
-- [ ] Overlay planned trip waypoints and recorded GPS tracks on the offline map
-- [ ] Maintain 100% offline functionality with zero network telemetry
+- [x] Support importing local .mbtiles or .pmtiles via Storage Access Framework (SAF)
+- [x] Render offline raster/vector contour tiles smoothly on a Compose canvas
+- [x] Overlay planned trip waypoints and recorded GPS tracks on the offline map
+- [x] Maintain 100% offline functionality with zero network telemetry

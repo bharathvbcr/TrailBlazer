@@ -73,4 +73,5 @@ object TrailIcons {
     val Telescope = icon("telescope", "M3,13L17,6L19,10L5,17Z M11,14L8,21M12,14L15,21M17,6L20,4.5L22,8.5L19,10")
     val Waves = icon("waves", "M3,8C5,6 7,6 9,8S13,10 15,8S19,6 21,8M3,13C5,11 7,11 9,13S13,15 15,13S19,11 21,13M3,18C5,16 7,16 9,18S13,20 15,18S19,16 21,18")
     val Bluetooth = icon("bluetooth", "M7,7L17,17L12,22V2L17,7L7,17")
+    val Map = icon("map", "M3,6L9,3L15,6L21,3V18L15,21L9,18L3,21Z M9,3V18 M15,6V21")
 }
