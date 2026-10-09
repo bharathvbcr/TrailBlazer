@@ -125,7 +125,7 @@ object Planets {
         val earth = heliocentric(EARTH, jde)
         // Light time: see the planet where it was when the light left it (two iterations converge to < 1 s).
         var tau = 0.0
-        var p = heliocentric(planet.ordinal, jde)
+        var p = DoubleArray(3)
         var g = DoubleArray(3)
         repeat(3) {
             p = heliocentric(planet.ordinal, jde - tau)

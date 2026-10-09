@@ -1,7 +1,8 @@
 package com.example.trailblazer.weather
 
+import com.trailblazer.core.time.CivilDate
+import com.trailblazer.core.time.Iso8601
 import java.text.SimpleDateFormat
-import java.util.GregorianCalendar
 import java.util.Locale
 import java.util.TimeZone
 
@@ -20,17 +21,9 @@ object ForecastTimes {
         val (y, mo, d) = m.destructured.let { Triple(it.component1().toInt(), it.component2().toInt(), it.component3().toInt()) }
         val h = m.groupValues[4].ifEmpty { "0" }.toInt()
         val min = m.groupValues[5].ifEmpty { "0" }.toInt()
-        if (y !in 1900..2200 || mo !in 1..12 || d !in 1..31 || h !in 0..23 || min !in 0..59) return null
-        val cal = GregorianCalendar(utc).apply {
-            isLenient = false
-            clear()
-            set(y, mo - 1, d, h, min)
-        }
-        return try {
-            cal.timeInMillis
-        } catch (_: IllegalArgumentException) {
-            null
-        }
+        if (y !in 1900..2200 || mo !in 1..12 || d !in 1..Iso8601.daysInMonth(y, mo) || h !in 0..23 || min !in 0..59) return null
+        val days = CivilDate.daysFromCivil(y, mo, d)
+        return (days * 86_400L + h * 3_600L + min * 60L) * 1_000L
     }
 
     /** The instant of a local "yyyy-MM-ddTHH:mm" at a place [utcOffsetSeconds] from UTC. */

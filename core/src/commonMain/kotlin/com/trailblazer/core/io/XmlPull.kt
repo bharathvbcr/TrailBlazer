@@ -20,6 +20,10 @@ class XmlPull(private val reader: Reader, private val maxEvents: Long = 5_000_00
     private var pos = 0
     private var events = 0L
     private var pendingEnd: String? = null
+    var encoding: String? = null
+        private set
+    var version: String? = null
+        private set
 
     private fun peek(): Int {
         if (pos >= len) {
@@ -49,16 +53,57 @@ class XmlPull(private val reader: Reader, private val maxEvents: Long = 5_000_00
         }
     }
 
+    private fun readProcessingInstructionAttrs(): Map<String, String> {
+        val attrs = HashMap<String, String>()
+        while (true) {
+            skipWs()
+            val c = peek()
+            if (c < 0) throw XmlFormatException("unterminated processing instruction")
+            if (c == '?'.code) {
+                read()
+                if (read() != '>'.code) throw XmlFormatException("expected '?>'")
+                break
+            }
+            val an = readName()
+            skipWs()
+            if (read() != '='.code) throw XmlFormatException("attribute without value")
+            skipWs()
+            val q = read()
+            if (q != '"'.code && q != '\''.code) throw XmlFormatException("unquoted attribute")
+            val sb = StringBuilder()
+            while (true) {
+                val ch = read()
+                if (ch < 0) throw XmlFormatException("unterminated attribute")
+                if (ch == q) break
+                sb.append(ch.toChar())
+                if (sb.length > MAX_NAME) throw XmlFormatException("attribute too long")
+            }
+            attrs[an] = sb.toString()
+        }
+        return attrs
+    }
+
     fun next(): Event {
         if (++events > maxEvents) throw XmlFormatException("document too large")
         pendingEnd?.let { pendingEnd = null; return Event.End(it) }
         while (true) {
             val c = peek()
             if (c < 0) return Event.EndDocument
+            if (c == 0xFEFF) { read(); continue }
             if (c != '<'.code) return Event.Text(readText())
             read()
             when (peek()) {
-                '?'.code -> skipUntil("?>")
+                '?'.code -> {
+                    read()
+                    val target = readName()
+                    if (target.equals("xml", ignoreCase = true)) {
+                        val attrs = readProcessingInstructionAttrs()
+                        encoding = attrs["encoding"]
+                        version = attrs["version"]
+                    } else {
+                        skipUntil("?>")
+                    }
+                }
                 '!'.code -> {
                     read()
                     when (peek()) {
@@ -174,7 +219,7 @@ class XmlPull(private val reader: Reader, private val maxEvents: Long = 5_000_00
 
     companion object {
         const val MAX_NAME = 256
-        const val MAX_TEXT = 1_000_000
+        const val MAX_TEXT = 40_000_000
 
         fun decodeEntities(s: String): String {
             if (s.indexOf('&') < 0) return s

@@ -5,6 +5,8 @@ import android.content.Context
 import android.hardware.SensorManager
 import android.hardware.display.DisplayManager
 import android.location.LocationManager
+import android.os.Handler
+import android.os.Looper
 import android.view.Display
 import com.example.trailblazer.data.ImportExport
 import com.example.trailblazer.data.PrefsRepository
@@ -18,8 +20,11 @@ import com.example.trailblazer.location.LocationRepository
 import com.example.trailblazer.permissions.AppPermission
 import com.example.trailblazer.permissions.Permissions
 import com.example.trailblazer.sensors.AcousticRepository
+import com.example.trailblazer.sensors.AndroidBleTransport
 import com.example.trailblazer.sensors.AndroidSensorSource
 import com.example.trailblazer.sensors.BarometerRepository
+import com.example.trailblazer.sensors.BleSensorManager
+import com.example.trailblazer.sensors.BleTransport
 import com.example.trailblazer.sensors.Clock
 import com.example.trailblazer.sensors.EnvironmentRepository
 import com.example.trailblazer.sensors.MagneticRepository
@@ -55,6 +60,7 @@ class AppContainer(
     redirects: RedirectProbe = UrlConnectionRedirectProbe(),
     placeBackend: PlaceSearchBackend = GeocoderBackend(context),
     placeSearchAvailable: () -> Boolean = GeocoderBackend::isPresent,
+    val bleTransport: BleTransport = AndroidBleTransport(context),
 ) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val permissions = Permissions(context)
@@ -62,10 +68,29 @@ class AppContainer(
 
     private val locationManager: LocationManager by lazy { context.getSystemService(LocationManager::class.java) }
 
-    private fun displayRotation(): Int =
-        context.getSystemService(DisplayManager::class.java)?.getDisplay(Display.DEFAULT_DISPLAY)?.rotation ?: 0
+    private var cachedDisplayRotation: Int = 0
+    private val displayRotationListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) {}
+        override fun onDisplayRemoved(displayId: Int) {}
+        override fun onDisplayChanged(displayId: Int) {
+            if (displayId == Display.DEFAULT_DISPLAY) {
+                cachedDisplayRotation = context.getSystemService(DisplayManager::class.java)?.getDisplay(Display.DEFAULT_DISPLAY)?.rotation ?: 0
+            }
+        }
+    }
 
-    val barometer by lazy { BarometerRepository(sensorSource, scope, clock) }
+    init {
+        val dm = context.getSystemService(DisplayManager::class.java)
+        cachedDisplayRotation = dm?.getDisplay(Display.DEFAULT_DISPLAY)?.rotation ?: 0
+        try {
+            dm?.registerDisplayListener(displayRotationListener, Handler(Looper.getMainLooper()))
+        } catch (_: Exception) {}
+    }
+
+    private fun displayRotation(): Int = cachedDisplayRotation
+
+    val bleSensorManager by lazy { BleSensorManager(context, bleTransport, scope, clock) }
+    val barometer by lazy { BarometerRepository(sensorSource, scope, clock, bleSensorManager) }
     val magnetic by lazy { MagneticRepository(sensorSource, scope, clock) }
     val environment by lazy { EnvironmentRepository(sensorSource, scope, clock) }
     val motion by lazy { MotionRepository(sensorSource, scope, clock) }
@@ -73,7 +98,7 @@ class AppContainer(
     val orientation by lazy { OrientationRepository(sensorSource, clock, ::displayRotation) }
     val steps by lazy { StepRepository(sensorSource, scope, clock, permissions.flowOf(AppPermission.ActivityRecognition)) }
     val acoustic by lazy { AcousticRepository(clock) { permissions.isGranted(AppPermission.Microphone) } }
-    val location by lazy { LocationRepository(context, locationManager, permissions, scope) }
+    val location by lazy { LocationRepository(context, locationManager, permissions, scope, bleSensorManager, clock) }
     val gnss by lazy { GnssRepository(context, locationManager, permissions, scope) }
 
     val waypoints by lazy { WaypointRepository(db.waypoints(), clock) }

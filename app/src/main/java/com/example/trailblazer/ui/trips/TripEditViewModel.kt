@@ -9,8 +9,8 @@ import com.example.trailblazer.data.IoResult
 import com.example.trailblazer.data.Settings
 import com.example.trailblazer.data.newId
 import com.example.trailblazer.location.Fix
-import com.example.trailblazer.sensors.Reading
-import com.example.trailblazer.ui.LocalDays
+import com.trailblazer.core.sensors.Reading
+import com.trailblazer.core.time.LocalDays
 import com.trailblazer.core.geo.ParsedPlace
 import com.trailblazer.core.trip.DaylightPlanner
 import com.trailblazer.core.trip.Stop

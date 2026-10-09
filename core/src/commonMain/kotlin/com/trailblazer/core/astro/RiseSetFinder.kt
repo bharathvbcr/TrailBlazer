@@ -57,14 +57,23 @@ object RiseSetFinder {
                 // Bracket each root: a single root spans the whole window; two roots split at the extremum.
                 val lo: Long
                 val hi: Long
+                val fLoVal: Double?
+                val fHiVal: Double?
                 if (roots.size == 1) {
                     lo = center - stepMs; hi = center + stepMs
+                    fLoVal = yMinus; fHiVal = yPlus
                 } else {
                     val mid = center + ((-b / (2 * a)) * stepMs).toLong()
-                    if (i == 0) { lo = center - stepMs; hi = mid } else { lo = mid; hi = center + stepMs }
+                    if (i == 0) {
+                        lo = center - stepMs; hi = mid
+                        fLoVal = yMinus; fHiVal = null
+                    } else {
+                        lo = mid; hi = center + stepMs
+                        fLoVal = null; fHiVal = yPlus
+                    }
                 }
                 val approx = center + (z * stepMs).toLong()
-                val t = refine(lo, hi, rising, toleranceMs, f) ?: approx
+                val t = refine(lo, hi, fLoVal, fHiVal, rising, toleranceMs, f) ?: approx
                 if (t in startMs until endMs && out.none { abs(it.epochMs - t) < toleranceMs * 2 && it.rising == rising }) {
                     out += Crossing(t, rising)
                 }
@@ -76,11 +85,11 @@ object RiseSetFinder {
         return out
     }
 
-    private fun refine(lo0: Long, hi0: Long, rising: Boolean, tol: Long, f: (Long) -> Double): Long? {
+    private fun refine(lo0: Long, hi0: Long, fLo0: Double?, fHi0: Double?, rising: Boolean, tol: Long, f: (Long) -> Double): Long? {
         var lo = lo0
         var hi = hi0
-        var fLo = f(lo)
-        val fHi = f(hi)
+        var fLo = fLo0 ?: f(lo)
+        val fHi = fHi0 ?: f(hi)
         val ok = if (rising) fLo <= 0 && fHi >= 0 else fLo >= 0 && fHi <= 0
         if (!ok) return null
         var n = 0

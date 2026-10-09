@@ -33,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,7 +53,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.trailblazer.container
 import com.example.trailblazer.data.AltimeterCalibration
-import com.example.trailblazer.sensors.Reading
+import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.sos.TorchController
 import com.example.trailblazer.sos.WhistlePlayer
 import com.example.trailblazer.ui.Fmt
@@ -87,7 +88,8 @@ fun LevelScreen(nav: Navigator) {
     val scope = rememberCoroutineScope()
     val settings = ctx.container.prefs.settings.collectAsStateWithLifecycle(null).value ?: return
     val fmt = remember(settings) { Fmt(ctx, settings) }
-    val gravity by ctx.container.motion.gravity.collectAsStateWithLifecycle()
+    val gravityFlow = remember { ctx.container.motion.gravity }
+    val gravity by gravityFlow.collectAsStateWithLifecycle()
     var vehicle by rememberSaveable { mutableStateOf(false) }
     var vehicleZeroPitch by rememberSaveable { mutableDoubleStateOf(0.0) }
     var vehicleZeroRoll by rememberSaveable { mutableDoubleStateOf(0.0) }
@@ -104,13 +106,18 @@ fun LevelScreen(nav: Navigator) {
     // New cues state per mode: the vehicle zero and the steep limit only apply upright.
     val cues = remember(vehicle) { LevelHaptics() }
     val steep = if (vehicle) VehicleSteep else null
-    LaunchedEffect(inc, settings.levelHaptics) {
-        if (!settings.levelHaptics || inc == null) return@LaunchedEffect
-        when (cues.update(inc.pitchDeg, inc.rollDeg, SystemClock.uptimeMillis(), steep)) {
-            LevelCue.Detent -> haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
-            LevelCue.Level -> haptic.performHapticFeedback(HapticFeedbackType.Confirm)
-            LevelCue.Steep -> haptic.performHapticFeedback(HapticFeedbackType.Reject)
-            null -> Unit
+    LaunchedEffect(gravityFlow, vehicle, settings.levelHaptics, settings.levelPitchOffsetDeg, settings.levelRollOffsetDeg, vehicleZeroPitch, vehicleZeroRoll) {
+        if (!settings.levelHaptics) return@LaunchedEffect
+        gravityFlow.collect { reading ->
+            val v = (reading as? Reading.Value)?.value ?: return@collect
+            val r = Inclination.fromGravity(v, flat = !vehicle) ?: return@collect
+            val currentInc = r - effectiveZero
+            when (cues.update(currentInc.pitchDeg, currentInc.rollDeg, SystemClock.uptimeMillis(), steep)) {
+                LevelCue.Detent -> haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                LevelCue.Level -> haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+                LevelCue.Steep -> haptic.performHapticFeedback(HapticFeedbackType.Reject)
+                null -> Unit
+            }
         }
     }
     fun confirm() { if (settings.levelHaptics) haptic.performHapticFeedback(HapticFeedbackType.Confirm) }

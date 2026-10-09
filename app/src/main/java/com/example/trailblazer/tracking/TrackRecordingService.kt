@@ -18,8 +18,8 @@ import com.example.trailblazer.R
 import com.example.trailblazer.container
 import com.example.trailblazer.data.TrackState
 import com.example.trailblazer.permissions.AppPermission
-import com.example.trailblazer.sensors.Reading
-import com.example.trailblazer.sensors.UnavailableReason
+import com.trailblazer.core.sensors.Reading
+import com.trailblazer.core.sensors.UnavailableReason
 import com.trailblazer.core.units.Length
 import com.trailblazer.core.units.UnitSystem
 import kotlinx.coroutines.Job

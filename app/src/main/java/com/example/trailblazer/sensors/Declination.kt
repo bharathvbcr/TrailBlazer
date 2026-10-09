@@ -1,17 +1,70 @@
 package com.example.trailblazer.sensors
 
+import com.trailblazer.core.sensors.Accuracy
+import com.trailblazer.core.sensors.Reading
+import com.trailblazer.core.sensors.UnavailableReason
+import com.trailblazer.core.sensors.shareReading
+
 import android.hardware.GeomagneticField
 import com.example.trailblazer.location.Fix
 import com.trailblazer.core.math.mod360
 
+import kotlin.math.roundToInt
+
 /**
  * Magnetic declination from Android's GeomagneticField, which embeds the World Magnetic Model shipped
  * with the OS image — so its accuracy depends on how current the device firmware is.
+ *
+ * GeomagneticField computation is CPU-heavy (spherical harmonics and Legendre polynomials).
+ * Instances are cached by a spatial-temporal grid cell (0.02° lat/lon ~2km, 100m altitude, 1 day)
+ * to avoid rebuilding on every sensor sample.
  */
 object Declination {
-    fun degrees(fix: Fix): Double =
-        GeomagneticField(fix.position.lat.toFloat(), fix.position.lon.toFloat(), (fix.altitudeM ?: 0.0).toFloat(), fix.timeMs)
-            .declination.toDouble()
+    private data class GridKey(
+        val latCell: Int,
+        val lonCell: Int,
+        val altCell: Int,
+        val dayEpoch: Long,
+    )
+
+    private val lock = Any()
+    private val cache = object : LinkedHashMap<GridKey, GeomagneticField>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<GridKey, GeomagneticField>?): Boolean {
+            return size > 32
+        }
+    }
+
+    fun field(lat: Double, lon: Double, altitudeM: Double, timeMs: Long): GeomagneticField {
+        val key = GridKey(
+            latCell = (lat * 50.0).roundToInt(),
+            lonCell = (lon * 50.0).roundToInt(),
+            altCell = (altitudeM / 100.0).roundToInt(),
+            dayEpoch = if (timeMs > 0) timeMs / 86_400_000L else 0L,
+        )
+        synchronized(lock) {
+            cache[key]?.let { return it }
+            val field = GeomagneticField(
+                lat.toFloat(),
+                lon.toFloat(),
+                altitudeM.toFloat(),
+                timeMs,
+            )
+            cache[key] = field
+            return field
+        }
+    }
+
+    fun field(fix: Fix): GeomagneticField = field(
+        lat = fix.position.lat,
+        lon = fix.position.lon,
+        altitudeM = fix.altitudeM ?: 0.0,
+        timeMs = fix.timeMs,
+    )
+
+    fun degrees(fix: Fix): Double = field(fix).declination.toDouble()
+
+    internal fun cacheSize(): Int = synchronized(lock) { cache.size }
+    internal fun clearCache() = synchronized(lock) { cache.clear() }
 }
 
 /** A heading ready for display: magnetic always, true only when a position gives us the declination. */

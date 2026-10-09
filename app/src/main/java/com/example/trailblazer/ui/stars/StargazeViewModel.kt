@@ -6,7 +6,7 @@ import com.example.trailblazer.AppContainer
 import com.example.trailblazer.data.Settings
 import com.example.trailblazer.sensors.Declination
 import com.example.trailblazer.sensors.Hold
-import com.example.trailblazer.sensors.Reading
+import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.ui.LocalDays
 import com.trailblazer.core.astro.ApparentPlace
 import com.trailblazer.core.astro.BodyNight
@@ -119,17 +119,17 @@ class StargazeViewModel(private val c: AppContainer, routePlace: StarPlace?) : V
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, started, null)
 
     /** True heading while "follow compass" is on; the sensors run only then. */
-    private val facing: Flow<Double?> = followCompass.flatMapLatest { on ->
+    val facing: StateFlow<Double?> = followCompass.flatMapLatest { on ->
         if (!on) flowOf(null)
         else combine(c.orientation.orientation(Hold.Flat), c.location.fix) { o, f ->
             val v = (o as? Reading.Value)?.value ?: return@combine null
             val decl = (f as? Reading.Value)?.value?.let { Declination.degrees(it) } ?: return@combine null
             mod360(v.azimuthDeg + decl)
         }
-    }
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, started, null)
 
-    val chart: StateFlow<ChartState?> = combine(place, chartOffsetMin, minuteTicker, facing) { p, off, now, face ->
-        p?.let { chartAt(it.position, now + off * 60_000L, face) }
+    val chart: StateFlow<ChartState?> = combine(place, chartOffsetMin, minuteTicker) { p, off, now ->
+        p?.let { chartAt(it.position, now + off * 60_000L) }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, started, null)
 
     /** Whether a "follow compass" chart can have a true heading at all: it needs both a compass and a position fix. */
@@ -193,19 +193,21 @@ class StargazeViewModel(private val c: AppContainer, routePlace: StarPlace?) : V
         return ShowerTonight(o, best, bestT)
     }
 
-    private fun chartAt(p: LatLon, t: Long, facing: Double?): ChartState {
+    private fun chartAt(p: LatLon, t: Long): ChartState {
         val jde = JulianDay.ephemeris(t)
+        val apparentCtx = com.trailblazer.core.astro.ApparentContext(jde)
+        val horizCtx = com.trailblazer.core.astro.HorizontalContext(t, p.lon)
         val out = ArrayList<ChartObject>(BrightStars.all.size + 10)
         fun add(label: String?, name: String, ra: Double, dec: Double, mag: Double, kind: ChartKind) {
             val eq = com.trailblazer.core.astro.Equatorial(ra, dec, Double.POSITIVE_INFINITY)
-            val h = HorizontalTransform.toHorizontal(t, p.lat, p.lon, eq)
+            val h = horizCtx.toHorizontal(p.lat, eq)
             if (h.altitudeDeg > -1.0) out += ChartObject(label, name, h.azimuthDeg, h.apparentAltitudeDeg, mag, kind)
         }
         for (s in BrightStars.all) {
-            val eq = s.apparent(jde)
+            val eq = s.apparent(apparentCtx)
             add(if (s.name != null && s.vmag < 1.6) s.label else null, s.label, eq.raDeg, eq.decDeg, s.vmag, ChartKind.Star)
         }
-        val gc = ApparentPlace.fromJ2000(NightSky.GALACTIC_CENTRE_RA, NightSky.GALACTIC_CENTRE_DEC, jde)
+        val gc = apparentCtx.apply(NightSky.GALACTIC_CENTRE_RA, NightSky.GALACTIC_CENTRE_DEC)
         add("Milky Way core", "Milky Way core", gc.raDeg, gc.decDeg, 99.0, ChartKind.GalacticCentre)
         for (planet in Planet.entries) {
             val pos = Planets.position(planet, t)
@@ -216,7 +218,7 @@ class StargazeViewModel(private val c: AppContainer, routePlace: StarPlace?) : V
             val moonLabel = "Moon ${(LunarPhase.at(t).illumination * 100).toInt()} %"
             out += ChartObject(moonLabel, moonLabel, moon.azimuthDeg, moon.apparentAltitudeDeg, -12.0, ChartKind.Moon)
         }
-        return ChartState(t, out, facing, SolarPosition.horizontal(t, p.lat, p.lon).apparentAltitudeDeg)
+        return ChartState(t, out, null, SolarPosition.horizontal(t, p.lat, p.lon).apparentAltitudeDeg)
     }
 }
 

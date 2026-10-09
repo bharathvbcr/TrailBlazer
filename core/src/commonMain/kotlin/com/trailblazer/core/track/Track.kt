@@ -89,6 +89,49 @@ class TrackStats(
  * Distances use a local equirectangular projection, accurate for the short segments of a track.
  */
 object DouglasPeucker {
+    private class SegmentHeap {
+        private var items = arrayOfNulls<Seg>(64)
+        var size = 0
+            private set
+
+        fun add(seg: Seg) {
+            if (size == items.size) {
+                items = items.copyOf(items.size * 2)
+            }
+            var i = size++
+            items[i] = seg
+            while (i > 0) {
+                val parent = (i - 1) shr 1
+                if (items[i]!!.maxD <= items[parent]!!.maxD) break
+                val tmp = items[i]; items[i] = items[parent]; items[parent] = tmp
+                i = parent
+            }
+        }
+
+        fun poll(): Seg? {
+            if (size == 0) return null
+            val root = items[0]
+            val last = items[--size]
+            items[size] = null
+            if (size > 0) {
+                items[0] = last
+                var i = 0
+                while (true) {
+                    val left = (i shl 1) + 1
+                    if (left >= size) break
+                    val right = left + 1
+                    val largest = if (right < size && items[right]!!.maxD > items[left]!!.maxD) right else left
+                    if (items[i]!!.maxD >= items[largest]!!.maxD) break
+                    val tmp = items[i]; items[i] = items[largest]; items[largest] = tmp
+                    i = largest
+                }
+            }
+            return root
+        }
+    }
+
+    private data class Seg(val s: Int, val e: Int, val idx: Int, val maxD: Double)
+
     fun <T> simplify(points: List<T>, toleranceM: Double, position: (T) -> LatLon): List<T> {
         if (points.size < 3 || toleranceM <= 0) return points
         val keep = BooleanArray(points.size)
@@ -98,15 +141,8 @@ object DouglasPeucker {
         stack.addLast(intArrayOf(0, points.size - 1))
         while (stack.isNotEmpty()) {
             val (s, e) = stack.removeLast().let { it[0] to it[1] }
-            if (e <= s + 1) continue
-            val a = position(points[s])
-            val b = position(points[e])
-            var maxD = -1.0
-            var idx = -1
-            for (i in s + 1 until e) {
-                val d = perpendicularM(position(points[i]), a, b)
-                if (d > maxD) { maxD = d; idx = i }
-            }
+            val res = findMax(points, s, e, position) ?: continue
+            val (idx, maxD) = res
             if (maxD > toleranceM) {
                 keep[idx] = true
                 stack.addLast(intArrayOf(s, idx))
@@ -116,38 +152,84 @@ object DouglasPeucker {
         return points.filterIndexed { i, _ -> keep[i] }
     }
 
-    /** Simplifies until at most [maxPoints] remain, by searching for the smallest sufficient tolerance. */
+    /** Simplifies until at most [maxPoints] remain, in a single ranked pass. */
     fun <T> simplifyToMax(points: List<T>, maxPoints: Int, position: (T) -> LatLon): List<T> {
         require(maxPoints >= 2)
         if (points.size <= maxPoints) return points
-        var lo = 0.0
-        var hi = 1.0
-        var best = simplify(points, hi, position)
-        while (best.size > maxPoints && hi < 1e7) {
-            lo = hi; hi *= 4; best = simplify(points, hi, position)
+        val keep = BooleanArray(points.size)
+        keep[0] = true
+        keep[points.size - 1] = true
+        var keptCount = 2
+
+        val heap = SegmentHeap()
+        findMax(points, 0, points.size - 1, position)?.let { (idx, maxD) ->
+            if (maxD > 0.0) heap.add(Seg(0, points.size - 1, idx, maxD))
         }
-        repeat(20) {
-            val mid = (lo + hi) / 2
-            val r = simplify(points, mid, position)
-            if (r.size <= maxPoints) { hi = mid; best = r } else lo = mid
+
+        while (keptCount < maxPoints && heap.size > 0) {
+            val seg = heap.poll() ?: break
+            if (seg.maxD <= 0.0) break
+            keep[seg.idx] = true
+            keptCount++
+
+            if (seg.idx > seg.s + 1) {
+                findMax(points, seg.s, seg.idx, position)?.let { (idx, maxD) ->
+                    if (maxD > 0.0) heap.add(Seg(seg.s, seg.idx, idx, maxD))
+                }
+            }
+            if (seg.e > seg.idx + 1) {
+                findMax(points, seg.idx, seg.e, position)?.let { (idx, maxD) ->
+                    if (maxD > 0.0) heap.add(Seg(seg.idx, seg.e, idx, maxD))
+                }
+            }
         }
-        return best
+        return points.filterIndexed { i, _ -> keep[i] }
+    }
+
+    private fun <T> findMax(points: List<T>, s: Int, e: Int, position: (T) -> LatLon): Pair<Int, Double>? {
+        if (e <= s + 1) return null
+        val a = position(points[s])
+        val b = position(points[e])
+        val k = cos(a.lat * DEG) * Geo.EARTH_RADIUS_M * DEG
+        val kLat = Geo.EARTH_RADIUS_M * DEG
+        val bx = wrapLon(b.lon - a.lon) * k
+        val by = (b.lat - a.lat) * kLat
+        val len2 = bx * bx + by * by
+        var maxD = -1.0
+        var idx = -1
+        for (i in s + 1 until e) {
+            val p = position(points[i])
+            val px = wrapLon(p.lon - a.lon) * k
+            val py = (p.lat - a.lat) * kLat
+            val d = if (len2 == 0.0) {
+                kotlin.math.hypot(px, py)
+            } else {
+                val t = ((px * bx + py * by) / len2).coerceIn(0.0, 1.0)
+                kotlin.math.hypot(px - t * bx, py - t * by)
+            }
+            if (d > maxD) {
+                maxD = d
+                idx = i
+            }
+        }
+        return if (idx >= 0) idx to maxD else null
+    }
+
+    private fun wrapLon(d: Double): Double {
+        val w = ((d + 540.0) % 360.0) - 180.0
+        return if (w.isFinite()) w else 0.0
     }
 
     private fun perpendicularM(p: LatLon, a: LatLon, b: LatLon): Double {
         val k = cos(a.lat * DEG) * Geo.EARTH_RADIUS_M * DEG
         val kLat = Geo.EARTH_RADIUS_M * DEG
-        val ax = 0.0
-        val ay = 0.0
-        val bx = (b.lon - a.lon) * k
+        val bx = wrapLon(b.lon - a.lon) * k
         val by = (b.lat - a.lat) * kLat
-        val px = (p.lon - a.lon) * k
+        val px = wrapLon(p.lon - a.lon) * k
         val py = (p.lat - a.lat) * kLat
-        val dx = bx - ax
-        val dy = by - ay
-        val len2 = dx * dx + dy * dy
+        val len2 = bx * bx + by * by
         if (len2 == 0.0) return kotlin.math.hypot(px, py)
-        val t = ((px * dx + py * dy) / len2).coerceIn(0.0, 1.0)
-        return kotlin.math.hypot(px - t * dx, py - t * dy)
+        val t = ((px * bx + py * by) / len2).coerceIn(0.0, 1.0)
+        return kotlin.math.hypot(px - t * bx, py - t * by)
     }
 }

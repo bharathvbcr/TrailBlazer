@@ -61,7 +61,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.trailblazer.container
 import com.example.trailblazer.permissions.AppPermission
-import com.example.trailblazer.sensors.Reading
+import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.ui.label
 import com.trailblazer.core.math.angleDiff
 import com.trailblazer.core.plot.SeriesPlot
@@ -332,6 +332,14 @@ fun Dial(
     val measurer = rememberTextMeasurer()
     val labelStyle = MaterialTheme.typography.titleMedium
     val smallStyle = TextStyle(fontSize = 11.sp, color = cs.onSurfaceVariant)
+    val cardinalLayouts = remember(measurer, labelStyle, cs.error, cs.onSurface) {
+        listOf(0 to "N", 90 to "E", 180 to "S", 270 to "W").map { (d, t) ->
+            d to measurer.measure(t, labelStyle.copy(color = if (d == 0) cs.error else cs.onSurface))
+        }
+    }
+    val markerLayouts = remember(markers, measurer, smallStyle) {
+        markers.map { m -> m to measurer.measure(m.label, smallStyle) }
+    }
     Canvas(modifier.aspectRatio(1f).alpha(if (dimmed) 0.45f else 1f)) {
         val r = min(size.width, size.height) / 2
         val c = Offset(size.width / 2, size.height / 2)
@@ -374,19 +382,17 @@ fun Dial(
                 val i = Offset(c.x + (r - 4 - len) * cos(a).toFloat(), c.y + (r - 4 - len) * sin(a).toFloat())
                 drawLine(if (d == 0) cs.error else cs.onSurfaceVariant, i, o, if (major) 2.dp.toPx() else 1.dp.toPx())
             }
-            for ((d, t) in listOf(0 to "N", 90 to "E", 180 to "S", 270 to "W")) {
+            for ((d, layout) in cardinalLayouts) {
                 val a = Math.toRadians(d.toDouble() - 90)
                 val p = Offset(c.x + r * 0.72f * cos(a).toFloat(), c.y + r * 0.72f * sin(a).toFloat())
-                val layout = measurer.measure(t, labelStyle.copy(color = if (d == 0) cs.error else cs.onSurface))
                 rotate(animated, p) {
                     drawText(layout, topLeft = Offset(p.x - layout.size.width / 2f, p.y - layout.size.height / 2f))
                 }
             }
-            for (m in markers) {
+            for ((m, layout) in markerLayouts) {
                 val a = Math.toRadians(m.bearingDeg - 90)
                 val p = Offset(c.x + r * 0.88f * cos(a).toFloat(), c.y + r * 0.88f * sin(a).toFloat())
                 drawCircle(m.color, 7.dp.toPx(), p)
-                val layout = measurer.measure(m.label, smallStyle)
                 val q = Offset(c.x + r * 0.55f * cos(a).toFloat(), c.y + r * 0.55f * sin(a).toFloat())
                 rotate(animated, q) { drawText(layout, topLeft = Offset(q.x - layout.size.width / 2f, q.y - layout.size.height / 2f)) }
             }

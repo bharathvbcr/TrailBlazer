@@ -1,5 +1,10 @@
 package com.example.trailblazer.sensors
 
+import com.trailblazer.core.sensors.Accuracy
+import com.trailblazer.core.sensors.Reading
+import com.trailblazer.core.sensors.UnavailableReason
+import com.trailblazer.core.sensors.shareReading
+
 import android.hardware.Sensor
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.trailblazer.core.motion.Vec3

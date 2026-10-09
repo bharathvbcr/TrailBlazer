@@ -1,5 +1,10 @@
 package com.example.trailblazer.sensors
 
+import com.trailblazer.core.sensors.Accuracy
+import com.trailblazer.core.sensors.Reading
+import com.trailblazer.core.sensors.UnavailableReason
+import com.trailblazer.core.sensors.shareReading
+
 import android.hardware.Sensor
 import android.hardware.SensorManager
 import com.trailblazer.core.math.MedianFilter
@@ -12,6 +17,7 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.delay
 import kotlin.math.sqrt
 
 /** Wall-clock source, injectable for tests. */
@@ -20,6 +26,14 @@ fun interface Clock {
 
     companion object {
         val System = Clock { java.lang.System.currentTimeMillis() }
+    }
+}
+
+/** Ticks wall-clock milliseconds on minute boundaries. */
+fun Clock.minuteTicker(): Flow<Long> = flow {
+    while (true) {
+        emit(nowMs())
+        delay(60_000L - nowMs() % 60_000L)
     }
 }
 
@@ -45,14 +59,42 @@ internal fun <T> SensorSource.reading(
 }
 
 /** Station pressure in hPa, median-of-5 filtered to reject spikes (door slams, car ventilation). */
-class BarometerRepository(source: SensorSource, scope: CoroutineScope, clock: Clock) {
-    val pressureHpa: StateFlow<Reading<Double>> = flow {
+@OptIn(ExperimentalCoroutinesApi::class)
+class BarometerRepository(
+    source: SensorSource,
+    scope: CoroutineScope,
+    clock: Clock,
+    bleSensors: BleSensorManager? = null,
+) {
+    val pressureHpa: StateFlow<Reading<Double>> = flow<Reading<Double>> {
         val median = MedianFilter(5)
-        emitAll(
-            source.reading(Sensor.TYPE_PRESSURE, SensorManager.SENSOR_DELAY_NORMAL, clock) { s ->
-                s.values.firstOrNull()?.toDouble()?.takeIf { it.isFinite() && it in 300.0..1100.0 }?.let { median.update(it) }
-            },
-        )
+        val internalFlow: Flow<Reading<Double>> = source.reading(Sensor.TYPE_PRESSURE, SensorManager.SENSOR_DELAY_NORMAL, clock) { s ->
+            s.values.firstOrNull()?.toDouble()?.takeIf { it.isFinite() && it in 300.0..1100.0 }?.let { median.update(it) }
+        }
+
+        if (bleSensors != null) {
+            emitAll(
+                bleSensors.connectionState.flatMapLatest { state ->
+                    if (state is BleConnectionState.Connected && state.hasEnvironmental) {
+                        flow {
+                            val bleMedian = MedianFilter(5)
+                            emit(Reading.Acquiring)
+                            bleSensors.pressureStream.collect { p ->
+                                val filtered = bleMedian.update(p)
+                                if (filtered != null) {
+                                    emit(Reading.Value(filtered, Accuracy.High, clock.nowMs()))
+                                }
+                            }
+                        }
+                    } else {
+                        median.reset()
+                        internalFlow
+                    }
+                },
+            )
+        } else {
+            emitAll(internalFlow)
+        }
     }.shareReading(scope)
 }
 
@@ -95,15 +137,10 @@ class MotionRepository(private val source: SensorSource, scope: CoroutineScope, 
         vec(Sensor.TYPE_GRAVITY, SensorManager.SENSOR_DELAY_UI).shareReading(scope)
     } else {
         flow {
-            var g: Vec3? = null
+            val filter = com.trailblazer.core.motion.GravityLowPass(0.1)
             vec(Sensor.TYPE_ACCELEROMETER, SensorManager.SENSOR_DELAY_UI).collect { r ->
                 if (r is Reading.Value) {
-                    val prev = g
-                    val a = 0.1
-                    val next = if (prev == null) r.value else Vec3(
-                        prev.x + a * (r.value.x - prev.x), prev.y + a * (r.value.y - prev.y), prev.z + a * (r.value.z - prev.z),
-                    )
-                    g = next
+                    val next = filter.update(r.value)
                     emit(r.copy(value = next))
                 } else emit(r)
             }

@@ -19,9 +19,15 @@ internal fun urlDecode(s: String): String {
                 i += 3
             }
             else -> {
-                val b = c.toString().encodeToByteArray()
-                for (byte in b) bytes.add(byte)
-                i++
+                if (c.isHighSurrogate() && i + 1 < s.length && s[i + 1].isLowSurrogate()) {
+                    val b = s.substring(i, i + 2).encodeToByteArray()
+                    for (byte in b) bytes.add(byte)
+                    i += 2
+                } else {
+                    val b = c.toString().encodeToByteArray()
+                    for (byte in b) bytes.add(byte)
+                    i++
+                }
             }
         }
     }
@@ -30,20 +36,19 @@ internal fun urlDecode(s: String): String {
 
 internal fun urlEncode(s: String): String {
     val unreserved = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-*_"
+    val unreservedBytes = unreserved.encodeToByteArray().toSet()
     val sb = StringBuilder()
-    for (ch in s) {
-        if (ch in unreserved) {
-            sb.append(ch)
-        } else if (ch == ' ') {
+    val utf8 = s.encodeToByteArray()
+    for (b in utf8) {
+        if (b in unreservedBytes) {
+            sb.append(b.toInt().toChar())
+        } else if (b == ' '.code.toByte()) {
             sb.append('+')
         } else {
-            val bytes = ch.toString().encodeToByteArray()
-            for (b in bytes) {
-                sb.append('%')
-                val hex = (b.toInt() and 0xFF).toString(16).uppercase()
-                if (hex.length == 1) sb.append('0')
-                sb.append(hex)
-            }
+            sb.append('%')
+            val hex = (b.toInt() and 0xFF).toString(16).uppercase()
+            if (hex.length == 1) sb.append('0')
+            sb.append(hex)
         }
     }
     return sb.toString()

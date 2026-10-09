@@ -85,6 +85,7 @@ fun StargazeScreen(nav: Navigator, lat: Double?, lon: Double?, label: String?) {
     val place by vm.place.collectAsStateWithLifecycle()
     val tonight by vm.tonight.collectAsStateWithLifecycle()
     val chart by vm.chart.collectAsStateWithLifecycle()
+    val facing by vm.facing.collectAsStateWithLifecycle()
     val polar by vm.polar.collectAsStateWithLifecycle()
     val offset by vm.chartOffsetMin.collectAsStateWithLifecycle()
     val follow by vm.followCompass.collectAsStateWithLifecycle()
@@ -133,8 +134,8 @@ fun StargazeScreen(nav: Navigator, lat: Double?, lon: Double?, label: String?) {
                 if (c == null) {
                     Text("Working out the sky…")
                 } else {
-                    val facing = c.facingDeg ?: SkyProjection.defaultFacing(p.position.lat)
-                    SkyChart(c, facing, picked, { picked = it }, Modifier.widthIn(max = 420.dp).fillMaxWidth().aspectRatio(1f))
+                    val effectiveFacing = if (follow) (facing ?: SkyProjection.defaultFacing(p.position.lat)) else SkyProjection.defaultFacing(p.position.lat)
+                    SkyChart(c, effectiveFacing, picked, { picked = it }, Modifier.widthIn(max = 420.dp).fillMaxWidth().aspectRatio(1f))
                     Spacer(Modifier.height(8.dp))
                     PickedLine(c, picked, fmt)
                     Text(
@@ -160,7 +161,7 @@ fun StargazeScreen(nav: Navigator, lat: Double?, lon: Double?, label: String?) {
                         )
                     }
                     Text(
-                        if (follow && c.facingDeg == null) "Waiting for the compass and a position fix (true north needs both)…"
+                        if (follow && facing == null) "Waiting for the compass and a position fix (true north needs both)…"
                         else "Hold it overhead, facing the bottom edge. Named dots are the brightest stars and the planets.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -250,6 +251,16 @@ private fun SkyChart(state: ChartState, facingDeg: Double, picked: String?, onPi
     val visible = state.objects.count { it.altitudeDeg >= 0 && it.kind != ChartKind.GalacticCentre }
     val ring = if (night) cs.primary else Color(0xFF7FB4FF)
     var sizePx by remember { mutableStateOf(IntSize.Zero) }
+    val cardinalLayouts = remember(measurer, cardinal) {
+        listOf(0.0 to "N", 90.0 to "E", 180.0 to "S", 270.0 to "W").map { (az, name) ->
+            az to measurer.measure(name, cardinal)
+        }
+    }
+    val objectLayouts = remember(state.objects, measurer, small) {
+        state.objects.mapNotNull { o ->
+            o.label?.let { text -> o to measurer.measure(text, small) }
+        }.toMap()
+    }
     Canvas(
         modifier.semantics { contentDescription = "Sky chart, $visible objects above the horizon. Tap an object to name it." }
             .onSizeChanged { sizePx = it }
@@ -269,10 +280,9 @@ private fun SkyChart(state: ChartState, facingDeg: Double, picked: String?, onPi
         for (alt in listOf(30.0, 60.0)) drawCircle(grid, (r * (90 - alt) / 90).toFloat(), c, style = Stroke(1f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))))
         drawCircle(grid, r, c, style = Stroke(1.5f))
         fun at(az: Double, alt: Double): Offset? = SkyProjection.project(az, alt, facingDeg)?.let { Offset(c.x + (it.x * r).toFloat(), c.y + (it.y * r).toFloat()) }
-        for ((az, name) in listOf(0.0 to "N", 90.0 to "E", 180.0 to "S", 270.0 to "W")) {
+        for ((az, l) in cardinalLayouts) {
             val rel = Math.toRadians(az - facingDeg)
             val q = Offset(c.x + (sin(rel) * (r + 1)).toFloat(), c.y + (cos(rel) * (r + 1)).toFloat())
-            val l = measurer.measure(name, cardinal)
             val out = Offset(c.x + (sin(rel) * (r + l.size.height * 0.75f)).toFloat(), c.y + (cos(rel) * (r + l.size.height * 0.75f)).toFloat())
             drawCircle(grid, 2f, q)
             drawText(l, topLeft = Offset(out.x - l.size.width / 2f, out.y - l.size.height / 2f))
@@ -286,8 +296,7 @@ private fun SkyChart(state: ChartState, facingDeg: Double, picked: String?, onPi
                 ChartKind.GalacticCentre -> drawCircle(grid, 5.dp.toPx(), p, style = Stroke(1.2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f))))
             }
             if (o.name == picked) drawCircle(ring, 11.dp.toPx(), p, style = Stroke(2.dp.toPx()))
-            o.label?.let { text ->
-                val l = measurer.measure(text, small)
+            objectLayouts[o]?.let { l ->
                 // The core sits among Scorpius and Sagittarius; label it underneath so it does not cover their stars.
                 val topLeft = if (o.kind == ChartKind.GalacticCentre) Offset(p.x - l.size.width / 2f, p.y + 6.dp.toPx())
                 else Offset(p.x + 5.dp.toPx(), p.y - l.size.height / 2f)

@@ -15,6 +15,33 @@ data class Vec3(val x: Double, val y: Double, val z: Double) {
     operator fun minus(o: Vec3) = Vec3(x - o.x, y - o.y, z - o.z)
 }
 
+/**
+ * Canonical gravity low-pass filter (alpha = 0.1).
+ * Isolates gravity by smoothing 3D accelerometer readings.
+ */
+class GravityLowPass(val alpha: Double = 0.1) {
+    var gravity: Vec3? = null
+        private set
+
+    fun update(x: Double, y: Double, z: Double): Vec3 {
+        val curr = Vec3(x, y, z)
+        val prev = gravity ?: return curr.also { gravity = it }
+        val next = Vec3(
+            prev.x + alpha * (x - prev.x),
+            prev.y + alpha * (y - prev.y),
+            prev.z + alpha * (z - prev.z),
+        )
+        gravity = next
+        return next
+    }
+
+    fun update(v: Vec3): Vec3 = update(v.x, v.y, v.z)
+
+    fun reset() {
+        gravity = null
+    }
+}
+
 enum class GSeverity { Normal, Elevated, High }
 
 object GForce {

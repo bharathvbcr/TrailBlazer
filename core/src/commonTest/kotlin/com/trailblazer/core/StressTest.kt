@@ -12,6 +12,8 @@ import com.trailblazer.core.geo.CoordinateParser
 import com.trailblazer.core.geo.Dms
 import com.trailblazer.core.geo.Geo
 import com.trailblazer.core.geo.LatLon
+import com.trailblazer.core.geo.urlDecode
+import com.trailblazer.core.geo.urlEncode
 import com.trailblazer.core.intents.MapLinks
 import com.trailblazer.core.intents.TravelMode
 import com.trailblazer.core.io.GpxReader
@@ -263,6 +265,12 @@ class StressTest {
             val g = MapLinks.geo(p, label)
             assertTrue(g.none { it == '\n' || it == '#' || it == ' ' || it == '&' && !g.startsWith("geo:") }, "geo link leaks raw characters: $g")
             assertTrue(g.startsWith("geo:46.5"))
+            if (label == "😀") {
+                assertTrue(g.contains("(%F0%9F%98%80)"), "expected %F0%9F%98%80 in $g")
+                val parsed = CoordinateParser.parse(g)
+                assertTrue(parsed is CoordinateParse.Found && parsed.places.single().label == "😀")
+                assertEquals("😀", urlDecode(urlEncode("😀")))
+            }
         }
 
         assertTrue(MapLinks.googleDirections(emptyList(), TravelMode.Driving).isEmpty())

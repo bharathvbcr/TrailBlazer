@@ -11,18 +11,24 @@ import android.os.VibratorManager
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import com.example.trailblazer.sensors.BleConnectionState
+import com.example.trailblazer.sensors.BleDeviceInfo
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -53,16 +59,17 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.flow.StateFlow
 import com.example.trailblazer.container
 import com.example.trailblazer.data.NorthReference
 import com.example.trailblazer.data.Settings
 import com.example.trailblazer.location.AltitudeDatum
 import com.example.trailblazer.location.Fix
 import com.example.trailblazer.permissions.AppPermission
-import com.example.trailblazer.sensors.Accuracy
+import com.trailblazer.core.sensors.Accuracy
 import com.example.trailblazer.sensors.Heading
 import com.example.trailblazer.sensors.HeadingSource
-import com.example.trailblazer.sensors.Reading
+import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.ui.Fmt
 import com.example.trailblazer.ui.components.Dial
 import com.example.trailblazer.ui.components.DialMarker
@@ -97,7 +104,6 @@ fun NowScreen(nav: Navigator) {
     val vm: NowViewModel = viewModel { NowViewModel(ctx.container) }
     val settings = vm.settings.collectAsStateWithLifecycle().value ?: return
     val fmt = remember(settings) { Fmt(ctx, settings) }
-    val heading by vm.heading.collectAsStateWithLifecycle()
     val fix by vm.fix.collectAsStateWithLifecycle()
     val gnss by vm.gnss.collectAsStateWithLifecycle()
     val pressure by vm.pressure.collectAsStateWithLifecycle()
@@ -105,8 +111,11 @@ fun NowScreen(nav: Navigator) {
     val target by vm.target.collectAsStateWithLifecycle()
     val sky by vm.sky.collectAsStateWithLifecycle()
     val steps by vm.steps.collectAsStateWithLifecycle()
+    val bleStatus by vm.bleStatus.collectAsStateWithLifecycle()
+    val bleDevices by vm.bleDevices.collectAsStateWithLifecycle()
     var markOpen by rememberSaveable { mutableStateOf(false) }
     var calibrationOpen by rememberSaveable { mutableStateOf(false) }
+    var bleDialogOpen by rememberSaveable { mutableStateOf(false) }
     var lastMessage by remember { mutableStateOf<String?>(null) }
 
     // Only while the screen is started: the alert must never hold GPS on in the background (see NowViewModelTest).
@@ -126,7 +135,7 @@ fun NowScreen(nav: Navigator) {
     ) {
         item {
             CompassCard(
-                heading = heading,
+                headingFlow = vm.heading,
                 settings = settings,
                 fmt = fmt,
                 sky = sky,
@@ -137,6 +146,8 @@ fun NowScreen(nav: Navigator) {
                 onSetLevelZero = { p, r -> vm.setLevelZero(p, r) },
                 onResetLevelZero = { vm.resetLevelZero() },
                 fieldAccuracy = (field as? Reading.Value)?.accuracy,
+                bleStatus = bleStatus,
+                onBleClick = { bleDialogOpen = true },
             )
         }
         item {
@@ -174,7 +185,7 @@ fun NowScreen(nav: Navigator) {
                 }
             }
         }
-        target?.let { t -> item { TargetCard(t.name, fix, t.position, heading, fmt, onClear = { vm.setTarget(null) }) } }
+        target?.let { t -> item { TargetCard(t.name, fix, t.position, vm.heading, fmt, onClear = { vm.setTarget(null) }) } }
         item {
             PermissionGate(AppPermission.Location, "Location shows your position, speed and GPS altitude, gives true north, and lets you mark waypoints. It stays on this phone.") {
                 PositionCard(fix, gnss, settings, fmt, ctx, onCompact = { vm.setCompactPosition(it) })
@@ -210,11 +221,20 @@ fun NowScreen(nav: Navigator) {
         markOpen = false
     }
     if (calibrationOpen) CalibrationDialog { calibrationOpen = false }
+    if (bleDialogOpen) BleSensorDialog(
+        status = bleStatus,
+        devices = bleDevices,
+        onScan = { vm.startBleScan() },
+        onStopScan = { vm.stopBleScan() },
+        onConnect = { addr, name -> vm.connectBle(addr, name) },
+        onDisconnect = { vm.disconnectBle() },
+        onDismiss = { bleDialogOpen = false },
+    )
 }
 
 @Composable
 private fun CompassCard(
-    heading: Reading<Heading>,
+    headingFlow: StateFlow<Reading<Heading>>,
     settings: Settings,
     fmt: Fmt,
     sky: SkyMarks?,
@@ -225,7 +245,10 @@ private fun CompassCard(
     onSetLevelZero: (Double, Double) -> Unit,
     onResetLevelZero: () -> Unit,
     fieldAccuracy: Accuracy?,
+    bleStatus: BleConnectionState = BleConnectionState.Disconnected,
+    onBleClick: () -> Unit = {},
 ) {
+    val heading by headingFlow.collectAsStateWithLifecycle()
     var zeroLevelDialogOpen by rememberSaveable { mutableStateOf(false) }
     val h = (heading as? Reading.Value)?.value
 
@@ -254,12 +277,13 @@ private fun CompassCard(
             wasLevel = isLevel
         }
 
+        val currentHeading = heading
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             Dial(
                 headingDeg = shown,
                 markers = markers,
                 modifier = Modifier.widthIn(max = 320.dp).fillMaxWidth(0.86f).padding(8.dp),
-                dimmed = heading !is Reading.Value || heading.stale,
+                dimmed = currentHeading !is Reading.Value || currentHeading.stale,
                 pitchDeg = h?.calibratedPitchDeg,
                 rollDeg = h?.calibratedRollDeg,
                 accuracyDeg = h?.accuracyDeg,
@@ -267,7 +291,7 @@ private fun CompassCard(
             )
         }
         Spacer(Modifier.height(8.dp))
-        when (heading) {
+        when (currentHeading) {
             is Reading.Value -> {
                 Text(
                     fmt.bearing(shown ?: 0.0),
@@ -293,10 +317,14 @@ private fun CompassCard(
                 Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
             }
             Reading.Acquiring -> Text("Starting compass…", Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
-            is Reading.Unavailable -> Text(heading.reason.label("compass"), Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+            is Reading.Unavailable -> Text(currentHeading.reason.label("compass"), Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
         }
         Spacer(Modifier.height(8.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
             AssistChip(
                 onClick = onToggleNorth,
                 label = { Text(if (wantTrue) "True N" else "Magnetic N") },
@@ -335,6 +363,41 @@ private fun CompassCard(
                     colors = AssistChipDefaults.assistChipColors(labelColor = LocalStatusColors.current.caution, leadingIconContentColor = LocalStatusColors.current.caution),
                 )
             }
+
+            val bleLabel = when (bleStatus) {
+                is BleConnectionState.Connected -> "BLE: ${bleStatus.deviceName.ifBlank { "Connected" }}"
+                is BleConnectionState.Connecting -> "BLE: Connecting…"
+                is BleConnectionState.Scanning -> "BLE: Scanning…"
+                is BleConnectionState.Disconnected -> "BLE: Disconnected"
+                is BleConnectionState.Error -> "BLE: Disconnected"
+            }
+            val bleColors = when (bleStatus) {
+                is BleConnectionState.Connected -> AssistChipDefaults.assistChipColors(
+                    labelColor = LocalStatusColors.current.good,
+                    leadingIconContentColor = LocalStatusColors.current.good,
+                )
+                is BleConnectionState.Connecting, is BleConnectionState.Scanning -> AssistChipDefaults.assistChipColors(
+                    labelColor = LocalStatusColors.current.caution,
+                    leadingIconContentColor = LocalStatusColors.current.caution,
+                )
+                is BleConnectionState.Error -> AssistChipDefaults.assistChipColors(
+                    labelColor = LocalStatusColors.current.danger,
+                    leadingIconContentColor = LocalStatusColors.current.danger,
+                )
+                is BleConnectionState.Disconnected -> AssistChipDefaults.assistChipColors()
+            }
+            AssistChip(
+                onClick = onBleClick,
+                label = { Text(bleLabel) },
+                leadingIcon = {
+                    Icon(
+                        if (bleStatus is BleConnectionState.Connected) TrailIcons.Check else TrailIcons.Bluetooth,
+                        null,
+                        Modifier.size(16.dp),
+                    )
+                },
+                colors = bleColors,
+            )
         }
     }
 
@@ -382,7 +445,8 @@ private fun CompassCard(
 }
 
 @Composable
-private fun TargetCard(name: String, fix: Reading<Fix>, dest: com.trailblazer.core.geo.LatLon, heading: Reading<Heading>, fmt: Fmt, onClear: () -> Unit) {
+private fun TargetCard(name: String, fix: Reading<Fix>, dest: com.trailblazer.core.geo.LatLon, headingFlow: StateFlow<Reading<Heading>>, fmt: Fmt, onClear: () -> Unit) {
+    val heading by headingFlow.collectAsStateWithLifecycle()
     GlassCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -483,7 +547,7 @@ private fun PositionCard(
                         it.azimuthDeg,
                         it.elevationDeg,
                         it.usedInFix,
-                        "${constellationName(it.constellation)} ${it.svid} · ${it.cn0DbHz.roundToInt()} dB",
+                        "${com.trailblazer.core.location.Satellite.constellationName(it.constellation)} ${it.svid} · ${it.cn0DbHz.roundToInt()} dB",
                     )
                 }
                 if (SkyPolar.layout(bodies).isEmpty()) {
@@ -529,12 +593,116 @@ private fun CalibrationDialog(onDismiss: () -> Unit) {
     )
 }
 
-private fun constellationName(constellation: Int) = when (constellation) {
-    1 -> "GPS"
-    3 -> "GLONASS"
-    5 -> "BeiDou"
-    6 -> "Galileo"
-    else -> "Sat"
+@Composable
+private fun BleSensorDialog(
+    status: BleConnectionState,
+    devices: List<BleDeviceInfo>,
+    onScan: () -> Unit,
+    onStopScan: () -> Unit,
+    onConnect: (String, String?) -> Unit,
+    onDisconnect: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("External BLE Sensors") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "Connect an external GNSS receiver (e.g. Garmin GLO 2) or barometric sensor for high sensitivity under dense canopy. If disconnected, TrailBlazer automatically falls back to internal phone sensors.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                when (status) {
+                    is BleConnectionState.Connected -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Connected to: ${status.deviceName}", style = MaterialTheme.typography.titleSmall, color = LocalStatusColors.current.good)
+                            Text("Address: ${status.address}", style = MaterialTheme.typography.bodySmall)
+                            val services = buildList {
+                                if (status.hasLocation) add("Location (LNS)")
+                                if (status.hasNmea) add("NMEA stream")
+                                if (status.hasEnvironmental) add("Environmental (Baro/Temp)")
+                            }
+                            if (services.isNotEmpty()) {
+                                Text("Active services: ${services.joinToString(", ")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                    is BleConnectionState.Connecting -> {
+                        Text("Connecting to ${status.deviceName}…", style = MaterialTheme.typography.bodyMedium, color = LocalStatusColors.current.caution)
+                    }
+                    is BleConnectionState.Error -> {
+                        Text("Error: ${status.message}", style = MaterialTheme.typography.bodyMedium, color = LocalStatusColors.current.danger)
+                    }
+                    is BleConnectionState.Scanning -> {
+                        Text("Scanning for nearby BLE sensors…", style = MaterialTheme.typography.bodyMedium, color = LocalStatusColors.current.caution)
+                    }
+                    BleConnectionState.Disconnected -> {
+                        Text("No external sensor connected (using phone internal sensors).", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+
+                if (status is BleConnectionState.Connected) {
+                    Button(
+                        onClick = onDisconnect,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                        ),
+                    ) {
+                        Text("Disconnect external sensor")
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        if (status is BleConnectionState.Scanning) {
+                            FilledTonalButton(onClick = onStopScan, modifier = Modifier.weight(1f)) {
+                                Text("Stop scan")
+                            }
+                        } else {
+                            Button(onClick = onScan, modifier = Modifier.weight(1f)) {
+                                Text("Scan for sensors")
+                            }
+                        }
+                    }
+
+                    if (devices.isNotEmpty()) {
+                        Text("Discovered devices:", style = MaterialTheme.typography.labelMedium)
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 200.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            devices.forEach { device ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(device.name, style = MaterialTheme.typography.bodyMedium)
+                                        Text(device.address, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    FilledTonalButton(onClick = { onConnect(device.address, device.name) }) {
+                                        Text("Connect")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
 }
 
 private fun copy(ctx: Context, text: String) {

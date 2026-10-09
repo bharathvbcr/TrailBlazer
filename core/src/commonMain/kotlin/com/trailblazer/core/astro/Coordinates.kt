@@ -49,17 +49,19 @@ object Sidereal {
         mod360(greenwichMean(jdUt) + nutation.deltaPsiDeg * cos(nutation.trueObliquityDeg * DEG))
 }
 
-object HorizontalTransform {
+class HorizontalContext(val epochMs: Long, val lonDeg: Double) {
+    val jdUt = JulianDay.fromEpochMillis(epochMs)
+    val nut = Nutation.at(JulianDay.ephemeris(epochMs))
+    val gstApparent = Sidereal.greenwichApparent(jdUt, nut) + lonDeg
+
     /** Local hour angle in degrees, (-180, 180]. Longitude is east-positive. */
-    fun hourAngle(epochMs: Long, lonDeg: Double, eq: Equatorial): Double {
-        val jdUt = JulianDay.fromEpochMillis(epochMs)
-        val nut = Nutation.at(JulianDay.ephemeris(epochMs))
-        val h = mod360(Sidereal.greenwichApparent(jdUt, nut) + lonDeg - eq.raDeg)
+    fun hourAngle(eq: Equatorial): Double {
+        val h = mod360(gstApparent - eq.raDeg)
         return if (h > 180.0) h - 360.0 else h
     }
 
-    fun toHorizontal(epochMs: Long, latDeg: Double, lonDeg: Double, eq: Equatorial): Horizontal {
-        val h = hourAngle(epochMs, lonDeg, eq) * DEG
+    fun toHorizontal(latDeg: Double, eq: Equatorial): Horizontal {
+        val h = hourAngle(eq) * DEG
         val phi = latDeg * DEG
         val dec = eq.decDeg * DEG
         val sinAlt = sin(phi) * sin(dec) + cos(phi) * cos(dec) * cos(h)
@@ -69,6 +71,15 @@ object HorizontalTransform {
         val az = mod360(atan2(east, north) * RAD)
         return Horizontal(az, alt * RAD)
     }
+}
+
+object HorizontalTransform {
+    /** Local hour angle in degrees, (-180, 180]. Longitude is east-positive. */
+    fun hourAngle(epochMs: Long, lonDeg: Double, eq: Equatorial): Double =
+        HorizontalContext(epochMs, lonDeg).hourAngle(eq)
+
+    fun toHorizontal(epochMs: Long, latDeg: Double, lonDeg: Double, eq: Equatorial): Horizontal =
+        HorizontalContext(epochMs, lonDeg).toHorizontal(latDeg, eq)
 }
 
 /** Atmospheric refraction for a true altitude (NOAA solar calculator piecewise fit), in degrees. */

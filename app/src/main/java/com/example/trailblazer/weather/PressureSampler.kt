@@ -3,11 +3,19 @@ package com.example.trailblazer.weather
 import com.example.trailblazer.data.PressureHistory
 import com.example.trailblazer.location.Fix
 import com.example.trailblazer.sensors.Clock
-import com.example.trailblazer.sensors.Reading
+import com.trailblazer.core.sensors.Reading
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Stores a barometer sample every [PressureHistory.INTERVAL_MS] while the app is in the foreground.
+ * Rather than holding an active sensor subscription continuously, it samples on a schedule so
+ * the barometer hardware can sleep between samples when no UI screen is observing it.
  * The elevation comes from the latest location fix *if one is already live* (it reads the value without
  * subscribing), so sampling never turns on GPS by itself.
  */
@@ -21,14 +29,24 @@ class PressureSampler(
 
     suspend fun run() {
         if (lastMs == null) lastMs = history.lastSampleMs()
-        pressure.collect { r ->
-            if (r !is Reading.Value || r.stale) return@collect
+        while (currentCoroutineContext().isActive) {
             val now = clock.nowMs()
             val last = lastMs
-            if (last != null && now - last < PressureHistory.INTERVAL_MS && now >= last) return@collect
-            val f = (fix.value as? Reading.Value)?.takeIf { !it.stale && now - it.value.timeMs < FIX_MAX_AGE_MS }?.value
-            history.record(r.value, f?.altitudeM)
-            lastMs = now
+            if (last != null && now - last < PressureHistory.INTERVAL_MS && now >= last) {
+                val waitMs = (PressureHistory.INTERVAL_MS - (now - last)).coerceAtLeast(1_000L)
+                delay(waitMs)
+                continue
+            }
+            val r = withTimeoutOrNull(10_000L) {
+                pressure.filter { it is Reading.Value && !it.stale }.first()
+            }
+            if (r is Reading.Value) {
+                val sampleNow = clock.nowMs()
+                val f = (fix.value as? Reading.Value)?.takeIf { !it.stale && sampleNow - it.value.timeMs < FIX_MAX_AGE_MS }?.value
+                history.record(r.value, f?.altitudeM)
+                lastMs = sampleNow
+            }
+            delay(PressureHistory.INTERVAL_MS)
         }
     }
 

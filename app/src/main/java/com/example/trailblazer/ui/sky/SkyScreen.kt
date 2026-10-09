@@ -46,7 +46,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.trailblazer.container
 import com.example.trailblazer.permissions.AppPermission
-import com.example.trailblazer.sensors.Reading
+import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.ui.Fmt
 import com.example.trailblazer.ui.LocalDays
 import com.example.trailblazer.ui.components.GlassCard

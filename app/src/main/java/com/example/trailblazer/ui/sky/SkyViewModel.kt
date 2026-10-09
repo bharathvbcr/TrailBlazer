@@ -6,8 +6,8 @@ import com.example.trailblazer.AppContainer
 import com.example.trailblazer.data.Settings
 import com.example.trailblazer.location.AltitudeDatum
 import com.example.trailblazer.location.Fix
-import com.example.trailblazer.sensors.Reading
-import com.example.trailblazer.ui.LocalDays
+import com.trailblazer.core.sensors.Reading
+import com.trailblazer.core.time.LocalDays
 import com.example.trailblazer.weather.ForecastResult
 import com.trailblazer.core.astro.DayType
 import com.trailblazer.core.astro.DaylightStatus
@@ -33,6 +33,7 @@ import com.trailblazer.core.weather.Zambretti
 import com.trailblazer.core.weather.ZambrettiForecast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -113,18 +114,65 @@ class SkyViewModel(private val c: AppContainer) : ViewModel() {
 
     val place: StateFlow<SkyPlace?> = combine(manualPlace, livePlace) { m, l -> m ?: l }.stateIn(viewModelScope, started, null)
 
-    val sky: StateFlow<SkyState?> = combine(place, dayOffset, minuteTicker) { p, off, now -> Triple(p, off, now) }
-        .map { (p, off, now) -> p?.let { compute(it, off, now) } }
+    private data class DaySky(
+        val place: SkyPlace,
+        val epochDay: Long,
+        val isToday: Boolean,
+        val sun: SolarDay,
+        val moon: LunarDay,
+        val phase: LunarPhaseInfo,
+        val upcomingPhases: List<PrincipalPhase>,
+        val sunPath: List<Horizontal>,
+        val moonPath: List<Horizontal>,
+        val daylightChangeMs: Long?,
+        val moonriseAzDeg: Double?,
+        val moonsetAzDeg: Double?,
+        val moonTransitAltDeg: Double?,
+    )
+
+    private val daySky: Flow<DaySky?> = combine(
+        place,
+        dayOffset,
+        minuteTicker.map { LocalDays.today(it) }.distinctUntilChanged(),
+    ) { p, off, today ->
+        if (p == null) null else computeDaySky(p, off, today)
+    }.distinctUntilChanged()
+
+    val sky: StateFlow<SkyState?> = combine(daySky, minuteTicker) { ds, now ->
+        if (ds == null) null
+        else {
+            val lat = ds.place.position.lat
+            val lon = ds.place.position.lon
+            SkyState(
+                place = ds.place,
+                epochDay = ds.epochDay,
+                isToday = ds.isToday,
+                nowMs = now,
+                sun = ds.sun,
+                moon = ds.moon,
+                phase = ds.phase,
+                upcomingPhases = ds.upcomingPhases,
+                sunNow = SolarPosition.horizontal(now, lat, lon),
+                moonNow = LunarPosition.horizontal(now, lat, lon),
+                status = SolarEvents.status(ds.sun, now),
+                sunPath = ds.sunPath,
+                moonPath = ds.moonPath,
+                daylightChangeMs = ds.daylightChangeMs,
+                moonriseAzDeg = ds.moonriseAzDeg,
+                moonsetAzDeg = ds.moonsetAzDeg,
+                moonTransitAltDeg = ds.moonTransitAltDeg,
+            )
+        }
+    }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, started, null)
 
-    private fun compute(p: SkyPlace, offset: Int, now: Long): SkyState {
-        val today = LocalDays.today(now)
+    private fun computeDaySky(p: SkyPlace, offset: Int, today: Long): DaySky {
         val day = today + offset
         val (start, end) = LocalDays.window(day)
         val sun = SolarEvents.day(p.position.lat, p.position.lon, start, end)
         val moon = LunarEvents.day(p.position.lat, p.position.lon, start, end)
-        val ref = if (offset == 0) now else start + (end - start) / 2
+        val ref = start + (end - start) / 2
         val lat = p.position.lat
         val lon = p.position.lon
         val (yStart, yEnd) = LocalDays.window(day - 1)
@@ -132,18 +180,14 @@ class SkyViewModel(private val c: AppContainer) : ViewModel() {
         val change = if (sun.dayType == DayType.Normal && yesterday.dayType == DayType.Normal) sun.daylightMs - yesterday.daylightMs else null
         fun apparent(h: Horizontal) = Horizontal(h.azimuthDeg, h.apparentAltitudeDeg)
         val times = (start..end step PATH_STEP_MS).toList()
-        return SkyState(
+        return DaySky(
             place = p,
             epochDay = day,
             isToday = offset == 0,
-            nowMs = now,
             sun = sun,
             moon = moon,
             phase = LunarPhase.at(ref),
             upcomingPhases = LunarPhase.upcoming(ref),
-            sunNow = SolarPosition.horizontal(now, p.position.lat, p.position.lon),
-            moonNow = LunarPosition.horizontal(now, p.position.lat, p.position.lon),
-            status = SolarEvents.status(sun, now),
             sunPath = times.map { apparent(SolarPosition.horizontal(it, lat, lon)) },
             moonPath = times.map { apparent(LunarPosition.horizontal(it, lat, lon)) },
             daylightChangeMs = change,

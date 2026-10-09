@@ -29,8 +29,10 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -51,7 +53,7 @@ import com.example.trailblazer.container
 import com.example.trailblazer.permissions.AppPermission
 import com.example.trailblazer.sensors.Declination
 import com.example.trailblazer.sensors.Hold
-import com.example.trailblazer.sensors.Reading
+import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.ui.components.GlassChrome
 import com.example.trailblazer.ui.components.PermissionGate
 import com.example.trailblazer.ui.components.TrailIcons
@@ -148,18 +150,28 @@ private fun CameraSighting() {
         AndroidView({ previewView }, Modifier.fillMaxSize())
         val f = (fix as? Reading.Value)?.value
         val o = (orientation as? Reading.Value)?.value
-        val decl = f?.let { Declination.degrees(it) }
+        val decl = remember(f?.position) { f?.let { Declination.degrees(it) } }
         val heading = o?.let { mod360(it.azimuthDeg + (decl ?: 0.0)) }
         val hfov = fov?.let { visibleHorizontalFov(it, viewSize, portrait) }
-        val now = remember(f?.timeMs) { System.currentTimeMillis() }
-        val marks = buildList {
-            if (f != null) {
-                val sun = SolarPosition.horizontal(now, f.position.lat, f.position.lon)
-                add(Triple("Sun", sun.azimuthDeg, Color(0xFFFFC857)))
-                val moon = LunarPosition.horizontal(now, f.position.lat, f.position.lon)
-                add(Triple("Moon", moon.azimuthDeg, Color(0xFFD8E1FF)))
-                settings?.targetWaypointId?.let { id -> waypoints.firstOrNull { it.id == id } }?.let { w ->
-                    add(Triple(w.name.take(12), Geo.initialBearing(f.position, w.position), Color(0xFF7CE0A0)))
+        val minuteTicker by produceState(initialValue = System.currentTimeMillis()) {
+            while (true) {
+                val now = System.currentTimeMillis()
+                value = now
+                val delayMs = 60_000L - (now % 60_000L)
+                delay(delayMs.coerceAtLeast(1_000L))
+            }
+        }
+        val targetId = settings?.targetWaypointId
+        val marks = remember(f?.position, minuteTicker, targetId, waypoints) {
+            buildList {
+                if (f != null) {
+                    val sun = SolarPosition.horizontal(minuteTicker, f.position.lat, f.position.lon)
+                    add(Triple("Sun", sun.azimuthDeg, Color(0xFFFFC857)))
+                    val moon = LunarPosition.horizontal(minuteTicker, f.position.lat, f.position.lon)
+                    add(Triple("Moon", moon.azimuthDeg, Color(0xFFD8E1FF)))
+                    targetId?.let { id -> waypoints.firstOrNull { it.id == id } }?.let { w ->
+                        add(Triple(w.name.take(12), Geo.initialBearing(f.position, w.position), Color(0xFF7CE0A0)))
+                    }
                 }
             }
         }

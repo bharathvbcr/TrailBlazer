@@ -16,12 +16,20 @@ import androidx.core.location.LocationManagerCompat
 import androidx.core.location.LocationRequestCompat
 import com.example.trailblazer.permissions.AppPermission
 import com.example.trailblazer.permissions.Permissions
-import com.example.trailblazer.sensors.Accuracy
-import com.example.trailblazer.sensors.Reading
-import com.example.trailblazer.sensors.UnavailableReason
-import com.example.trailblazer.sensors.shareReading
+import com.trailblazer.core.sensors.Accuracy
+import com.example.trailblazer.sensors.BleConnectionState
+import com.example.trailblazer.sensors.BleSensorManager
+import com.example.trailblazer.sensors.Clock
+import com.example.trailblazer.sensors.NmeaParser
+import com.trailblazer.core.sensors.Reading
+import com.trailblazer.core.sensors.UnavailableReason
+import com.trailblazer.core.sensors.shareReading
 import com.trailblazer.core.geo.LatLon
 import com.trailblazer.core.math.mod360
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -65,8 +73,28 @@ class LocationRepository(
     private val manager: LocationManager,
     private val permissions: Permissions,
     scope: CoroutineScope,
+    private val bleSensors: BleSensorManager? = null,
+    private val clock: Clock = Clock.System,
 ) {
     private val mainExecutor: Executor = ContextCompat.getMainExecutor(context)
+    private val manualExternalFixes = MutableSharedFlow<Fix>(extraBufferCapacity = 16)
+
+    /**
+     * Parses an external NMEA sentence (GGA, RMC, GLL) into a [Fix] and delivers it to the repository.
+     * Returns the parsed [Fix], or null if invalid or corrupt.
+     */
+    fun parseNmea(sentence: String): Fix? {
+        val fix = NmeaParser.parse(sentence, clock)
+        if (fix != null) {
+            feedExternalFix(fix)
+        }
+        return fix
+    }
+
+    /** Injects an external position fix (e.g. from a BLE GNSS peripheral or external NMEA stream). */
+    fun feedExternalFix(fix: Fix) {
+        manualExternalFixes.tryEmit(fix)
+    }
 
     /** Emits whenever location services are switched on or off in system settings. */
     private val enabled: Flow<Boolean> = callbackFlow {
@@ -94,9 +122,54 @@ class LocationRepository(
             when {
                 !permitted -> flowOf(Reading.Unavailable(UnavailableReason.PermissionDenied))
                 !on -> flowOf(Reading.Unavailable(UnavailableReason.Disabled))
-                else -> updates(intervalMs)
+                else -> locationSource(intervalMs)
             }
         }
+
+    private fun locationSource(intervalMs: Long): Flow<Reading<Fix>> {
+        val externalFixesFlow = if (bleSensors != null) {
+            merge(bleSensors.locationStream, manualExternalFixes)
+        } else {
+            manualExternalFixes
+        }
+
+        if (bleSensors == null) {
+            return merge(
+                updates(intervalMs),
+                externalFixesFlow.map { fix ->
+                    Reading.Value(toSeaLevel(fix), accuracyForFix(fix), clock.nowMs())
+                },
+            )
+        }
+
+        return bleSensors.connectionState.flatMapLatest { state ->
+            if (state is BleConnectionState.Connected) {
+                // Connected to external BLE peripheral: parse & stream external fixes!
+                flow {
+                    emit(Reading.Acquiring)
+                    externalFixesFlow.collect { fix ->
+                        emit(Reading.Value(toSeaLevel(fix), accuracyForFix(fix), clock.nowMs()))
+                    }
+                }
+            } else {
+                // Graceful fallback to internal phone sensors when BLE is disconnected or errored!
+                merge(
+                    updates(intervalMs),
+                    manualExternalFixes.map { fix ->
+                        Reading.Value(toSeaLevel(fix), accuracyForFix(fix), clock.nowMs())
+                    },
+                )
+            }
+        }
+    }
+
+    private fun accuracyForFix(fix: Fix): Accuracy = when {
+        fix.accuracyM == null -> Accuracy.Unknown
+        fix.accuracyM <= 10.0 -> Accuracy.High
+        fix.accuracyM <= 30.0 -> Accuracy.Medium
+        fix.accuracyM <= 100.0 -> Accuracy.Low
+        else -> Accuracy.Unreliable
+    }
 
     val fix: StateFlow<Reading<Fix>> = live(1_000L).shareReading(scope)
 
@@ -226,28 +299,7 @@ class LocationRepository(
     }
 }
 
-/** One satellite as seen by the GNSS receiver. */
-data class Satellite(
-    val constellation: Int,
-    val svid: Int,
-    val cn0DbHz: Double,
-    val elevationDeg: Double,
-    val azimuthDeg: Double,
-    val usedInFix: Boolean,
-) {
-    companion object {
-        /**
-         * Validates a chipset report: a satellite with no real position in the sky is dropped, azimuth is wrapped into
-         * [0, 360), and signal strength (C/N0) is clamped to 0–99 dB-Hz, with an unreadable one shown as no signal.
-         */
-        fun of(constellation: Int, svid: Int, cn0: Float, elevation: Float, azimuth: Float, used: Boolean): Satellite? {
-            val el = elevation.toDouble().takeIf { it.isFinite() && it in -90.0..90.0 } ?: return null
-            val az = azimuth.toDouble().takeIf { it.isFinite() }?.let { mod360(it) } ?: return null
-            val signal = cn0.toDouble().takeIf { it.isFinite() }?.coerceIn(0.0, 99.0) ?: 0.0
-            return Satellite(constellation, svid, signal, el, az, used)
-        }
-    }
-}
+typealias Satellite = com.trailblazer.core.location.Satellite
 
 data class GnssSnapshot(val satellites: List<Satellite>) {
     val inView: Int get() = satellites.size

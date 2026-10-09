@@ -3,7 +3,7 @@ package com.example.trailblazer.tracking
 import android.hardware.Sensor
 import com.example.trailblazer.data.TrackingMode
 import com.example.trailblazer.location.Fix
-import com.example.trailblazer.sensors.Reading
+import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.sensors.SensorSample
 import com.example.trailblazer.sensors.SensorSource
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -31,62 +31,9 @@ import kotlin.math.sqrt
  * gravity vector by more than [thresholdMps2]: walking, lifting or turning the phone all do, a phone on a rock or in
  * a pack at rest does not.
  */
-class MotionGate(
-    private val stillForNs: Long = STILL_FOR_NS,
-    private val thresholdMps2: Double = 0.5,
-    private val maxSampleGapNs: Long = 5_000_000_000L,
-) {
-    var stationary = false
-        private set
-    private var gx = 0.0
-    private var gy = 0.0
-    private var gz = 0.0
-    private var hasGravity = false
-    private var lastNs: Long? = null
-    private var stillSinceNs: Long? = null
+typealias MotionGate = com.trailblazer.core.motion.MotionGate
 
-    /** Feeds one sample and returns whether the phone is now stationary. Non-finite samples are ignored. */
-    fun onSample(s: SensorSample): Boolean {
-        if (s.values.size < 3) return stationary
-        val x = s.values[0].toDouble()
-        val y = s.values[1].toDouble()
-        val z = s.values[2].toDouble()
-        if (!x.isFinite() || !y.isFinite() || !z.isFinite()) return stationary
-        val t = s.timestampNs
-        val prev = lastNs
-        lastNs = t
-        val gap = prev == null || t <= prev || t - prev > maxSampleGapNs
-        if (!hasGravity) {
-            gx = x; gy = y; gz = z; hasGravity = true
-        }
-        val dx = x - gx
-        val dy = y - gy
-        val dz = z - gz
-        val moved = sqrt(dx * dx + dy * dy + dz * dz) > thresholdMps2
-        gx += GRAVITY_ALPHA * dx; gy += GRAVITY_ALPHA * dy; gz += GRAVITY_ALPHA * dz
-        when {
-            moved -> { stationary = false; stillSinceNs = t }
-            stationary -> Unit
-            gap -> stillSinceNs = t
-            else -> {
-                val since = stillSinceNs ?: t.also { stillSinceNs = it }
-                if (t - since >= stillForNs) stationary = true
-            }
-        }
-        return stationary
-    }
-
-    /** Something outside the samples says the phone moved: a significant-motion trigger, or a fix that moved. */
-    fun onWake() {
-        stationary = false
-        stillSinceNs = null
-    }
-
-    companion object {
-        const val STILL_FOR_NS = 5 * 60 * 1_000_000_000L
-        private const val GRAVITY_ALPHA = 0.1
-    }
-}
+fun MotionGate.onSample(s: SensorSample): Boolean = onSample(s.timestampNs, s.values)
 
 /**
  * Applies the [TrackingMode] to the GNSS receiver: location at the mode's interval, and in a motion-gated mode no

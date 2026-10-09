@@ -4,6 +4,7 @@ import com.example.trailblazer.data.TrackDao
 import com.example.trailblazer.data.TrackEntity
 import com.example.trailblazer.data.TrackPointEntity
 import com.example.trailblazer.data.TrackState
+import com.example.trailblazer.data.forEachPoint
 import com.example.trailblazer.data.newId
 import com.example.trailblazer.location.Fix
 import com.example.trailblazer.sensors.Clock
@@ -51,20 +52,12 @@ class TrackRecorder(private val dao: TrackDao, private val clock: Clock) {
 
     private suspend fun restore(t: TrackEntity) {
         stats = TrackStats()
-        var after = -1
         var last: TrackPoint? = null
-        while (true) {
-            val page = dao.pointsAfter(t.id, after, 5_000)
-            if (page.isEmpty()) break
-            for (p in page) {
-                val pos = LatLon.of(p.lat, p.lon) ?: continue
-                val tp = TrackPoint(p.timeMs, pos, p.elevationM, p.accuracyM, p.speedMps)
-                stats.add(tp)
-                last = tp
-            }
-            after = page.last().seq
+        val maxSeq = dao.forEachPoint(t.id, 5_000) { tp, _ ->
+            stats.add(tp)
+            last = tp
         }
-        nextSeq = after + 1
+        nextSeq = maxSeq + 1
         lastKept = last
         lastFlushMs = clock.nowMs()
     }

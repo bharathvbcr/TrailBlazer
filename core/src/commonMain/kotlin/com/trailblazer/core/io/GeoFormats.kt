@@ -28,6 +28,9 @@ private fun local(name: String) = name.substringAfter(':')
 private fun f6(v: Double) = formatDecimals(v, 7).trimEnd('0').let { if (it.endsWith('.')) it + "0" else it }
 private fun f1(v: Double) = formatDecimals(v, 1)
 
+private val COMMA_REGEX = Regex(",")
+private val WHITESPACE_REGEX = Regex("\\s+")
+
 /** Reads GPX 1.0/1.1 waypoints, routes and tracks. Points with invalid coordinates are skipped, not fabricated. */
 object GpxReader {
     fun read(reader: Reader, maxPoints: Int = 1_000_000): GeoDocument {
@@ -88,7 +91,7 @@ object GpxReader {
                             parent == "trk" -> curTrackName = value.ifEmpty { null }
                         }
                         "desc", "cmt" -> if (inPoint != null && ptDesc == null) ptDesc = value.ifEmpty { null }
-                        "ele" -> if (inPoint != null) ptEle = value.toDoubleOrNull()?.takeIf { it.isFinite() }
+                        "ele" -> if (inPoint != null) ptEle = value.toDoubleOrNull()?.takeIf { it.isFinite() }?.coerceIn(-11_000.0, 100_000.0)
                         "time" -> if (inPoint != null) ptTime = Iso8601.parse(value)
                         "speed" -> if (inPoint != null) ptSpeed = value.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0 }
                         "wpt", "rtept", "trkpt" -> {
@@ -194,7 +197,9 @@ object KmlReader {
         var total = 0
         var pmName: String? = null
         var pmDesc: String? = null
-        var geometry: String? = null
+        val pmPoints = ArrayList<Pair<LatLon, Double?>>()
+        val pmRoutes = ArrayList<List<NamedPoint>>()
+        val pmTrackSegments = ArrayList<List<TrackPoint>>()
         var coords: String? = null
         val whens = ArrayList<Long?>()
         val gxCoords = ArrayList<String>()
@@ -208,7 +213,8 @@ object KmlReader {
             val lat = parts[1].toDoubleOrNull() ?: return null
             if (kotlin.math.abs(lon) > 180) return null
             val pos = LatLon.of(lat, lon) ?: return null
-            return Pair(pos, parts.getOrNull(2)?.toDoubleOrNull()?.takeIf { it.isFinite() })
+            val ele = parts.getOrNull(2)?.toDoubleOrNull()?.takeIf { it.isFinite() }?.coerceIn(-11_000.0, 100_000.0)
+            return Pair(pos, ele)
         }
 
         while (true) {
@@ -221,8 +227,16 @@ object KmlReader {
                     text.setLength(0)
                     when (n) {
                         "kml" -> sawRoot = true
-                        "Placemark" -> { pmName = null; pmDesc = null; geometry = null; coords = null; whens.clear(); gxCoords.clear() }
-                        "Point", "LineString", "Track" -> geometry = n
+                        "Placemark" -> {
+                            pmName = null
+                            pmDesc = null
+                            pmPoints.clear()
+                            pmRoutes.clear()
+                            pmTrackSegments.clear()
+                            coords = null
+                            whens.clear()
+                            gxCoords.clear()
+                        }
                     }
                 }
                 is XmlPull.Event.End -> {
@@ -235,30 +249,59 @@ object KmlReader {
                         "coordinates" -> coords = value
                         "when" -> whens += Iso8601.parse(value)
                         "coord" -> gxCoords += value
-                        "Placemark" -> {
-                            when (geometry) {
-                                "Point" -> coords?.let { c ->
-                                    parseCoord(c.split(Regex("\\s+")).first(), Regex(","))?.let { (p, ele) ->
+                        "Point" -> {
+                            coords?.let { c ->
+                                val firstToken = WHITESPACE_REGEX.splitToSequence(c).firstOrNull { it.isNotEmpty() }
+                                if (firstToken != null) {
+                                    parseCoord(firstToken, COMMA_REGEX)?.let { (p, ele) ->
                                         if (++total > maxPoints) throw XmlFormatException("more than $maxPoints points")
-                                        wpts += NamedPoint(p, pmName, pmDesc, ele)
+                                        pmPoints += Pair(p, ele)
                                     }
-                                }
-                                "LineString" -> coords?.let { c ->
-                                    val pts = c.split(Regex("\\s+")).filter { it.isNotBlank() }.mapNotNull { t ->
-                                        if (++total > maxPoints) throw XmlFormatException("more than $maxPoints points")
-                                        parseCoord(t, Regex(","))?.let { (p, ele) -> NamedPoint(p, elevationM = ele) }
-                                    }
-                                    if (pts.isNotEmpty()) routes += Route(pmName, pts)
-                                }
-                                "Track" -> {
-                                    val pts = gxCoords.mapIndexedNotNull { i, t ->
-                                        if (++total > maxPoints) throw XmlFormatException("more than $maxPoints points")
-                                        val time = whens.getOrNull(i) ?: return@mapIndexedNotNull null
-                                        parseCoord(t, Regex("\\s+"))?.let { (p, ele) -> TrackPoint(time, p, ele) }
-                                    }
-                                    if (pts.isNotEmpty()) tracks += TrackData(pmName, listOf(pts))
                                 }
                             }
+                            coords = null
+                        }
+                        "LineString" -> {
+                            coords?.let { c ->
+                                val pts = ArrayList<NamedPoint>()
+                                for (token in WHITESPACE_REGEX.splitToSequence(c)) {
+                                    if (token.isEmpty()) continue
+                                    if (++total > maxPoints) throw XmlFormatException("more than $maxPoints points")
+                                    parseCoord(token, COMMA_REGEX)?.let { (p, ele) ->
+                                        pts += NamedPoint(p, elevationM = ele)
+                                    }
+                                }
+                                if (pts.isNotEmpty()) pmRoutes += pts
+                            }
+                            coords = null
+                        }
+                        "Track" -> {
+                            val pts = ArrayList<TrackPoint>()
+                            for (i in 0 until gxCoords.size) {
+                                val time = whens.getOrNull(i) ?: continue
+                                val t = gxCoords[i]
+                                if (++total > maxPoints) throw XmlFormatException("more than $maxPoints points")
+                                parseCoord(t, WHITESPACE_REGEX)?.let { (p, ele) ->
+                                    pts += TrackPoint(time, p, ele)
+                                }
+                            }
+                            if (pts.isNotEmpty()) pmTrackSegments += pts
+                            whens.clear()
+                            gxCoords.clear()
+                        }
+                        "Placemark" -> {
+                            for ((p, ele) in pmPoints) {
+                                wpts += NamedPoint(p, pmName, pmDesc, ele)
+                            }
+                            for (pts in pmRoutes) {
+                                routes += Route(pmName, pts)
+                            }
+                            if (pmTrackSegments.isNotEmpty()) {
+                                tracks += TrackData(pmName, pmTrackSegments.toList())
+                            }
+                            pmPoints.clear()
+                            pmRoutes.clear()
+                            pmTrackSegments.clear()
                         }
                     }
                     if (stack.isNotEmpty()) stack.removeAt(stack.size - 1)

@@ -1,6 +1,7 @@
 package com.example.trailblazer.data
 
 import android.content.ContentResolver
+import android.database.sqlite.SQLiteException
 import android.net.Uri
 import androidx.room.withTransaction
 import com.trailblazer.core.io.GeoDocument
@@ -19,12 +20,15 @@ import com.trailblazer.core.trip.Trip
 import com.trailblazer.core.trip.TripRules
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.BufferedInputStream
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.IOException
+import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.io.PushbackReader
+import java.nio.charset.Charset
 
 enum class GeoFormat(val mime: String, val extension: String) {
     Gpx("application/gpx+xml", "gpx"),
@@ -36,6 +40,68 @@ data class ImportSummary(val waypoints: Int, val trips: Int, val tracks: Int, va
 sealed interface IoResult<out T> {
     data class Ok<T>(val value: T) : IoResult<T>
     data class Failed(val message: String) : IoResult<Nothing>
+}
+
+internal fun openXmlReader(input: InputStream): PushbackReader {
+    val bis = if (input is BufferedInputStream) input else BufferedInputStream(input, 8192)
+    bis.mark(8192)
+    val headerBytes = ByteArray(4096)
+    val readCount = bis.read(headerBytes).coerceAtLeast(0)
+    bis.reset()
+
+    var charset = Charsets.UTF_8
+    var bomSkip = 0
+
+    if (readCount >= 4 && headerBytes[0] == 0x00.toByte() && headerBytes[1] == 0x00.toByte() && headerBytes[2] == 0xFE.toByte() && headerBytes[3] == 0xFF.toByte()) {
+        charset = Charset.forName("UTF-32BE")
+        bomSkip = 4
+    } else if (readCount >= 4 && headerBytes[0] == 0xFF.toByte() && headerBytes[1] == 0xFE.toByte() && headerBytes[2] == 0x00.toByte() && headerBytes[3] == 0x00.toByte()) {
+        charset = Charset.forName("UTF-32LE")
+        bomSkip = 4
+    } else if (readCount >= 3 && headerBytes[0] == 0xEF.toByte() && headerBytes[1] == 0xBB.toByte() && headerBytes[2] == 0xBF.toByte()) {
+        charset = Charsets.UTF_8
+        bomSkip = 3
+    } else if (readCount >= 2 && headerBytes[0] == 0xFE.toByte() && headerBytes[1] == 0xFF.toByte()) {
+        charset = Charsets.UTF_16BE
+        bomSkip = 2
+    } else if (readCount >= 2 && headerBytes[0] == 0xFF.toByte() && headerBytes[1] == 0xFE.toByte()) {
+        charset = Charsets.UTF_16LE
+        bomSkip = 2
+    } else if (readCount >= 4 && headerBytes[0] == 0x00.toByte() && headerBytes[1] == 0x3C.toByte() && headerBytes[2] == 0x00.toByte() && headerBytes[3] == 0x3F.toByte()) {
+        charset = Charsets.UTF_16BE
+    } else if (readCount >= 4 && headerBytes[0] == 0x3C.toByte() && headerBytes[1] == 0x00.toByte() && headerBytes[2] == 0x3F.toByte() && headerBytes[3] == 0x00.toByte()) {
+        charset = Charsets.UTF_16LE
+    } else {
+        val asciiHeader = String(headerBytes, 0, readCount, Charsets.ISO_8859_1)
+        val xmlDeclMatch = Regex("""<\?xml\s+[^>]*\?>""").find(asciiHeader)
+        if (xmlDeclMatch != null) {
+            val decl = xmlDeclMatch.value
+            val encMatch = Regex("""encoding\s*=\s*["']([^"']+)["']""").find(decl)
+            if (encMatch != null) {
+                val encName = encMatch.groupValues[1]
+                try {
+                    charset = Charset.forName(encName)
+                } catch (_: Exception) {
+                    charset = Charsets.UTF_8
+                }
+            }
+        }
+    }
+
+    if (bomSkip > 0) {
+        var skipped = 0L
+        while (skipped < bomSkip) {
+            val s = bis.skip(bomSkip.toLong() - skipped)
+            if (s <= 0) {
+                if (bis.read() == -1) break
+                skipped++
+            } else {
+                skipped += s
+            }
+        }
+    }
+
+    return PushbackReader(BufferedReader(InputStreamReader(bis, charset)), 8192)
 }
 
 /**
@@ -52,7 +118,7 @@ class ImportExport(
     suspend fun import(uri: Uri): IoResult<ImportSummary> = withContext(Dispatchers.IO) {
         try {
             val doc = resolver.openInputStream(uri)?.use { input ->
-                val reader = PushbackReader(BufferedReader(InputStreamReader(input, Charsets.UTF_8)), 4096)
+                val reader = openXmlReader(input)
                 val head = CharArray(4096)
                 val n = reader.read(head).coerceAtLeast(0)
                 reader.unread(head, 0, n)
@@ -71,10 +137,12 @@ class ImportExport(
             IoResult.Failed("Read error: ${e.message}")
         } catch (e: SecurityException) {
             IoResult.Failed("No access to that file")
+        } catch (e: SQLiteException) {
+            IoResult.Failed("Database error: ${e.message}")
         }
     }
 
-    private suspend fun store(doc: GeoDocument): ImportSummary {
+    private suspend fun store(doc: GeoDocument): ImportSummary = db.withTransaction {
         val w = if (doc.waypoints.isNotEmpty()) waypoints.importAll(doc.waypoints) else 0
         var simplified = 0
         for (r in doc.routes) {
@@ -90,28 +158,26 @@ class ImportExport(
             trips.save(Trip(newId(), r.name ?: "Imported route", stops))
         }
         var t = 0
+        val dao = db.tracks()
         for (track in doc.tracks) {
             val points = track.segments.flatten().sortedBy { it.epochMs }
             if (points.isEmpty()) continue
             val stats = TrackStats().also { s -> points.forEach { s.add(it) } }
             val id = newId()
             val entity = TrackEntity(
-                id, (track.name ?: "Imported track").take(80), points.first().epochMs, points.last().epochMs, TrackState.Finished,
+                id, (track.name ?: "Imported track").take(NAME_MAX), points.first().epochMs, points.last().epochMs, TrackState.Finished,
                 stats.distanceM, stats.gainM, stats.lossM, stats.movingMs, stats.maxSpeedMps, points.size,
             )
-            val dao = db.tracks()
-            // All-or-nothing: a failed import never leaves a half-written track behind.
-            db.withTransaction {
-                dao.insert(entity)
-                points.chunked(1_000).forEachIndexed { chunkIndex, chunk ->
-                    dao.insertPoints(chunk.mapIndexed { i, p ->
-                        TrackPointEntity(id, chunkIndex * 1_000 + i, p.epochMs, p.position.lat, p.position.lon, p.elevationM, p.accuracyM, p.speedMps)
-                    })
-                }
+            // All-or-nothing: the outer withTransaction ensures whole-import atomicity.
+            dao.insert(entity)
+            points.chunked(1_000).forEachIndexed { chunkIndex, chunk ->
+                dao.insertPoints(chunk.mapIndexed { i, p ->
+                    TrackPointEntity(id, chunkIndex * 1_000 + i, p.epochMs, p.position.lat, p.position.lon, p.elevationM, p.accuracyM, p.speedMps)
+                })
             }
             t++
         }
-        return ImportSummary(w, doc.routes.count { it.points.size >= 2 }, t, simplified)
+        ImportSummary(w, doc.routes.count { it.points.size >= 2 }, t, simplified)
     }
 
     private suspend fun <T> write(uri: Uri, block: suspend (BufferedWriter) -> T): IoResult<T> = withContext(Dispatchers.IO) {

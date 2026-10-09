@@ -34,6 +34,15 @@ class CoordinateParserTest {
     }
 
     @Test
+    fun dmsWithUnitLetters() {
+        assertAt("40d26m46s, -74.0", 40.446111, -74.0)
+        assertAt("40d26m46s, 74d00m20s", 40.446111, 74.005555)
+        assertAt("40d26m46s N, 74d00m20s W", 40.446111, -74.005555)
+        assertAt("40d26m46s S, 74d00m20s W", -40.446111, -74.005555)
+        assertAt("40D26M46S, -74.0", 40.446111, -74.0)
+    }
+
+    @Test
     fun geoUris() {
         assertAt("geo:37.786971,-122.399677", 37.786971, -122.399677)
         assertAt("geo:37.786971,-122.399677;u=35", 37.786971, -122.399677)

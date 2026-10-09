@@ -10,7 +10,7 @@ import com.example.trailblazer.data.Settings
 import com.example.trailblazer.data.TrackSummary
 import com.example.trailblazer.data.Waypoint
 import com.example.trailblazer.location.Fix
-import com.example.trailblazer.sensors.Reading
+import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.tracking.InterruptReason
 import com.trailblazer.core.trip.Trip
 import kotlinx.coroutines.flow.MutableStateFlow

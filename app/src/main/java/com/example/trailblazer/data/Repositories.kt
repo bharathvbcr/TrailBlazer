@@ -26,6 +26,9 @@ fun newId(): String = UUID.randomUUID().toString()
 /** Rows with coordinates that are no longer valid (e.g. edited by hand) are skipped rather than shown at 0,0. */
 private fun WaypointEntity.toModel(): Waypoint? = LatLon.of(lat, lon)?.let { Waypoint(id, name, it, elevationM, createdMs, note) }
 
+const val NAME_MAX = 80
+const val NOTE_MAX = 2000
+
 class WaypointRepository(private val dao: WaypointDao, private val clock: Clock) {
     val all: Flow<List<Waypoint>> = dao.observeAll().map { rows -> rows.mapNotNull { it.toModel() } }
 
@@ -56,8 +59,8 @@ class WaypointRepository(private val dao: WaypointDao, private val clock: Clock)
     suspend fun snapshot(): List<Waypoint> = dao.all().mapNotNull { it.toModel() }
 
     companion object {
-        const val NAME_MAX = 80
-        const val NOTE_MAX = 2000
+        const val NAME_MAX = com.example.trailblazer.data.NAME_MAX
+        const val NOTE_MAX = com.example.trailblazer.data.NOTE_MAX
     }
 }
 
@@ -76,9 +79,9 @@ class TripRepository(private val dao: TripDao, private val clock: Clock) {
 
     suspend fun save(trip: Trip, createdMs: Long? = null) {
         val now = clock.nowMs()
-        val entity = TripEntity(trip.id, trip.name.trim().ifEmpty { "Trip" }.take(80), createdMs ?: now, now)
+        val entity = TripEntity(trip.id, trip.name.trim().ifEmpty { "Trip" }.take(NAME_MAX), createdMs ?: now, now)
         val stops = trip.stops.mapIndexed { i, s ->
-            StopEntity(s.id, trip.id, i, s.name.take(80), s.kind.name, s.position.lat, s.position.lon, s.plannedDay, s.note?.take(2000))
+            StopEntity(s.id, trip.id, i, s.name.take(NAME_MAX), s.kind.name, s.position.lat, s.position.lon, s.plannedDay, s.note?.take(NOTE_MAX))
         }
         dao.save(entity, stops)
     }
@@ -102,6 +105,23 @@ data class TrackSummary(
 
 private fun TrackEntity.toSummary() = TrackSummary(id, name, startedMs, endedMs, state, distanceM, gainM, lossM, movingMs, maxSpeedMps, pointCount)
 
+/**
+ * Streams a track's points in pages so exports, charts and restore logic never hold 100 000 rows at once.
+ * Returns the highest sequence number seen, or -1 if empty.
+ */
+suspend fun TrackDao.forEachPoint(id: String, pageSize: Int = 2_000, block: suspend (TrackPoint, seq: Int) -> Unit): Int {
+    var after = -1
+    while (true) {
+        val page = pointsAfter(id, after, pageSize)
+        if (page.isEmpty()) return after
+        for (p in page) {
+            val pos = LatLon.of(p.lat, p.lon) ?: continue
+            block(TrackPoint(p.timeMs, pos, p.elevationM, p.accuracyM, p.speedMps), p.seq)
+        }
+        after = page.last().seq
+    }
+}
+
 class TrackRepository(private val dao: TrackDao) {
     val all: Flow<List<TrackSummary>> = dao.observeAll().map { rows -> rows.map { it.toSummary() } }
     val open: Flow<TrackSummary?> = dao.observeOpen().map { it?.toSummary() }
@@ -110,23 +130,14 @@ class TrackRepository(private val dao: TrackDao) {
 
     suspend fun rename(id: String, name: String) {
         val t = dao.get(id) ?: return
-        dao.update(t.copy(name = name.trim().ifEmpty { t.name }.take(80)))
+        dao.update(t.copy(name = name.trim().ifEmpty { t.name }.take(NAME_MAX)))
     }
 
     suspend fun delete(id: String) = dao.delete(id)
 
     /** Streams a track's points in pages so exports and charts never hold 100 000 rows at once. */
     suspend fun forEachPoint(id: String, pageSize: Int = 2_000, block: suspend (TrackPoint) -> Unit) {
-        var after = -1
-        while (true) {
-            val page = dao.pointsAfter(id, after, pageSize)
-            if (page.isEmpty()) return
-            for (p in page) {
-                val pos = LatLon.of(p.lat, p.lon) ?: continue
-                block(TrackPoint(p.timeMs, pos, p.elevationM, p.accuracyM, p.speedMps))
-            }
-            after = page.last().seq
-        }
+        dao.forEachPoint(id, pageSize) { pt, _ -> block(pt) }
     }
 }
 

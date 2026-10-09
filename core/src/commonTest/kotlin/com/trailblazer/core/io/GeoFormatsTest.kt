@@ -142,4 +142,74 @@ class GeoFormatsTest {
         val gpx = """<?xml version="1.0"?><!-- a --- b --><gpx:gpx xmlns:gpx="x"><gpx:wpt lat="1" lon="2"><gpx:name><![CDATA[A & <B>]]></gpx:name></gpx:wpt></gpx:gpx>"""
         assertEquals("A & <B>", GpxReader.read(StringReader(gpx) as Reader).waypoints.single().name)
     }
+
+    @Test
+    fun kmlMultiGeometryKeepsAllGeometries() {
+        val kml = """<kml><Placemark><name>Multi</name><description>Mixed</description><MultiGeometry>
+            <Point><coordinates>10.0,20.0,100</coordinates></Point>
+            <LineString><coordinates>10.0,20.0,100 11.0,21.0,200</coordinates></LineString>
+            <Point><coordinates>12.0,22.0,300</coordinates></Point>
+        </MultiGeometry></Placemark></kml>"""
+        val doc = KmlReader.read(StringReader(kml))
+        assertEquals(2, doc.waypoints.size)
+        assertEquals("Multi", doc.waypoints[0].name)
+        assertEquals(20.0, doc.waypoints[0].position.lat, 1e-7)
+        assertEquals(10.0, doc.waypoints[0].position.lon, 1e-7)
+        assertEquals(100.0, doc.waypoints[0].elevationM!!, 1e-9)
+
+        assertEquals("Multi", doc.waypoints[1].name)
+        assertEquals(22.0, doc.waypoints[1].position.lat, 1e-7)
+        assertEquals(12.0, doc.waypoints[1].position.lon, 1e-7)
+
+        assertEquals(1, doc.routes.size)
+        assertEquals("Multi", doc.routes.single().name)
+        assertEquals(2, doc.routes.single().points.size)
+    }
+
+    @Test
+    fun kmlGxMultiTrackKeepsAllSegments() {
+        val kml = """<kml xmlns:gx="http://www.google.com/kml/ext/2.2"><Placemark><name>MultiTrackHike</name><gx:MultiTrack>
+            <gx:Track>
+                <when>2026-01-01T00:00:00Z</when><when>2026-01-01T00:01:00Z</when>
+                <gx:coord>7.0 46.0 100</gx:coord><gx:coord>7.1 46.1 110</gx:coord>
+            </gx:Track>
+            <gx:Track>
+                <when>2026-01-01T01:00:00Z</when><when>2026-01-01T01:01:00Z</when>
+                <gx:coord>7.2 46.2 120</gx:coord><gx:coord>7.3 46.3 130</gx:coord>
+            </gx:Track>
+        </gx:MultiTrack></Placemark></kml>"""
+        val doc = KmlReader.read(StringReader(kml))
+        val trk = doc.tracks.single()
+        assertEquals("MultiTrackHike", trk.name)
+        assertEquals(2, trk.segments.size)
+        assertEquals(2, trk.segments[0].size)
+        assertEquals(2, trk.segments[1].size)
+        assertEquals(130.0, trk.segments[1][1].elevationM!!, 1e-9)
+    }
+
+    @Test
+    fun kmlLargeLineStringExceedingOneMillionCharsSucceeds() {
+        val sb = StringBuilder()
+        sb.append("<kml><Placemark><name>BigLine</name><LineString><coordinates>\n")
+        // 40_000 points with ~30 chars each = ~1.2M chars, which exceeded the old 1_000_000 MAX_TEXT limit
+        for (i in 0 until 40_000) {
+            sb.append("7.123456,46.123456,1234.5\n")
+        }
+        sb.append("</coordinates></LineString></Placemark></kml>")
+        val doc = KmlReader.read(StringReader(sb.toString()))
+        assertEquals(1, doc.routes.size)
+        assertEquals(40_000, doc.routes.single().points.size)
+    }
+
+    @Test
+    fun elevationClampedOnImport() {
+        val gpx = """<gpx><wpt lat="1" lon="2"><ele>1e25</ele></wpt><wpt lat="3" lon="4"><ele>-9999999</ele></wpt></gpx>"""
+        val doc = GpxReader.read(StringReader(gpx))
+        assertEquals(100_000.0, doc.waypoints[0].elevationM!!, 1e-9)
+        assertEquals(-11_000.0, doc.waypoints[1].elevationM!!, 1e-9)
+
+        val kml = """<kml><Placemark><Point><coordinates>2.0,1.0,1e25</coordinates></Point></Placemark></kml>"""
+        val kmlDoc = KmlReader.read(StringReader(kml))
+        assertEquals(100_000.0, kmlDoc.waypoints[0].elevationM!!, 1e-9)
+    }
 }

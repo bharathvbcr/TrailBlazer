@@ -1,10 +1,14 @@
 package com.example.trailblazer.ui.sky
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -160,100 +164,114 @@ internal fun SkyArc(
     // Fixed star field: positions do not jump as the minute ticks.
     val stars = remember { List(70) { i -> Triple(((i * 0.618034) % 1.0).toFloat(), ((i * 0.41421 + 0.13) % 1.0).toFloat(), 0.5f + (i % 3) * 0.35f) } }
     val hours = remember(windowStartMs) { listOf(6, 12, 18).map { windowStartMs + it * 3_600_000L } }
-    Canvas(modifier.semantics { contentDescription = description }) {
-        val n = path.size
-        fun y(alt: Double) = (size.height * ((top - alt.coerceIn(bottom, top)) / (top - bottom))).toFloat()
-        fun x(i: Double) = (size.width * i / (n - 1)).toFloat()
-        val horizon = y(0.0)
-        // Sky coloured by the Sun's height at each moment: horizontal gradients through every sample, in thin bands
-        // from zenith colour to horizon colour, so neither direction shows steps.
-        val skies = List(n) { i -> skyFor(sunPath.getOrNull(i)?.altitudeDeg ?: -90.0, colors.night, colors.accent) }
-        val bands = 64
-        for (b in 0 until bands) {
-            val f = (b + 0.5f) / bands
-            // Whole-pixel edges, each band overlapping the next, so no hairline seam shows through the fill.
-            val top = kotlin.math.floor(horizon * b / bands)
-            val bottom = kotlin.math.ceil(horizon * (b + 1) / bands) + 1f
-            drawRect(
-                Brush.horizontalGradient(skies.map { (zenith, low) -> lerp(zenith, low, f * f) }, 0f, size.width),
-                Offset(0f, top), Size(size.width, (bottom - top).coerceAtMost(horizon - top)),
-            )
-        }
-        // Stars where the sky is dark.
-        for ((sx, sy, sr) in stars) {
-            val i = (sx * (n - 1)).toInt().coerceIn(0, n - 1)
-            val sunAlt = sunPath.getOrNull(i)?.altitudeDeg ?: -90.0
-            val dark = ((-sunAlt - 8) / 10).coerceIn(0.0, 1.0).toFloat()
-            if (dark > 0f) drawCircle(Color.White.copy(alpha = 0.75f * dark), sr.dp.toPx(), Offset(sx * size.width, sy * horizon * 0.92f))
-        }
-        // Altitude guides.
-        var g = 30.0
-        while (g < top) {
-            drawLine(Color.White.copy(alpha = 0.10f), Offset(0f, y(g)), Offset(size.width, y(g)), 1f)
-            if (y(g) - 13.dp.toPx() >= 0f) drawText(measurer, "${g.toInt()}°", Offset(4.dp.toPx(), y(g) - 13.dp.toPx()), labelStyle)
-            g += 30.0
-        }
-        // Soft fill under the daylit path.
-        val fill = Path().apply {
-            moveTo(0f, horizon)
-            path.forEachIndexed { i, h -> lineTo(x(i.toDouble()), y(max(h.altitudeDeg, 0.0))) }
-            lineTo(size.width, horizon)
-            close()
-        }
-        drawPath(fill, Brush.verticalGradient(listOf(lineColor.copy(alpha = fillAlpha), lineColor.copy(alpha = 0.02f)), y(peak), horizon))
-        // Ground: a low ridge silhouette.
-        val ridge = Path().apply {
-            moveTo(0f, size.height)
-            var px = 0f
-            while (px <= size.width) {
-                val f = px / size.width
-                val hh = (sin(f * 13.0) * 0.35 + sin(f * 29.0 + 1.3) * 0.2 + sin(f * 5.0 + 0.4) * 0.45).toFloat() * 5.dp.toPx()
-                lineTo(px, horizon - 3.dp.toPx() - abs(hh))
-                px += 4f
-            }
-            lineTo(size.width, size.height)
-            close()
-        }
-        val ground = if (colors.night) Color.Black else Color(0xFF0E1424)
-        drawRect(ground, Offset(0f, horizon), Size(size.width, size.height - horizon))
-        drawPath(ridge, ground)
-        drawLine(Color.White.copy(alpha = 0.35f), Offset(0f, horizon), Offset(size.width, horizon), 1.dp.toPx())
-        // The path: dashed everywhere, solid (and gold low down) above the horizon.
-        val whole = Path().apply { path.forEachIndexed { i, h -> if (i == 0) moveTo(x(0.0), y(h.altitudeDeg)) else lineTo(x(i.toDouble()), y(h.altitudeDeg)) } }
-        drawPath(whole, Color.White.copy(alpha = 0.3f), style = Stroke(1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 7f))))
-        for (i in 0 until n - 1) {
-            val a = path[i]
-            val b = path[i + 1]
-            if (a.altitudeDeg < -0.8 && b.altitudeDeg < -0.8) continue
-            val low = (a.altitudeDeg + b.altitudeDeg) / 2 < 6.0
-            drawLine(
-                if (golden != null && low) golden else lineColor,
-                Offset(x(i.toDouble()), y(a.altitudeDeg)), Offset(x(i + 1.0), y(b.altitudeDeg)),
-                strokeWidth = 3.dp.toPx(), cap = StrokeCap.Round,
-            )
-        }
-        // Hour ticks along the bottom.
-        for (t in hours) {
-            val hx = ((t - windowStartMs).toFloat() / (stepMs * (n - 1))) * size.width
-            if (hx <= 0f || hx >= size.width) continue
-            drawLine(Color.White.copy(alpha = 0.4f), Offset(hx, size.height - 5.dp.toPx()), Offset(hx, size.height), 1.dp.toPx())
-            val m = measurer.measure(fmt.time(t), labelStyle)
-            drawText(m, topLeft = Offset(hx - m.size.width / 2f, size.height - 6.dp.toPx() - m.size.height))
-        }
-        if (peak > 0) {
-            val peakIndex = path.indices.maxBy { path[it].altitudeDeg }
-            val label = measurer.measure("${peak.toInt()}°", labelStyle.copy(color = Color.White, fontSize = 11.sp))
-            val px = (x(peakIndex.toDouble()) - label.size.width / 2f).coerceIn(0f, size.width - label.size.width)
-            drawText(label, topLeft = Offset(px, (y(peak) - label.size.height - 10.dp.toPx()).coerceAtLeast(0f)))
-        }
-        // The body at the chosen time, interpolated between samples and kept whole inside the frame.
-        val f = ((atMs - windowStartMs).toDouble() / stepMs).coerceIn(0.0, n - 1.0)
-        val lo = f.toInt().coerceAtMost(n - 2)
-        val alt = path[lo].altitudeDeg + (path[lo + 1].altitudeDeg - path[lo].altitudeDeg) * (f - lo)
-        val br = 7.dp.toPx()
-        drawLine(Color.White.copy(alpha = 0.25f), Offset(x(f), 0f), Offset(x(f), size.height), 1.dp.toPx())
-        body(Offset(x(f).coerceIn(br * 2, size.width - br * 2), y(alt).coerceIn(br * 2, size.height - br * 2)), br, alt < -0.8)
+    val currentAtMs by rememberUpdatedState(atMs)
+    val hourLabels = remember(hours, fmt, measurer, labelStyle) {
+        hours.map { t -> t to measurer.measure(fmt.time(t), labelStyle) }
     }
+    val peakLabel = remember(peak, measurer, labelStyle) {
+        if (peak > 0) measurer.measure("${peak.toInt()}°", labelStyle.copy(color = Color.White, fontSize = 11.sp)) else null
+    }
+    val peakIndex = remember(path) { if (peak > 0) path.indices.maxBy { path[it].altitudeDeg } else -1 }
+    val n = path.size
+    val skies = remember(sunPath, colors.night, colors.accent) {
+        List(n) { i -> skyFor(sunPath.getOrNull(i)?.altitudeDeg ?: -90.0, colors.night, colors.accent) }
+    }
+    Spacer(
+        modifier.semantics { contentDescription = description }
+            .drawWithCache {
+                fun y(alt: Double) = (size.height * ((top - alt.coerceIn(bottom, top)) / (top - bottom))).toFloat()
+                fun x(i: Double) = (size.width * i / (n - 1)).toFloat()
+                val horizon = y(0.0)
+                val bands = 64
+                val bandDraws = (0 until bands).map { b ->
+                    val f = (b + 0.5f) / bands
+                    val topPx = kotlin.math.floor(horizon * b / bands)
+                    val bottomPx = kotlin.math.ceil(horizon * (b + 1) / bands) + 1f
+                    val brush = Brush.horizontalGradient(skies.map { (zenith, low) -> lerp(zenith, low, f * f) }, 0f, size.width)
+                    Triple(brush, Offset(0f, topPx), Size(size.width, (bottomPx - topPx).coerceAtMost(horizon - topPx)))
+                }
+                val fill = Path().apply {
+                    moveTo(0f, horizon)
+                    path.forEachIndexed { i, h -> lineTo(x(i.toDouble()), y(max(h.altitudeDeg, 0.0))) }
+                    lineTo(size.width, horizon)
+                    close()
+                }
+                val fillBrush = Brush.verticalGradient(listOf(lineColor.copy(alpha = fillAlpha), lineColor.copy(alpha = 0.02f)), y(peak), horizon)
+                val ridge = Path().apply {
+                    moveTo(0f, size.height)
+                    var px = 0f
+                    while (px <= size.width) {
+                        val f = px / size.width
+                        val hh = (sin(f * 13.0) * 0.35 + sin(f * 29.0 + 1.3) * 0.2 + sin(f * 5.0 + 0.4) * 0.45).toFloat() * 5.dp.toPx()
+                        lineTo(px, horizon - 3.dp.toPx() - abs(hh))
+                        px += 4f
+                    }
+                    lineTo(size.width, size.height)
+                    close()
+                }
+                val ground = if (colors.night) Color.Black else Color(0xFF0E1424)
+                val whole = Path().apply { path.forEachIndexed { i, h -> if (i == 0) moveTo(x(0.0), y(h.altitudeDeg)) else lineTo(x(i.toDouble()), y(h.altitudeDeg)) } }
+                val wholeStroke = Stroke(1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 7f)))
+
+                onDrawBehind {
+                    for ((brush, offset, sz) in bandDraws) {
+                        drawRect(brush, offset, sz)
+                    }
+                    // Stars where the sky is dark.
+                    for ((sx, sy, sr) in stars) {
+                        val i = (sx * (n - 1)).toInt().coerceIn(0, n - 1)
+                        val sunAlt = sunPath.getOrNull(i)?.altitudeDeg ?: -90.0
+                        val dark = ((-sunAlt - 8) / 10).coerceIn(0.0, 1.0).toFloat()
+                        if (dark > 0f) drawCircle(Color.White.copy(alpha = 0.75f * dark), sr.dp.toPx(), Offset(sx * size.width, sy * horizon * 0.92f))
+                    }
+                    // Altitude guides.
+                    var g = 30.0
+                    while (g < top) {
+                        drawLine(Color.White.copy(alpha = 0.10f), Offset(0f, y(g)), Offset(size.width, y(g)), 1f)
+                        if (y(g) - 13.dp.toPx() >= 0f) drawText(measurer, "${g.toInt()}°", Offset(4.dp.toPx(), y(g) - 13.dp.toPx()), labelStyle)
+                        g += 30.0
+                    }
+                    // Soft fill under the daylit path.
+                    drawPath(fill, fillBrush)
+                    // Ground: a low ridge silhouette.
+                    drawRect(ground, Offset(0f, horizon), Size(size.width, size.height - horizon))
+                    drawPath(ridge, ground)
+                    drawLine(Color.White.copy(alpha = 0.35f), Offset(0f, horizon), Offset(size.width, horizon), 1.dp.toPx())
+                    // The path: dashed everywhere, solid (and gold low down) above the horizon.
+                    drawPath(whole, Color.White.copy(alpha = 0.3f), style = wholeStroke)
+                    for (i in 0 until n - 1) {
+                        val a = path[i]
+                        val b = path[i + 1]
+                        if (a.altitudeDeg < -0.8 && b.altitudeDeg < -0.8) continue
+                        val low = (a.altitudeDeg + b.altitudeDeg) / 2 < 6.0
+                        drawLine(
+                            if (golden != null && low) golden else lineColor,
+                            Offset(x(i.toDouble()), y(a.altitudeDeg)), Offset(x(i + 1.0), y(b.altitudeDeg)),
+                            strokeWidth = 3.dp.toPx(), cap = StrokeCap.Round,
+                        )
+                    }
+                    // Hour ticks along the bottom.
+                    for ((t, m) in hourLabels) {
+                        val hx = ((t - windowStartMs).toFloat() / (stepMs * (n - 1))) * size.width
+                        if (hx <= 0f || hx >= size.width) continue
+                        drawLine(Color.White.copy(alpha = 0.4f), Offset(hx, size.height - 5.dp.toPx()), Offset(hx, size.height), 1.dp.toPx())
+                        drawText(m, topLeft = Offset(hx - m.size.width / 2f, size.height - 6.dp.toPx() - m.size.height))
+                    }
+                    if (peak > 0 && peakLabel != null) {
+                        val px = (x(peakIndex.toDouble()) - peakLabel.size.width / 2f).coerceIn(0f, size.width - peakLabel.size.width)
+                        drawText(peakLabel, topLeft = Offset(px, (y(peak) - peakLabel.size.height - 10.dp.toPx()).coerceAtLeast(0f)))
+                    }
+                    // The body at the chosen time, interpolated between samples and kept whole inside the frame.
+                    val atTime = currentAtMs
+                    val f = ((atTime - windowStartMs).toDouble() / stepMs).coerceIn(0.0, n - 1.0)
+                    val lo = f.toInt().coerceAtMost(n - 2)
+                    val alt = path[lo].altitudeDeg + (path[lo + 1].altitudeDeg - path[lo].altitudeDeg) * (f - lo)
+                    val br = 7.dp.toPx()
+                    drawLine(Color.White.copy(alpha = 0.25f), Offset(x(f), 0f), Offset(x(f), size.height), 1.dp.toPx())
+                    body(Offset(x(f).coerceIn(br * 2, size.width - br * 2), y(alt).coerceIn(br * 2, size.height - br * 2)), br, alt < -0.8)
+                }
+            }
+    )
 }
 
 /**
@@ -280,6 +298,13 @@ internal fun HorizonCompass(
     val minor = TextStyle(fontSize = 8.sp, color = cs.onSurfaceVariant.copy(alpha = 0.7f))
     val domeTop = if (night) cs.primary.copy(alpha = 0.12f) else Color(0xFF5B9BE0)
     val domeRim = if (night) cs.primary.copy(alpha = 0.04f) else Color(0xFF1F3F75)
+    val compassLabels = remember(measurer, cardinal, minor, cs.error) {
+        listOf("N" to 0.0, "E" to 90.0, "S" to 180.0, "W" to 270.0, "NE" to 45.0, "SE" to 135.0, "SW" to 225.0, "NW" to 315.0).map { (label, az) ->
+            val main = label.length == 1
+            val style = if (label == "N") cardinal.copy(color = cs.error) else if (main) cardinal else minor
+            Triple(label, az, measurer.measure(label, style))
+        }
+    }
     Canvas(modifier.semantics { contentDescription = description }) {
         val pad = 16.dp.toPx()
         val r = size.minDimension / 2 - pad
@@ -302,9 +327,8 @@ internal fun HorizonCompass(
             }
             drawLine(cs.onSurfaceVariant.copy(alpha = 0.6f), polar(az, r), polar(az, r + len), 1.dp.toPx())
         }
-        for ((label, az) in listOf("N" to 0.0, "E" to 90.0, "S" to 180.0, "W" to 270.0, "NE" to 45.0, "SE" to 135.0, "SW" to 225.0, "NW" to 315.0)) {
+        for ((label, az, m) in compassLabels) {
             val main = label.length == 1
-            val m = measurer.measure(label, if (label == "N") cardinal.copy(color = cs.error) else if (main) cardinal else minor)
             val p = polar(az, r + (if (main) 12.dp.toPx() else 10.dp.toPx()))
             if (!main && r < 50.dp.toPx()) continue
             drawText(m, topLeft = Offset(p.x - m.size.width / 2f, p.y - m.size.height / 2f))

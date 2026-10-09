@@ -101,4 +101,20 @@ class TrackTest {
         val line = listOf(a, LatLon(0.0, 0.005), corner, LatLon(0.005, 0.01), b)
         assertEquals(listOf(a, corner, b), DouglasPeucker.simplify(line, 5.0) { it })
     }
+
+    @Test
+    fun douglasPeuckerHandlesAntimeridian() {
+        val a = LatLon(0.0, 179.8)
+        val mid = LatLon(0.0, -180.0)
+        val b = LatLon(0.0, -179.8)
+        val collinear = listOf(a, mid, b)
+        // With antimeridian wrap, mid has ~0 distance to chord ab and is simplified away.
+        assertEquals(listOf(a, b), DouglasPeucker.simplify(collinear, 10.0) { it })
+
+        // A point clearly deviated at the antimeridian (~111 m north)
+        val corner = LatLon(0.001, 180.0)
+        val bent = listOf(a, corner, b)
+        assertEquals(listOf(a, corner, b), DouglasPeucker.simplify(bent, 50.0) { it })
+        assertEquals(listOf(a, b), DouglasPeucker.simplify(bent, 200.0) { it })
+    }
 }

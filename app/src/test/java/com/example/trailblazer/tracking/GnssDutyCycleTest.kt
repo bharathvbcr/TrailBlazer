@@ -4,7 +4,7 @@ import android.hardware.Sensor
 import com.example.trailblazer.data.TrackingMode
 import com.example.trailblazer.location.Fix
 import com.example.trailblazer.sensors.FakeSensorSource
-import com.example.trailblazer.sensors.Reading
+import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.sensors.SensorSample
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation

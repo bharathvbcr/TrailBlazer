@@ -7,14 +7,17 @@ import com.example.trailblazer.data.NorthReference
 import com.example.trailblazer.data.Settings
 import com.example.trailblazer.data.Waypoint
 import com.example.trailblazer.location.Fix
+import com.example.trailblazer.sensors.BleConnectionState
+import com.example.trailblazer.sensors.BleDeviceInfo
 import com.example.trailblazer.sensors.Declination
 import com.example.trailblazer.sensors.Heading
 import com.example.trailblazer.sensors.Hold
-import com.example.trailblazer.sensors.Reading
-import com.example.trailblazer.sensors.map
+import com.trailblazer.core.sensors.Reading
+import com.trailblazer.core.sensors.map
 import com.trailblazer.core.alerts.SpeedAlert
 import com.trailblazer.core.astro.LunarPosition
 import com.trailblazer.core.astro.SolarPosition
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
@@ -25,6 +28,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -42,6 +46,8 @@ class NowViewModel(private val c: AppContainer) : ViewModel() {
     val pressure = c.barometer.pressureHpa
     val magneticField = c.magnetic.fieldMicroTesla
     val headingSource = c.orientation.headingSource
+    val bleStatus: StateFlow<BleConnectionState> = c.bleSensorManager.connectionState
+    val bleDevices: StateFlow<List<BleDeviceInfo>> = c.bleSensorManager.discoveredDevices
 
     /** Heading combined with declination from the latest fix and level calibration offsets from settings. */
     val heading: StateFlow<Reading<Heading>> = combine(c.orientation.orientation(Hold.Auto), fix, settings) { o, f, s ->
@@ -49,7 +55,7 @@ class NowViewModel(private val c: AppContainer) : ViewModel() {
         val pOff = s?.levelPitchOffsetDeg ?: 0.0
         val rOff = s?.levelRollOffsetDeg ?: 0.0
         o.map { Heading(it.azimuthDeg, decl, it.source, it.headingAccuracyDeg, it.upright, it.pitchDeg, it.rollDeg, pOff, rOff) }
-    }.stateIn(viewModelScope, started, Reading.Acquiring)
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, started, Reading.Acquiring)
 
     val waypoints: StateFlow<List<Waypoint>> = c.waypoints.all.stateIn(viewModelScope, started, emptyList())
 
@@ -126,4 +132,9 @@ class NowViewModel(private val c: AppContainer) : ViewModel() {
             onDone(true)
         }
     }
+
+    fun startBleScan() = c.bleSensorManager.startScan()
+    fun stopBleScan() = c.bleSensorManager.stopScan()
+    fun connectBle(address: String, name: String? = null) = c.bleSensorManager.connect(address, name)
+    fun disconnectBle() = c.bleSensorManager.disconnect()
 }

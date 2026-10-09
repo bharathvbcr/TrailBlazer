@@ -55,7 +55,7 @@ import com.example.trailblazer.data.GeoFormat
 import com.example.trailblazer.data.TrackState
 import com.example.trailblazer.data.Waypoint
 import com.example.trailblazer.permissions.AppPermission
-import com.example.trailblazer.sensors.Reading
+import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.tracking.InterruptReason
 import com.example.trailblazer.ui.Fmt
 import com.example.trailblazer.ui.components.EmptyState

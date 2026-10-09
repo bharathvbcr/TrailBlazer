@@ -42,9 +42,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.trailblazer.container
 import com.example.trailblazer.location.GnssSnapshot
+import com.trailblazer.core.location.Satellite
 import com.example.trailblazer.permissions.AppPermission
 import com.example.trailblazer.ui.Fmt
-import com.example.trailblazer.sensors.Reading
+import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.sensors.chipLabel
 import com.example.trailblazer.sensors.SensorInfo
 import com.example.trailblazer.ui.components.GlassCard
@@ -196,7 +197,7 @@ private fun GnssList(gnss: Reading<GnssSnapshot>) {
                 val s = gnss.value
                 LabelValue("In view / used in fix", "${s.inView} / ${s.used}")
                 s.satellites.groupBy { it.constellation }.toSortedMap().forEach { (k, list) ->
-                    LabelValue(constellation(k), "${list.count { it.usedInFix }} of ${list.size} used")
+                    LabelValue(Satellite.constellationName(k), "${list.count { it.usedInFix }} of ${list.size} used")
                 }
                 val top = s.satellites.sortedByDescending { it.cn0DbHz }.take(12)
                 val good = LocalStatusColors.current.good
@@ -212,17 +213,6 @@ private fun GnssList(gnss: Reading<GnssSnapshot>) {
             }
         }
     }
-}
-
-private fun constellation(t: Int) = when (t) {
-    GnssStatus.CONSTELLATION_GPS -> "GPS"
-    GnssStatus.CONSTELLATION_GLONASS -> "GLONASS"
-    GnssStatus.CONSTELLATION_GALILEO -> "Galileo"
-    GnssStatus.CONSTELLATION_BEIDOU -> "BeiDou"
-    GnssStatus.CONSTELLATION_QZSS -> "QZSS"
-    GnssStatus.CONSTELLATION_SBAS -> "SBAS"
-    GnssStatus.CONSTELLATION_IRNSS -> "NavIC"
-    else -> "Other"
 }
 
 /**
@@ -265,17 +255,20 @@ private fun ThermalCard() {
 @Composable
 private fun AccelPlot() {
     val ctx = LocalContext.current
-    val accel by ctx.container.motion.acceleration.collectAsStateWithLifecycle()
+    val accelFlow = remember { ctx.container.motion.acceleration }
+    val accel by accelFlow.collectAsStateWithLifecycle()
     var yaw by rememberSaveable { mutableDoubleStateOf(OrbitCamera.ISO.yawDeg) }
     var pitch by rememberSaveable { mutableDoubleStateOf(OrbitCamera.ISO.pitchDeg) }
     val trail = remember { mutableStateListOf<Vec3>() }
     var peakG by remember { mutableDoubleStateOf(0.0) }
-    val v = (accel as? Reading.Value)?.value
-    LaunchedEffect(v) {
-        if (v != null) {
-            trail.add(v)
-            if (trail.size > 60) trail.removeAt(0)
-            GForce.of(v.magnitude)?.let { peakG = max(peakG, it) }
+    LaunchedEffect(accelFlow) {
+        accelFlow.collect { reading ->
+            val v = (reading as? Reading.Value)?.value
+            if (v != null) {
+                trail.add(v)
+                if (trail.size > 60) trail.removeAt(0)
+                GForce.of(v.magnitude)?.let { peakG = max(peakG, it) }
+            }
         }
     }
     val cs = MaterialTheme.colorScheme

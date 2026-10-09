@@ -1,5 +1,10 @@
 package com.example.trailblazer.sensors
 
+import com.trailblazer.core.sensors.Accuracy
+import com.trailblazer.core.sensors.Reading
+import com.trailblazer.core.sensors.UnavailableReason
+import com.trailblazer.core.sensors.shareReading
+
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter

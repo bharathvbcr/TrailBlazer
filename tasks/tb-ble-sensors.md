@@ -6,7 +6,7 @@ Bluetooth Low Energy (BLE) external GPS and environmental sensor support
 Task: ft-762d73834d6aa7e180ec2cf3863da418 (revision 1)
 Updated (Unix seconds): 1791254495
 Type: feature
-Status: backlog
+Status: completed
 Severity: low
 Owner: Unassigned
 Priority: 3 (Low)
@@ -26,7 +26,7 @@ Under dense forest canopy, slot canyons, or cold alpine conditions, phone intern
 - app/src/main/java/com/example/trailblazer/sensors/BleSensorManager.kt
 
 ## Acceptance criteria
-- [ ] Scan and connect to standard BLE Location and Environmental Sensing services
-- [ ] Parse external NMEA / location streams into LocationRepository
-- [ ] Indicate external sensor connectivity status clearly in Now tab chips
-- [ ] Gracefully fallback to internal phone sensors if BLE connection disconnects
+- [x] Scan and connect to standard BLE Location and Environmental Sensing services
+- [x] Parse external NMEA / location streams into LocationRepository
+- [x] Indicate external sensor connectivity status clearly in Now tab chips
+- [x] Gracefully fallback to internal phone sensors if BLE connection disconnects

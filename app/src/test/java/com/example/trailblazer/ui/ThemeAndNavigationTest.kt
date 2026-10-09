@@ -12,7 +12,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.trailblazer.data.ThemeMode
-import com.example.trailblazer.sensors.Reading
+import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.ui.components.EmptyState
 import com.example.trailblazer.ui.components.GlassCard
 import com.example.trailblazer.ui.components.GlassChrome

@@ -53,7 +53,7 @@ import com.example.trailblazer.container
 import com.example.trailblazer.places.FoundPlace
 import com.example.trailblazer.places.SavedPlaces
 import com.example.trailblazer.places.SearchResult
-import com.example.trailblazer.sensors.Reading
+import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.ui.Fmt
 import com.trailblazer.core.geo.CoordinateParse
 import com.trailblazer.core.geo.CoordinateParser
