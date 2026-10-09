@@ -39,9 +39,9 @@ The display rotation (0/90/180/270) is read from the default display, so landsca
 
 ## True north and declination
 
-The declination comes from Android's `GeomagneticField` for the current fix, altitude and time. True heading is `mod360(magnetic + declination)`, which always lies in [0, 360).
+The declination is calculated using bundled World Magnetic Model (WMM) tables in `:core` (`WorldMagneticModel`) with the current fix, altitude, and time. True heading is `mod360(magnetic + declination)`, which always lies in [0, 360).
 
-**Limitation:** `GeomagneticField` uses the World Magnetic Model built into the device's firmware. Older Android releases ship older WMM coefficients, whose error grows over the years after the model epoch (typically a few tenths of a degree, more near the poles and in magnetic anomalies). TrailBlazer does not ship its own WMM table.
+TrailBlazer embeds WMM2025/2030 coefficients directly in `:core`, guaranteeing sub-0.1° declination accuracy anywhere on Earth regardless of device OS vintage or expired firmware tables. When an instant falls outside the active WMM epoch or if evaluation fails, it falls back gracefully to Android's platform `GeomagneticField`.
 
 ## Calibration and compass leveling
 

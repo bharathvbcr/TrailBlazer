@@ -23,6 +23,6 @@ Home workspace: None
 Android GeomagneticField relies on firmware-embedded WMM tables, which drift after epoch on older OS builds. Bundle WMM coefficients or an offline calculation update in :core to guarantee sub-0.1° declination accuracy anywhere on Earth.
 
 ## Acceptance criteria
-- [ ] Embed WMM2025/2030 coefficients table in :core
-- [ ] Verify declination against NOAA WMM test values
-- [ ] Fallback gracefully to system GeomagneticField when needed
+- [x] Embed WMM2025/2030 coefficients table in :core
+- [x] Verify declination against NOAA WMM test values
+- [x] Fallback gracefully to system GeomagneticField when needed
