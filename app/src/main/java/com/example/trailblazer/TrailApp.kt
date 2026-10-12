@@ -89,10 +89,10 @@ class AppContainer(
 
     private fun displayRotation(): Int = cachedDisplayRotation
 
-    val bleSensorManager by lazy { BleSensorManager(context, bleTransport, scope, clock) }
+    val bleSensorManager by lazy { BleSensorManager(bleTransport, scope, clock) }
     val barometer by lazy { BarometerRepository(sensorSource, scope, clock, bleSensorManager) }
     val magnetic by lazy { MagneticRepository(sensorSource, scope, clock) }
-    val environment by lazy { EnvironmentRepository(sensorSource, scope, clock) }
+    val environment by lazy { EnvironmentRepository(sensorSource, scope, clock, bleSensorManager) }
     val motion by lazy { MotionRepository(sensorSource, scope, clock) }
     val thermal by lazy { ThermalRepository(context, sensorSource, clock) }
     val orientation by lazy { OrientationRepository(sensorSource, clock, ::displayRotation) }
