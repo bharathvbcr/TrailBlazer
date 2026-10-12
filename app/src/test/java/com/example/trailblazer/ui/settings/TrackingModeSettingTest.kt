@@ -15,6 +15,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.trailblazer.MainActivity
 import com.example.trailblazer.TrailApp
 import com.example.trailblazer.data.TrackingMode
+import com.example.trailblazer.testing.awaitAppReady
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -34,7 +35,10 @@ class TrackingModeSettingTest {
 
     // DataStore outlives each test's Application, so start from the default.
     @Before
-    fun setUp() = runBlocking { app.container.prefs.update { it.copy(trackingMode = TrackingMode.Continuous) } }
+    fun setUp() {
+        runBlocking { app.container.prefs.update { it.copy(trackingMode = TrackingMode.Continuous) } }
+        rule.awaitAppReady() // the Settings button appears only once the saved settings have loaded
+    }
 
     private fun saved() = runBlocking { app.container.prefs.settings.first().trackingMode }
 
