@@ -8,6 +8,8 @@ import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -16,6 +18,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.trailblazer.TrailApp
 import com.example.trailblazer.data.ThemeMode
 import com.example.trailblazer.testing.awaitMainLooper
+import com.example.trailblazer.testing.awaitScreenReady
+import com.example.trailblazer.testing.awaitSensorListener
 import com.example.trailblazer.ui.nav.LevelRoute
 import com.example.trailblazer.ui.nav.NavigationState
 import com.example.trailblazer.ui.nav.Navigator
@@ -64,6 +68,11 @@ class LevelHapticsScreenTest {
                 CompositionLocalProvider(LocalHapticFeedback provides recorder) { LevelScreen(nav) }
             }
         }
+        // The screen draws nothing, and so subscribes to no sensor, until the settings read on Dispatchers.IO lands on the main
+        // thread; waitForIdle does not wait for that. Two preconditions, both real: the screen is drawn (the switch the second
+        // test clicks exists), and the gravity listener is registered (events sent before it exists are dropped).
+        rule.awaitScreenReady(hasContentDescription("Level haptics"), useUnmergedTree = true)
+        rule.awaitSensorListener(manager, gravity)
         rule.waitForIdle()
     }
 
@@ -98,6 +107,9 @@ class LevelHapticsScreenTest {
         // The switch merges into its row; its own description is on the unmerged node.
         rule.onNodeWithContentDescription("Level haptics", useUnmergedTree = true).performClick()
         awaitMainLooper(5_000) { runBlocking { !app.container.prefs.settings.first().levelHaptics } }
+        // The store holding false is not the screen having seen it: its own collector gets the change later, on another thread
+        // hop. The line under the switch is drawn from the screen's copy of the setting, so wait for that.
+        rule.awaitScreenReady(hasText("Haptics off."))
         rule.waitForIdle()
         felt.clear()
         walk(5.0, 3.0, 1.0, 0.1)
