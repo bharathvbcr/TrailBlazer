@@ -388,7 +388,7 @@ fun SosScreen(nav: Navigator) {
         lit = false
         when (active) {
             SosMode.Torch -> if (!torch.play(Morse.SOS) { lit = it }) { failed = "The torch is unavailable (no flash, or the camera is in use)."; active = null }
-            SosMode.Whistle -> whistle.play(Morse.whistleTimeline()) { lit = it }
+            SosMode.Whistle -> if (!whistle.play(Morse.whistleTimeline()) { lit = it }) { failed = "The whistle is unavailable (the phone's speaker could not be opened)."; active = null }
             SosMode.Screen -> torchlessScreen(Morse.SOS) { lit = it }
             null -> Unit
         }

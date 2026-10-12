@@ -1,6 +1,5 @@
 package com.example.trailblazer.ui.sky
 
-import android.content.Intent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -41,7 +40,6 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.trailblazer.container
@@ -62,6 +60,7 @@ import com.example.trailblazer.ui.components.Sparkline
 import com.example.trailblazer.ui.components.TrailIcons
 import com.example.trailblazer.ui.components.WindArrow
 import com.example.trailblazer.ui.components.ValueTile
+import com.example.trailblazer.ui.components.openUrl
 import com.example.trailblazer.ui.nav.Navigator
 import com.example.trailblazer.ui.nav.SettingsRoute
 import com.example.trailblazer.ui.nav.StargazeRoute
@@ -581,7 +580,7 @@ private fun zambrettiText(z: ZambrettiForecast): String =
     z.name.replace(Regex("([a-z])([A-Z])"), "$1 $2").lowercase().replaceFirstChar { it.uppercase() }
 
 @Composable
-private fun ForecastCard(
+internal fun ForecastCard(
     consented: Boolean,
     result: ForecastResult?,
     loading: Boolean,
@@ -592,6 +591,7 @@ private fun ForecastCard(
     onDisable: () -> Unit,
 ) {
     val ctx = LocalContext.current
+    var linkError by remember { mutableStateOf<String?>(null) }
     GlassCard {
         if (!consented) {
             Text("Off. Everything else in TrailBlazer works offline.", style = MaterialTheme.typography.bodyMedium)
@@ -614,9 +614,10 @@ private fun ForecastCard(
             OutlinedButton(onClick = onRefresh, enabled = !loading) { Text("Refresh") }
             TextButton(onClick = onDisable) { Text("Turn off") }
         }
-        TextButton(onClick = { ctx.startActivity(Intent(Intent.ACTION_VIEW, OpenMeteoClient.ATTRIBUTION_URL.toUri())) }) {
+        TextButton(onClick = { openUrl(ctx, OpenMeteoClient.ATTRIBUTION_URL) { linkError = it } }) {
             Text(OpenMeteoClient.ATTRIBUTION, style = MaterialTheme.typography.bodySmall)
         }
+        linkError?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = LocalStatusColors.current.caution) }
     }
 }
 

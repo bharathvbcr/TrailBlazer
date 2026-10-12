@@ -13,10 +13,14 @@ object Morse {
     )
 
     /** The code for [text] as dots and dashes, letters separated by spaces; unknown characters are dropped. */
-    fun code(text: String): String =
-        text.uppercase().split(Regex("\\s+")).filter { it.isNotEmpty() }.joinToString(" / ") { w ->
-            w.mapNotNull { table[it] }.joinToString(" ")
-        }
+    fun code(text: String): String = encodedWords(text).joinToString(" / ") { it.joinToString(" ") }
+
+    /** The words of [text] as lists of letter codes. A word with no encodable character is not a word, so it is left out. */
+    private fun encodedWords(text: String): List<List<String>> =
+        text.uppercase().split(Regex("\\s+")).map { w -> w.mapNotNull { table[it] } }.filter { it.isNotEmpty() }
+
+    /** True when [timeline] never switches on for any time, so playing it would show or sound nothing. */
+    fun isSilent(timeline: List<Pulse>): Boolean = timeline.none { it.on && it.durationMs > 0 }
 
     /**
      * Timeline with standard spacing: dot 1 unit, dash 3, gap inside a letter 1, between letters 3,
@@ -25,9 +29,7 @@ object Morse {
     fun timeline(text: String, unitMs: Long = 200L, prosign: Boolean = false): List<Pulse> {
         require(unitMs > 0)
         val out = ArrayList<Pulse>()
-        val words = text.uppercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
-        for (word in words) {
-            val letters = word.mapNotNull { table[it] }
+        for (letters in encodedWords(text)) {
             for ((li, letter) in letters.withIndex()) {
                 for ((si, symbol) in letter.withIndex()) {
                     out += Pulse(true, if (symbol == '.') unitMs else 3 * unitMs)
