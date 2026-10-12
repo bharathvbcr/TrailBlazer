@@ -7,8 +7,9 @@
 #   3. -PversionCode reaches the merged release manifest;
 #   4. a shallow clone derives no version, builds unsigned, and refuses a SIGNED release;
 #   5. a complete clone refuses a signed release whose keystore does not exist.
-# Apple test guard (core/build.gradle.kts), macOS only. These run the real test tasks (their native compile/link
-# dependencies are excluded with -x, since the guard acts on the test task itself):
+# Apple test guard (core/build.gradle.kts), macOS only. These run the real test tasks, native compile and link included
+# (the first run in a clone is slow, later ones hit the build cache). Excluding the link task would make Kotlin skip the
+# test task for lack of a binary and the checks could not tell the guard from that:
 #   6. with a stub `xcrun` that reports no simulator and CI=true, the build fails instead of skipping iOS tests;
 #   7. the same without CI: the task is really SKIPPED and the build reports it as NOT RUN;
 #   8. on Apple Silicon with the real xcrun, running iosX64Test directly reports it as NOT RUN, plus a GitHub
@@ -82,7 +83,7 @@ if [ "$(uname)" = "Darwin" ]; then
   GRADLE="./gradlew --console=plain --no-daemon --no-configuration-cache"
 
   # shellcheck disable=SC2086 # $GRADLE is a fixed word list
-  if run_apple CI=true PATH="$STUB:$PATH" $GRADLE :core:iosSimulatorArm64Test -x :core:linkDebugTestIosSimulatorArm64; then
+  if run_apple CI=true PATH="$STUB:$PATH" $GRADLE :core:iosSimulatorArm64Test; then
     fail "CI without an iOS simulator must fail the build, but it passed"
   elif grep -qF "A skipped iOS test must not pass CI" "$WORK/out.log"; then
     echo "ok    CI without an iOS simulator fails the build"
@@ -91,7 +92,7 @@ if [ "$(uname)" = "Darwin" ]; then
   fi
 
   # shellcheck disable=SC2086
-  if ! run_apple -u CI PATH="$STUB:$PATH" $GRADLE :core:iosSimulatorArm64Test -x :core:linkDebugTestIosSimulatorArm64; then
+  if ! run_apple -u CI PATH="$STUB:$PATH" $GRADLE :core:iosSimulatorArm64Test; then
     fail "no CI, no simulator: the build should pass with the iOS tests skipped"
   elif ! grep -qF "> Task :core:iosSimulatorArm64Test SKIPPED" "$WORK/out.log"; then
     fail "no CI, no simulator: the iOS simulator test was not skipped"
@@ -104,7 +105,7 @@ if [ "$(uname)" = "Darwin" ]; then
   if [ "$(uname -m)" = "arm64" ]; then
     # Needs a simulator runtime on this machine; CI=true makes a missing one fail loudly instead.
     # shellcheck disable=SC2086
-    if ! run_apple CI=true GITHUB_ACTIONS=true $GRADLE :core:iosX64Test -x :core:linkDebugTestIosX64; then
+    if ! run_apple CI=true GITHUB_ACTIONS=true $GRADLE :core:iosX64Test; then
       fail "Apple Silicon: running iosX64Test directly failed"
     elif ! grep -qF "WARNING: NOT RUN: core:iosX64Test: skipped because this" "$WORK/out.log"; then
       fail "Apple Silicon: the iosX64Test gap is not reported"
