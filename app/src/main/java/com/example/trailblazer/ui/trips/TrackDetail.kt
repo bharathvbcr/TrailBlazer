@@ -100,8 +100,11 @@ class TrackDetailViewModel(private val c: AppContainer, private val id: String) 
         var dist = 0.0
         var index = 0
         val stride = t.pointCount / MAX_PATH_POINTS + 1
+        var prevSegment = 0
         c.tracks.forEachPoint(id) { p ->
-            prev?.let { dist += Geo.distanceM(it, p.position) }
+            // The same distance as the track's total: the stretch across a paused gap is not travelled.
+            if (p.segment == prevSegment) prev?.let { dist += Geo.distanceM(it, p.position) }
+            prevSegment = p.segment
             prev = p.position
             if (index++ % stride == 0) path += p.position
             p.elevationM?.let { e ->

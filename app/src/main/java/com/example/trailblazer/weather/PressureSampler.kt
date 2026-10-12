@@ -1,6 +1,7 @@
 package com.example.trailblazer.weather
 
 import com.example.trailblazer.data.PressureHistory
+import com.example.trailblazer.location.AltitudeDatum
 import com.example.trailblazer.location.Fix
 import com.example.trailblazer.sensors.Clock
 import com.trailblazer.core.sensors.Reading
@@ -43,12 +44,19 @@ class PressureSampler(
             if (r is Reading.Value) {
                 val sampleNow = clock.nowMs()
                 val f = (fix.value as? Reading.Value)?.takeIf { !it.stale && sampleNow - it.value.timeMs < FIX_MAX_AGE_MS }?.value
-                history.record(r.value, f?.altitudeM)
+                history.record(r.value, f?.seaLevelAltitudeM())
                 lastMs = sampleNow
             }
             delay(PressureHistory.INTERVAL_MS)
         }
     }
+
+    /**
+     * The fix's altitude, but only when it is above sea level. The sea-level reduction of the pressure trend needs an
+     * elevation above sea level; an ellipsoid height is off by the geoid undulation (tens of metres, several hPa), and
+     * would jump when the datum changed. A sample without an elevation is still used, as a station-pressure sample.
+     */
+    private fun Fix.seaLevelAltitudeM(): Double? = altitudeM?.takeIf { altitudeDatum == AltitudeDatum.SeaLevel }
 
     companion object {
         const val FIX_MAX_AGE_MS = 120_000L

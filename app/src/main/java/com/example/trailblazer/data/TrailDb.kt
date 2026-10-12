@@ -1,6 +1,7 @@
 package com.example.trailblazer.data
 
 import android.content.Context
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Embedded
@@ -16,6 +17,9 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
 import androidx.room.Upsert
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
+import com.trailblazer.core.track.ElevationDatum
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "waypoints")
@@ -60,6 +64,10 @@ data class TrackPointEntity(
     val elevationM: Double?,
     val accuracyM: Double?,
     val speedMps: Double?,
+    /** The continuous stretch the fix belongs to. It changes after a pause and at each `trkseg` of an imported file. */
+    @ColumnInfo(defaultValue = "0") val segment: Int = 0,
+    /** The datum of [elevationM]; null when unknown, as for every point recorded before schema v2. */
+    val elevationDatum: ElevationDatum? = null,
 )
 
 @Entity(tableName = "trips")
@@ -162,9 +170,6 @@ interface TrackDao {
     @Query("SELECT * FROM track_points WHERE trackId = :trackId AND seq > :afterSeq ORDER BY seq LIMIT :limit")
     suspend fun pointsAfter(trackId: String, afterSeq: Int, limit: Int): List<TrackPointEntity>
 
-    @Query("SELECT * FROM track_points WHERE trackId = :trackId ORDER BY seq DESC LIMIT 1")
-    suspend fun lastPoint(trackId: String): TrackPointEntity?
-
     @Transaction
     suspend fun appendPoints(track: TrackEntity, points: List<TrackPointEntity>) {
         insertPoints(points)
@@ -191,9 +196,13 @@ interface TripDao {
     @Insert
     suspend fun insertStops(stops: List<StopEntity>)
 
+    @Query("SELECT createdMs FROM trips WHERE id = :id")
+    suspend fun createdMs(id: String): Long?
+
+    /** Saves the trip and its stops. A trip that is already stored keeps the `createdMs` it was first saved with. */
     @Transaction
     suspend fun save(trip: TripEntity, stops: List<StopEntity>) {
-        upsertTrip(trip)
+        upsertTrip(createdMs(trip.id)?.let { trip.copy(createdMs = it) } ?: trip)
         deleteStops(trip.id)
         insertStops(stops)
     }
@@ -225,7 +234,7 @@ interface PressureDao {
 
 @Database(
     entities = [WaypointEntity::class, TrackEntity::class, TrackPointEntity::class, TripEntity::class, StopEntity::class, PressureSampleEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class TrailDb : RoomDatabase() {
@@ -235,7 +244,27 @@ abstract class TrailDb : RoomDatabase() {
     abstract fun pressure(): PressureDao
 
     companion object {
-        fun create(context: Context): TrailDb =
-            Room.databaseBuilder(context, TrailDb::class.java, "trail.db").build()
+        const val FILE_NAME = "trail.db"
+
+        /**
+         * v1 to v2: every track point gets a segment index (0, so a recorded track is one segment as it always was) and
+         * an elevation datum. The datum of a stored point is not known (before v2 it could be sea level or the ellipsoid,
+         * depending on the Android version and on whether the geoid lookup worked), so the column is NULL, never a guess.
+         */
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE track_points ADD COLUMN segment INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE track_points ADD COLUMN elevationDatum TEXT")
+            }
+        }
+
+        /** Every migration the app ships. There is no destructive fallback: a version without a path here crashes on open. */
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2)
+
+        /** The one place the production database is configured; the migration tests open it through here too. */
+        fun builder(context: Context, name: String = FILE_NAME): RoomDatabase.Builder<TrailDb> =
+            Room.databaseBuilder(context, TrailDb::class.java, name).addMigrations(*MIGRATIONS)
+
+        fun create(context: Context): TrailDb = builder(context).build()
     }
 }
