@@ -27,6 +27,8 @@ class NowBleChipTest {
     @Test
     fun bleChipDisplaysStatusAndOpensSensorDialog() {
         rule.waitForIdle()
+        // Settings load from DataStore off the main thread; the screen has no scrolling content until they arrive.
+        rule.waitUntil(5_000) { rule.onAllNodes(hasScrollAction()).fetchSemanticsNodes().isNotEmpty() }
 
         // BLE status chip is visible in the chips area
         rule.onNode(hasScrollAction()).performScrollToNode(hasText("BLE:", substring = true))

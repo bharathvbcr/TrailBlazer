@@ -38,6 +38,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -594,7 +595,7 @@ private fun CalibrationDialog(onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun BleSensorDialog(
+internal fun BleSensorDialog(
     status: BleConnectionState,
     devices: List<BleDeviceInfo>,
     onScan: () -> Unit,
@@ -603,6 +604,8 @@ private fun BleSensorDialog(
     onDisconnect: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // Leaving the dialog by any route (Close, back, outside tap, the screen going away) ends a scan still in progress.
+    DisposableEffect(Unit) { onDispose { onStopScan() } }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("External BLE Sensors") },
@@ -654,7 +657,7 @@ private fun BleSensorDialog(
                     ) {
                         Text("Disconnect external sensor")
                     }
-                } else {
+                } else BleScanPermissionGate {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -703,6 +706,29 @@ private fun BleSensorDialog(
             TextButton(onClick = onDismiss) { Text("Close") }
         },
     )
+}
+
+/**
+ * Scanning and connecting need the "Nearby devices" runtime permission (BLUETOOTH_SCAN and BLUETOOTH_CONNECT) on Android 12+.
+ * On Android 11 and older the Bluetooth permissions are install-time, but a BLE scan returns nothing unless location is
+ * allowed, so that is asked for as well. Both gates show why, and offer the app's settings after a permanent denial.
+ */
+@Composable
+private fun BleScanPermissionGate(content: @Composable () -> Unit) {
+    PermissionGate(
+        AppPermission.Bluetooth,
+        "To find an external sensor, Android needs the “Nearby devices” permission. TrailBlazer uses it only to scan for and connect to the sensor you pick; nothing leaves this phone.",
+    ) {
+        if (Build.VERSION.SDK_INT < 31) {
+            PermissionGate(
+                AppPermission.Location,
+                "On Android 11 and older, scanning for Bluetooth devices only works while location access is allowed. TrailBlazer does not use the scan to find your position.",
+                content = content,
+            )
+        } else {
+            content()
+        }
+    }
 }
 
 private fun copy(ctx: Context, text: String) {
