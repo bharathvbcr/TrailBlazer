@@ -36,17 +36,29 @@ class SensorLogExporter(
 ) {
     suspend fun copy(source: File, destination: Uri): ExportOutcome = withContext(io) {
         val expected = source.length()
-        if (expected > maxBytes) return@withContext ExportOutcome.Failed("The recording is larger than the $maxBytes byte limit and was not copied.")
+        // The picker has already created the (empty) destination document, so every way out before a byte is written
+        // removes it too; otherwise a failed save leaves an empty file in the user's folder.
+        if (expected > maxBytes) {
+            discardPartial(destination)
+            return@withContext ExportOutcome.Failed("The recording is larger than the $maxBytes byte limit and was not copied.")
+        }
         val output = try {
             openOutput(destination)
         } catch (e: IOException) {
+            discardPartial(destination)
             return@withContext fail(e)
         } catch (e: SecurityException) {
+            discardPartial(destination)
             return@withContext ExportOutcome.Failed("The chosen location is not writable (${e.message ?: "permission denied"}).")
         } catch (e: RuntimeException) {
             // A document provider may throw anything from open (UnsupportedOperationException for a mode it does not know).
+            discardPartial(destination)
             return@withContext fail(e)
-        } ?: return@withContext ExportOutcome.Failed("The chosen location could not be opened for writing.")
+        }
+        if (output == null) {
+            discardPartial(destination)
+            return@withContext ExportOutcome.Failed("The chosen location could not be opened for writing.")
+        }
         var copied = 0L
         try {
             source.inputStream().use { input ->

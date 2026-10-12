@@ -91,6 +91,13 @@ class SensorLogFiles(private val dir: File, private val freeSpace: () -> Long = 
 
     fun delete(file: File): Boolean = !file.exists() || file.delete()
 
+    /** Deletes every file in the folder (finished, orphaned and half-written). True when nothing is left. */
+    fun deleteAll(): Boolean {
+        var clean = true
+        for (f in dir.listFiles().orEmpty()) if (!(f.deleteRecursively())) clean = false
+        return clean
+    }
+
     companion object {
         const val PART = ".part"
         private const val CHUNK = 8192

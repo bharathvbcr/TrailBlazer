@@ -31,12 +31,19 @@ class FakeSensorSource(private val present: Set<Int>) : SensorSource {
     /** Registrations made through [register], with the period each asked for (the last one per type). */
     val requestedPeriodUs = HashMap<Int, Int>()
 
+    /** Events handed to a [register] callback, per type: what the platform "delivered". */
+    val delivered = HashMap<Int, java.util.concurrent.atomic.AtomicLong>()
+
+    /** Runs inside [register] after the callback is installed, to deliver events while a recording is still starting. */
+    var onRegister: ((Int) -> Unit)? = null
+
     override fun register(type: Int, periodUs: Int, maxReportLatencyUs: Int, handler: android.os.Handler?, onSample: (SensorSample) -> Unit): AutoCloseable? {
         if (!has(type)) return null
-        val list = callbacks.getOrPut(type) { ArrayList() }
+        val list = callbacks.getOrPut(type) { java.util.concurrent.CopyOnWriteArrayList() }
         list += onSample
         requestedPeriodUs[type] = periodUs
         listeners[type] = (listeners[type] ?: 0) + 1
+        onRegister?.invoke(type)
         return AutoCloseable {
             if (list.remove(onSample)) listeners[type] = (listeners[type] ?: 1) - 1
         }
@@ -52,7 +59,10 @@ class FakeSensorSource(private val present: Set<Int>) : SensorSource {
     fun emit(type: Int, vararg values: Float, accuracy: Int = 3, timestampNs: Long = System.nanoTime()) {
         val sample = SensorSample(values, accuracy, timestampNs)
         check(stream(type).tryEmit(sample))
-        callbacks[type]?.toList()?.forEach { it(sample) }
+        callbacks[type]?.toList()?.forEach {
+            delivered.getOrPut(type) { java.util.concurrent.atomic.AtomicLong() }.incrementAndGet()
+            it(sample)
+        }
     }
 
     /** Fires a trigger sensor; returns false when nobody is listening for it. */

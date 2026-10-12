@@ -308,6 +308,162 @@ class SensorLoggerTest {
         assertEquals(0, f.dir.listFiles()!!.size)
     }
 
+    // --- where the loss is marked ---
+
+    private val firstNs = 5_001_000_000L
+    private val stepNs = 5_000_000L
+
+    @Test
+    fun theGapRowSitsAtTheLossAndItsTimesBracketTheDroppedEvents() {
+        val executor = Executors.newSingleThreadExecutor()
+        val gate = CountDownLatch(1)
+        executor.submit { gate.await() }
+        try {
+            val f = fixture(limits = LogLimits(queueCapacity = 64, statsIntervalMs = 20, flushIntervalMs = 10), io = executor.asCoroutineDispatcher())
+            assertNull(f.logger.start())
+            f.emitAccel(100, firstNs = firstNs, stepNs = stepNs) // the first 64 fit; events 64..99 are lost
+            gate.countDown()
+            f.logger.stop()
+            val rows = readCsv(f.logger.awaitFinished().log.file)
+
+            assertEquals(
+                "the 64 queued events, then the gap, then the close: the gap is not placed before them",
+                List(64) { "ACCELEROMETER" } + listOf("GAP", "SESSION_END"),
+                rows.drop(2).map { it[TYPE_COL] },
+            )
+            val gap = rows.single { it[TYPE_COL] == "GAP" }
+            val n = notes(gap[NOTE_COL])
+            assertEquals("36", n["dropped"])
+            assertEquals((firstNs + 64 * stepNs).toString(), n["first_dropped_ns"])
+            assertEquals((firstNs + 99 * stepNs).toString(), n["last_dropped_ns"])
+            assertEquals("the row is stamped with the first lost time", n["first_dropped_ns"], gap[1])
+            assertEquals("36", n["total_dropped"])
+        } finally {
+            gate.countDown()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun aLossBetweenTwoBurstsIsMarkedBetweenThem() {
+        val executor = Executors.newSingleThreadExecutor()
+        val gate = CountDownLatch(1)
+        executor.submit { gate.await() }
+        try {
+            val f = fixture(limits = LogLimits(queueCapacity = 64, statsIntervalMs = 20, flushIntervalMs = 10), io = executor.asCoroutineDispatcher())
+            assertNull(f.logger.start())
+            f.emitAccel(100, firstNs = firstNs, stepNs = stepNs)
+            gate.countDown()
+            waitFor("the first burst to be written") { ((f.logger.state.value as LoggerState.Recording).stats.written) >= 64 }
+            f.emitAccel(5, firstNs = firstNs + 1_000 * stepNs, stepNs = stepNs)
+            f.logger.stop()
+            val rows = readCsv(f.logger.awaitFinished().log.file)
+
+            assertEquals(
+                List(64) { "ACCELEROMETER" } + listOf("GAP") + List(5) { "ACCELEROMETER" } + listOf("SESSION_END"),
+                rows.drop(2).map { it[TYPE_COL] },
+            )
+            val n = notes(rows.single { it[TYPE_COL] == "GAP" }[NOTE_COL])
+            assertEquals("36", n["dropped"])
+            assertEquals((firstNs + 64 * stepNs).toString(), n["first_dropped_ns"])
+            assertEquals((firstNs + 99 * stepNs).toString(), n["last_dropped_ns"])
+            assertFalse("the loss was reported once, not again at the end", n.containsKey("at"))
+        } finally {
+            gate.countDown()
+            executor.shutdownNow()
+        }
+    }
+
+    // --- durability while the sensors are quiet ---
+
+    @Test
+    fun rowsReachTheDiskWhenTheEventsStop() {
+        val f = fixture(limits = LogLimits(statsIntervalMs = 20, flushIntervalMs = 50))
+        assertNull(f.logger.start())
+        f.emitAccel(10) // ten rows in an instant, then silence
+        val live = f.dir.listFiles()!!.single()
+        waitFor("the ten rows on disk while no event arrives", timeoutMs = 5_000) {
+            live.readText().split("\r\n").count { it.contains(",ACCELEROMETER,") } == 10
+        }
+    }
+
+    @Test
+    fun aForegroundMarkerIsOnDiskAtOnceEvenWithALongFlushInterval() {
+        val f = fixture(limits = LogLimits(statsIntervalMs = 20, flushIntervalMs = 600_000))
+        assertNull(f.logger.start())
+        val live = f.dir.listFiles()!!.single()
+        f.foreground.value = false
+        waitFor("the background marker on disk", timeoutMs = 5_000) { live.readText().contains(",APP_BACKGROUND,") }
+    }
+
+    @Test
+    fun quietSensorsStillTriggerTheLowStorageCheck() {
+        val calls = AtomicInteger()
+        val f = fixture(
+            limits = LogLimits(statsIntervalMs = 20, flushIntervalMs = 30),
+            freeBytes = { if (calls.incrementAndGet() <= 1) Long.MAX_VALUE else 1_000L },
+        )
+        assertNull(f.logger.start())
+        // No events at all: the idle check alone has to notice that storage ran out.
+        val done = f.logger.awaitFinished()
+        assertEquals(StopReason.Kind.DiskLow, done.reason.kind)
+    }
+
+    // --- one job owns the session ---
+
+    @Test
+    fun aWriterThatEndsAtOnceLeavesNoTickerOrWatcherRunning() {
+        // Unconfined: the writer runs inside start(), before the ticker is even launched (the order a fast failure has).
+        val f = fixture(limits = LogLimits(maxBytes = 1, statsIntervalMs = 20, flushIntervalMs = 10), io = kotlinx.coroutines.Dispatchers.Unconfined)
+        f.sensors.onRegister = { type -> if (type == ACCEL) f.sensors.emit(ACCEL, 1f, 2f, 3f, timestampNs = firstNs) }
+        assertNull(f.logger.start())
+        val done = f.logger.state.value as LoggerState.Finished
+        assertEquals(StopReason.Kind.SizeCap, done.reason.kind)
+        // A session that ended inside start() leaves no listener behind either.
+        for (type in listOf(ACCEL, GYRO, BARO)) assertEquals("listener $type", 0, f.sensors.listenerCount(type))
+        assertEquals(f.gnss.registrations.get(), f.gnss.closed.get())
+        waitFor("no coroutine of the session left running", timeoutMs = 5_000) { f.job.children.none { it.isActive } }
+    }
+
+    // --- every delivered event is accounted for ---
+
+    @Test
+    fun everyDeliveredEventIsWrittenDroppedOrLateEvenWhenTheSizeCapEndsTheRecording() {
+        val executor = Executors.newSingleThreadExecutor()
+        val gate = CountDownLatch(1)
+        executor.submit { gate.await() }
+        try {
+            val f = fixture(
+                limits = LogLimits(queueCapacity = 1_000, maxBytes = 30_000, statsIntervalMs = 20, flushIntervalMs = 10),
+                io = executor.asCoroutineDispatcher(),
+            )
+            assertNull(f.logger.start())
+            f.emitAccel(5_000) // 1,000 fit, 4,000 overflow; the cap then stops the writer with the rest still queued
+            gate.countDown()
+            val done = f.logger.awaitFinished()
+            assertEquals(StopReason.Kind.SizeCap, done.reason.kind)
+
+            val end = endNote(done.log.file)
+            val delivered = f.sensors.delivered.getValue(ACCEL).get()
+            val written = end.getValue("written").toLong()
+            val dropped = end.getValue("dropped").toLong()
+            val atStop = end.getValue("dropped_at_stop").toLong()
+            val late = end.getValue("late_after_stop").toLong()
+            assertTrue("events were left in the queue when the cap hit", atStop > 0)
+            assertEquals(5_000L, delivered)
+            assertEquals("written + dropped + late is every delivered event", delivered, written + dropped + late)
+            assertEquals("accepted = written + dropped_at_stop", end.getValue("accepted").toLong(), written + atStop)
+            assertEquals(4_000L + atStop, dropped)
+            assertEquals(dropped, done.stats!!.dropped)
+            // The gap rows add up to the overflow drops (those at stop are counted separately).
+            val gaps = readCsv(done.log.file).filter { it[TYPE_COL] == "GAP" }.sumOf { notes(it[NOTE_COL]).getValue("dropped").toLong() }
+            assertEquals(4_000L, gaps)
+        } finally {
+            gate.countDown()
+            executor.shutdownNow()
+        }
+    }
+
     private fun row(svid: Int) = GnssMeasurementRow(
         elapsedNs = 5_100_000_000L, constellation = 1, svid = svid, cn0DbHz = 40.0, receivedSvTimeNs = 1L, receivedSvTimeUncertaintyNs = 2L,
         state = 3, pseudorangeRateMps = 1.0, pseudorangeRateUncertaintyMps = 0.1, timeOffsetNs = 0.0, accumulatedDeltaRangeM = 0.0,

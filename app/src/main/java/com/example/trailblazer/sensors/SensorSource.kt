@@ -40,7 +40,8 @@ interface SensorSource {
     /**
      * Samples for [type] at roughly [periodUs]. The flow is conflated: a slow collector sees the
      * latest sample instead of an unbounded queue. Unregisters the listener when collection stops.
-     * Completes immediately when the sensor does not exist.
+     * Completes immediately, emitting nothing, when the sensor does not exist or the system refuses the registration
+     * (including a SecurityException, which is caught and never thrown to the collector).
      */
     fun samples(type: Int, periodUs: Int): Flow<SensorSample>
 
@@ -48,7 +49,10 @@ interface SensorSource {
      * Every sample for [type], not conflated, for logic that must not miss one (a collapsed batch could hide motion).
      * The sensor hub may hold samples for up to [maxReportLatencyUs] and deliver them together, each with its own
      * timestamp, so the phone can sleep in between. Samples that do not fit the buffer are dropped, which shows up as a
-     * gap in the timestamps. Completes immediately when the sensor does not exist.
+     * gap in the timestamps. Completes immediately, emitting nothing, when the sensor does not exist or the system
+     * refuses the registration (including a SecurityException, which is caught and never thrown to the collector).
+     * A listener registered by another part of the app (the sensor recorder asks for 200 Hz) can make the hardware run
+     * faster than [periodUs], and Android may deliver faster than requested: callers must not assume the rate.
      */
     fun batchedSamples(type: Int, periodUs: Int, maxReportLatencyUs: Int): Flow<SensorSample>
 
@@ -69,10 +73,16 @@ interface SensorSource {
     fun triggers(type: Int): Flow<Unit>
 }
 
-class AndroidSensorSource(private val manager: SensorManager) : SensorSource {
+class AndroidSensorSource(
+    private val manager: SensorManager,
+    /** The call that registers a listener; replaceable so a test can make the system refuse it as Android 12+ does. */
+    private val registrar: (SensorEventListener, Sensor, Int, Int, Handler?) -> Boolean = { l, s, period, latency, handler ->
+        if (handler == null) manager.registerListener(l, s, period, latency) else manager.registerListener(l, s, period, latency, handler)
+    },
+) : SensorSource {
     override fun has(type: Int) = manager.getDefaultSensor(type) != null
 
-    private fun Sensor.toInfo() = SensorInfo(type, name, vendor, version, maximumRange, resolution, power, minDelay, isWakeUpSensor, stringType)
+    private fun Sensor.toInfo() = SensorInfo(type, name.orEmpty(), vendor.orEmpty(), version, maximumRange, resolution, power, minDelay, isWakeUpSensor, stringType)
 
     override fun info(type: Int): SensorInfo? = manager.getDefaultSensor(type)?.toInfo()
 
@@ -94,8 +104,7 @@ class AndroidSensorSource(private val manager: SensorManager) : SensorSource {
             override fun onAccuracyChanged(s: Sensor, newAccuracy: Int) = Unit
         }
         val registered = try {
-            if (handler == null) manager.registerListener(listener, sensor, periodUs, maxReportLatencyUs)
-            else manager.registerListener(listener, sensor, periodUs, maxReportLatencyUs, handler)
+            registrar(listener, sensor, periodUs, maxReportLatencyUs, handler)
         } catch (_: SecurityException) {
             false
         }

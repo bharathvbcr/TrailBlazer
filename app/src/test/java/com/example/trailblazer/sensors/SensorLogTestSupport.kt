@@ -125,3 +125,9 @@ fun notes(cell: String): Map<String, String> = cell.split(';').filter { it.conta
 
 const val TYPE_COL = 2
 const val NOTE_COL = 23
+
+/** An accelerometer for a Robolectric `SensorManager`, with the name a real one always has. */
+fun robolectricAccelerometer(): Sensor = org.robolectric.shadows.ShadowSensor.newInstance(Sensor.TYPE_ACCELEROMETER).also { s ->
+    val shadow = org.robolectric.Shadows.shadowOf(s)
+    shadow.setName("Test accelerometer")
+}

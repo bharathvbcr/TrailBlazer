@@ -23,10 +23,12 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileOutputStream
@@ -125,14 +127,14 @@ class SensorLogger(
                 skipped += "${sensor.label()}: the system refused the registration"
                 notes += "${sensor.csvName.lowercase(Locale.ROOT)}=refused"
             } else {
-                s.handles += handle
+                s.addHandle(handle)
                 sources += sensor.label()
                 notes += "${sensor.csvName.lowercase(Locale.ROOT)}_period_us=$periodUs"
             }
         }
         when (val raw = gnss.register({ rows -> rows.forEach(s::offer) }, { status -> s.offer(MarkerRow(clocks.elapsedNs(), MarkerKind.GnssRawStatus, status)) })) {
             is GnssRawRegistration.Active -> {
-                s.handles += raw.handle
+                s.addHandle(raw.handle)
                 sources += "GNSS raw measurements"
                 notes += "gnss_raw=on"
             }
@@ -166,6 +168,30 @@ class SensorLogger(
     /** Asks the recording to stop. The state becomes [LoggerState.Finished] once the last queued events are written. */
     fun stop() {
         session?.requestStop(StopReason(StopReason.Kind.UserStopped))
+    }
+
+    /**
+     * Stops a recording and cancels a save in progress, then waits until both have ended. False when they did not end
+     * within [timeoutMs]; the caller must then not delete the files under them.
+     */
+    suspend fun stopAndAwait(timeoutMs: Long = STOP_TIMEOUT_MS): Boolean {
+        cancelExport()
+        val saving = exportJob
+        if (saving != null && withTimeoutOrNull(timeoutMs) { saving.join() } == null) return false
+        stop()
+        return withTimeoutOrNull(timeoutMs) { state.first { it !is LoggerState.Recording } } != null
+    }
+
+    /**
+     * Deletes every recording file on the phone (finished, unsaved and half-written) and returns to [LoggerState.Idle].
+     * Used by "delete all data": raw GNSS with UTC timestamps is location history. Refuses (false) while a recording runs.
+     */
+    fun deleteAllFiles(): Boolean = synchronized(lock) {
+        if (session != null) return false
+        val clean = files.deleteAll()
+        _notice.value = null
+        if (clean) _state.value = LoggerState.Idle
+        clean
     }
 
     /**
@@ -278,7 +304,20 @@ class SensorLogger(
     private inner class Session(val file: File, val anchor: ClockAnchor) {
         val startedNs = anchor.elapsedNs
         val initialForeground = foreground.value
-        val queue = Channel<LogEvent>(limits.queueCapacity) // SUSPEND on full: trySend fails and the caller counts the drop
+        val queue = Channel<Queued>(limits.queueCapacity) // SUSPEND on full: trySend fails and the caller counts the drop
+
+        /** Child of the app scope that owns the writer, the ticker and the foreground watcher: ending it ends all three. */
+        val job: Job = Job(scope.coroutineContext[Job])
+
+        // Events dropped since the last one that was queued. Guarded by [gapLock]; the lock is held for a few
+        // instructions and never across I/O, so a callback still never waits for the disk.
+        private val gapLock = Any()
+        private var openCount = 0L
+        private var openFirstNs = 0L
+        private var openLastNs = 0L
+
+        /** Overflow drops the writer has not yet written as GAP rows (writer-confined). */
+        var reportedGapTotal = 0L
         val handles = java.util.concurrent.CopyOnWriteArrayList<AutoCloseable>()
         val callbackThread = AtomicReference<HandlerThread?>(null)
         var startNote = ""
@@ -291,17 +330,34 @@ class SensorLogger(
         val written = AtomicLong()
         val bytes = AtomicLong()
         val stopReason = AtomicReference<StopReason?>(null)
-        private var ticker: Job? = null
-        private var marks: Job? = null
-
-        /** Called on sensor and GNSS threads. Never blocks, never touches the disk. */
+        /**
+         * Called on sensor and GNSS threads. Never blocks, never touches the disk. An event that does not fit is
+         * dropped and counted; the next event that does fit carries the drops that precede it, so the writer puts the
+         * GAP row exactly where the loss happened, with the first and last dropped time.
+         */
         fun offer(e: LogEvent) {
-            val r = queue.trySend(e)
-            when {
-                r.isSuccess -> accepted.incrementAndGet()
-                r.isClosed -> late.incrementAndGet() // arrived after stop; not part of this recording
-                else -> dropped.incrementAndGet()
+            synchronized(gapLock) {
+                val gap = if (openCount > 0) GapSnapshot(openCount, openFirstNs, openLastNs) else null
+                val r = queue.trySend(Queued(e, gap))
+                when {
+                    r.isSuccess -> {
+                        accepted.incrementAndGet()
+                        if (gap != null) openCount = 0
+                    }
+                    r.isClosed -> late.incrementAndGet() // arrived after stop; not part of this recording
+                    else -> {
+                        dropped.incrementAndGet()
+                        if (openCount == 0L) { openFirstNs = e.elapsedNs; openLastNs = e.elapsedNs }
+                        else { openFirstNs = minOf(openFirstNs, e.elapsedNs); openLastNs = maxOf(openLastNs, e.elapsedNs) }
+                        openCount++
+                    }
+                }
             }
+        }
+
+        /** The drops after the last queued event (and any carried by events that were never written), once, at the end. */
+        fun takeOpenGap(): GapSnapshot? = synchronized(gapLock) {
+            if (openCount == 0L) null else GapSnapshot(openCount, openFirstNs, openLastNs).also { openCount = 0 }
         }
 
         fun stats(): LogStats = LogStats(
@@ -319,6 +375,12 @@ class SensorLogger(
             _state.update { if (it is LoggerState.Recording) it.copy(stopping = true, stats = stats()) else it }
         }
 
+        /** A source registered while start() is still running; if the session already ended meanwhile, release it at once. */
+        fun addHandle(handle: AutoCloseable) {
+            handles += handle
+            if (stopReason.get() != null) releaseSources()
+        }
+
         fun releaseSources() {
             // Called from the user's thread, the writer and the ticker; whoever gets there first closes each handle once.
             for (h in handles.toList()) if (handles.remove(h)) runCatching { h.close() }
@@ -327,15 +389,15 @@ class SensorLogger(
 
         fun launchJobs() {
             // ATOMIC: even a scope cancelled right now still enters runWriter, whose finally closes the file and the sources.
-            scope.launch(io, start = CoroutineStart.ATOMIC) { runWriter() }
-            ticker = scope.launch {
+            scope.launch(job + io, start = CoroutineStart.ATOMIC) { runWriter() }
+            scope.launch(job) {
                 while (isActive) {
                     delay(limits.statsIntervalMs)
                     if (stats().elapsedMs >= limits.maxDurationMs) requestStop(StopReason(StopReason.Kind.DurationCap, "${limits.maxDurationMs / 3_600_000.0} h"))
                     _state.update { if (it is LoggerState.Recording) it.copy(stats = stats()) else it }
                 }
             }
-            marks = scope.launch {
+            scope.launch(job) {
                 // Compared with the value the start row recorded, not "the first value seen": a change before this
                 // coroutine starts running would otherwise be swallowed as the initial value.
                 var last = initialForeground
@@ -354,6 +416,7 @@ class SensorLogger(
             val perSensor = LongArray(LogSensor.entries.size)
             var gnssRows = 0L
             var droppedAtStop = 0L
+            var tail: GapSnapshot? = null
             try {
                 val w = BufferedWriter(OutputStreamWriter(FileOutputStream(file), Charsets.UTF_8), WRITE_BUFFER)
                 writer = w
@@ -365,19 +428,41 @@ class SensorLogger(
                 put(SensorCsv.rowLine(MarkerRow(anchor.elapsedNs, MarkerKind.SessionStart, startNote), anchor))
                 w.flush() // a file that exists is a file with its header
                 var lastFlush = clocks.monotonicMs()
-                var reportedDrops = 0L
-                for (event in queue) {
-                    val dropsNow = dropped.get()
-                    if (dropsNow > reportedDrops) {
-                        put(SensorCsv.rowLine(MarkerRow(event.elapsedNs, MarkerKind.Gap, "dropped=${dropsNow - reportedDrops};total_dropped=$dropsNow;queue_full"), anchor))
-                        reportedDrops = dropsNow
+                var dirty = false
+                while (true) {
+                    var received = queue.tryReceive()
+                    if (!received.isSuccess && !received.isClosed) {
+                        // Nothing queued. Wait for the next event, but no longer than the flush interval: rows that are
+                        // already written must reach the disk, and storage must be checked, even when the sensors go quiet.
+                        val wait = (limits.flushIntervalMs - (clocks.monotonicMs() - lastFlush)).coerceAtLeast(1L)
+                        val waited = withTimeoutOrNull(wait) { queue.receiveCatching() }
+                        if (waited == null) {
+                            if (dirty) { w.flush(); dirty = false }
+                            lastFlush = clocks.monotonicMs()
+                            if (files.freeBytes() < limits.minFreeBytes) {
+                                requestStop(StopReason(StopReason.Kind.DiskLow))
+                                break
+                            }
+                            continue
+                        }
+                        received = waited
                     }
+                    val item = received.getOrNull() ?: break // closed and empty: everything accepted was written
+                    item.gapBefore?.let { g ->
+                        reportedGapTotal += g.count
+                        put(SensorCsv.rowLine(MarkerRow(g.firstNs, MarkerKind.Gap, gapNote(g, reportedGapTotal)), anchor))
+                    }
+                    val event = item.event
                     put(SensorCsv.rowLine(event, anchor))
                     written.incrementAndGet()
+                    dirty = true
                     when (event) {
                         is SensorEventRow -> perSensor[event.sensor.ordinal]++
                         is GnssMeasurementRow -> gnssRows++
-                        else -> Unit
+                        is MarkerRow -> if (event.kind == MarkerKind.AppBackground || event.kind == MarkerKind.AppForeground) {
+                            // The app is about to be frozen or has just resumed: make what is written durable at once.
+                            w.flush(); dirty = false; lastFlush = clocks.monotonicMs()
+                        }
                     }
                     if (bytes.get() >= limits.maxBytes) {
                         requestStop(StopReason(StopReason.Kind.SizeCap, mib(limits.maxBytes)))
@@ -386,6 +471,7 @@ class SensorLogger(
                     val now = clocks.monotonicMs()
                     if (now - lastFlush >= limits.flushIntervalMs) {
                         w.flush()
+                        dirty = false
                         lastFlush = now
                         if (files.freeBytes() < limits.minFreeBytes) {
                             requestStop(StopReason(StopReason.Kind.DiskLow))
@@ -401,21 +487,36 @@ class SensorLogger(
                 requestStop(StopReason(StopReason.Kind.WriteFailed, e.message ?: e::class.java.simpleName))
             } finally {
                 withContext(NonCancellable) {
-                    // Events accepted but never written (the writer stopped early) are losses, not silently absent.
-                    while (queue.tryReceive().isSuccess) droppedAtStop++
+                    // Events accepted but never written (the writer stopped early) are losses, not silently absent; the
+                    // drops they carried are still unreported, so they join the closing GAP row.
+                    while (true) {
+                        val item = queue.tryReceive().getOrNull() ?: break
+                        droppedAtStop++
+                        item.gapBefore?.let { tail = tail.plus(it) }
+                    }
+                    takeOpenGap()?.let { tail = tail.plus(it) }
                     dropped.addAndGet(droppedAtStop)
-                    finish(writer, ioFailed, perSensor, gnssRows, droppedAtStop)
+                    finish(writer, ioFailed, perSensor, gnssRows, droppedAtStop, tail)
                 }
             }
         }
 
-        private fun finish(writer: BufferedWriter?, ioFailed: Boolean, perSensor: LongArray, gnssRows: Long, droppedAtStop: Long) {
+        private fun gapNote(g: GapSnapshot, total: Long) =
+            "dropped=${g.count};first_dropped_ns=${g.firstNs};last_dropped_ns=${g.lastNs};total_dropped=$total;queue_full"
+
+        private fun finish(writer: BufferedWriter?, ioFailed: Boolean, perSensor: LongArray, gnssRows: Long, droppedAtStop: Long, tail: GapSnapshot?) {
             requestStop(StopReason(StopReason.Kind.Cancelled)) // no-op when a reason is already set
             val reason = stopReason.get()!!
             val duration = max(0L, (clocks.elapsedNs() - startedNs) / 1_000_000L)
             var closed = false
             try {
                 if (writer != null) {
+                    if (tail != null) {
+                        reportedGapTotal += tail.count
+                        val gap = SensorCsv.rowLine(MarkerRow(tail.firstNs, MarkerKind.Gap, gapNote(tail, reportedGapTotal) + ";at=end"), anchor)
+                        writer.write(gap)
+                        bytes.addAndGet(SensorCsv.utf8Length(gap).toLong())
+                    }
                     val counts = LogSensor.entries.joinToString(",") { "${it.csvName}:${perSensor[it.ordinal]}" } + ",GNSS_MEASUREMENT:$gnssRows"
                     val rates = LogSensor.entries.joinToString(",") { s ->
                         "${s.csvName}:" + if (duration > 0) String.format(Locale.ROOT, "%.1f", perSensor[s.ordinal] * 1000.0 / duration) else "0.0"
@@ -440,16 +541,25 @@ class SensorLogger(
             val sealed = files.seal(file)
             val finalStats = LogStats(duration, written.get(), dropped.get(), sealed.length())
             releaseSources()
-            ticker?.cancel()
-            marks?.cancel()
             synchronized(lock) {
                 session = null
                 _state.value = LoggerState.Finished(PendingLog(sealed, sealed.length(), interrupted = false), finalStats, reason)
             }
+            job.cancel() // the ticker and the foreground watcher; the writer is on its way out of this very call
         }
     }
 
+    /** An event on its way to the writer, with the overflow drops that happened just before it was queued. */
+    private class Queued(val event: LogEvent, val gapBefore: GapSnapshot?)
+
+    /** [count] events were dropped between [firstNs] and [lastNs] (sensor-clock time of the first and last one dropped). */
+    private class GapSnapshot(val count: Long, val firstNs: Long, val lastNs: Long)
+
+    private fun GapSnapshot?.plus(other: GapSnapshot): GapSnapshot =
+        if (this == null) other else GapSnapshot(count + other.count, minOf(firstNs, other.firstNs), maxOf(lastNs, other.lastNs))
+
     private companion object {
         const val WRITE_BUFFER = 64 * 1024
+        const val STOP_TIMEOUT_MS = 10_000L
     }
 }

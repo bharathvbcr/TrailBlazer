@@ -157,6 +157,10 @@ class AppContainer(
      */
     suspend fun deleteAllData(): WipeResult {
         if (!tracking.stopAndAwait()) return WipeResult.RecordingStillActive
+        // Sensor recordings hold raw GNSS with UTC timestamps (location history): a running one is stopped, a save in
+        // progress cancelled, and only then are the files deleted. If they will not stop, nothing is deleted.
+        if (!sensorLogger.stopAndAwait()) return WipeResult.RecordingStillActive
+        var sensorLogsGone = false
         withContext(NonCancellable) {
             db.withTransaction {
                 db.tracks().deleteAll(); db.trips().deleteAll(); db.waypoints().deleteAll(); db.pressure().deleteAll()
@@ -164,8 +168,9 @@ class AppContainer(
             prefs.clear()
             tracking.clearInterrupt()
             weather.clearCache()
+            sensorLogsGone = withContext(Dispatchers.IO) { sensorLogger.deleteAllFiles() }
         }
-        return WipeResult.Done
+        return if (sensorLogsGone) WipeResult.Done else WipeResult.SensorLogsRemain
     }
 }
 
@@ -173,7 +178,13 @@ class AppContainer(
 private const val EXPORT_SLACK_BYTES = 1L * 1024 * 1024
 
 /** How [AppContainer.deleteAllData] ended. */
-enum class WipeResult { Done, RecordingStillActive }
+enum class WipeResult {
+    Done,
+    RecordingStillActive,
+
+    /** Everything else was deleted, but a sensor recording file could not be. */
+    SensorLogsRemain,
+}
 
 class TrailApp : Application() {
     lateinit var container: AppContainer

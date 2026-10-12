@@ -96,8 +96,10 @@ internal fun SensorRecorderContent(
         when (state) {
             LoggerState.Idle -> Text(
                 "Records raw accelerometer and gyroscope at up to 200 Hz, the barometer, and raw GNSS measurements when the " +
-                    "phone and the location permission allow, to a CSV file with UTC timestamps. Android pauses sensors " +
-                    "while the app is in the background, and the file marks those stretches.",
+                    "phone and the location permission allow, to a CSV file with UTC timestamps. While a track is " +
+                    "recording (its notification is showing) the sensors keep running with the screen off. Otherwise " +
+                    "Android pauses them while the app is in the background, and the file marks those stretches. A " +
+                    "banner on every screen shows the recording until you stop it.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

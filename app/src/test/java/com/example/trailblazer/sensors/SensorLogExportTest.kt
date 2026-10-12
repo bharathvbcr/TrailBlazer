@@ -69,6 +69,24 @@ class SensorLogExportTest {
     }
 
     @Test
+    fun everyFailureBeforeTheFirstByteStillRemovesTheEmptyDocumentThePickerCreated() = runBlocking {
+        val discarded = ArrayList<Uri>()
+        val open = listOf<(Uri) -> OutputStream?>(
+            { null },
+            { throw IOException("gone") },
+            { throw SecurityException("denied") },
+            { throw UnsupportedOperationException("mode") },
+        )
+        for (o in open) {
+            val outcome = SensorLogExporter(o, { discarded += it }, Long.MAX_VALUE).copy(source(), uri)
+            assertTrue(outcome.toString(), outcome is ExportOutcome.Failed)
+        }
+        val oversize = SensorLogExporter({ error("not opened") }, { discarded += it }, maxBytes = 10).copy(source(5_000), uri)
+        assertTrue(oversize is ExportOutcome.Failed)
+        assertEquals("one removal per failed save, none left behind", List(5) { uri }, discarded)
+    }
+
+    @Test
     fun aFullDestinationIsReportedAsSuchAndTheHalfWrittenFileRemoved() = runBlocking {
         val discarded = ArrayList<Uri>()
         val full = object : OutputStream() {
