@@ -26,7 +26,8 @@ class SensorLogFiles(private val dir: File, private val freeSpace: () -> Long = 
         var n = 0
         while (true) {
             val file = File(dir, "trailblazer-sensors-$stamp${if (n == 0) "" else "-$n"}.csv$PART")
-            if (file.createNewFile()) return file
+            // The sealed name must be free too, or seal() could never rename this file and it would read as an orphan.
+            if (!File(dir, file.name.removeSuffix(PART)).exists() && file.createNewFile()) return file
             if (++n > 99) throw IOException("Cannot create a recording file in $dir")
         }
     }

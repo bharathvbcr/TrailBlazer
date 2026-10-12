@@ -17,9 +17,11 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ChannelResult
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +29,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.onTimeout
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.BufferedWriter
@@ -188,6 +192,9 @@ class SensorLogger(
      */
     fun deleteAllFiles(): Boolean = synchronized(lock) {
         if (session != null) return false
+        // A save still copying the file keeps it: deleting it under the copy would fail the save with a false
+        // "still on this phone" message. Callers cancel the save first.
+        if ((_state.value as? LoggerState.Finished)?.exporting == true) return false
         val clean = files.deleteAll()
         _notice.value = null
         if (clean) _state.value = LoggerState.Idle
@@ -410,6 +417,7 @@ class SensorLogger(
             }
         }
 
+        @OptIn(ExperimentalCoroutinesApi::class) // onTimeout in select
         private suspend fun runWriter() {
             var writer: BufferedWriter? = null
             var ioFailed = false
@@ -435,7 +443,12 @@ class SensorLogger(
                         // Nothing queued. Wait for the next event, but no longer than the flush interval: rows that are
                         // already written must reach the disk, and storage must be checked, even when the sensors go quiet.
                         val wait = (limits.flushIntervalMs - (clocks.monotonicMs() - lastFlush)).coerceAtLeast(1L)
-                        val waited = withTimeoutOrNull(wait) { queue.receiveCatching() }
+                        // select, not withTimeoutOrNull: receiving and timing out are one atomic choice, so an event
+                        // handed over as the wait expires is received rather than dropped by a cancelled receive.
+                        val waited = select<ChannelResult<Queued>?> {
+                            queue.onReceiveCatching { it }
+                            onTimeout(wait) { null }
+                        }
                         if (waited == null) {
                             if (dirty) { w.flush(); dirty = false }
                             lastFlush = clocks.monotonicMs()

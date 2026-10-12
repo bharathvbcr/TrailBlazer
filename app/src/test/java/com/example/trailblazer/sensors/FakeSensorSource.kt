@@ -59,7 +59,9 @@ class FakeSensorSource(private val present: Set<Int>) : SensorSource {
     fun emit(type: Int, vararg values: Float, accuracy: Int = 3, timestampNs: Long = System.nanoTime()) {
         val sample = SensorSample(values, accuracy, timestampNs)
         check(stream(type).tryEmit(sample))
-        callbacks[type]?.toList()?.forEach {
+        // Iterate the CopyOnWriteArrayList itself (a snapshot): toList() reads size then get(0), which races with a
+        // listener the logger removes on its own thread when it stops mid-burst.
+        callbacks[type]?.forEach {
             delivered.getOrPut(type) { java.util.concurrent.atomic.AtomicLong() }.incrementAndGet()
             it(sample)
         }
