@@ -11,11 +11,10 @@ import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performScrollToNode
-import androidx.navigation3.runtime.NavBackStack
-import androidx.navigation3.runtime.NavKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.trailblazer.data.ThemeMode
 import com.example.trailblazer.ui.components.Backdrop
+import com.example.trailblazer.ui.nav.NavigationState
 import com.example.trailblazer.ui.nav.Navigator
 import com.example.trailblazer.ui.nav.StargazeRoute
 import com.example.trailblazer.ui.theme.TrailTheme
@@ -38,7 +37,7 @@ class StargazeScreenshotTest {
     private val out = File("build/reports/screens").apply { mkdirs() }
 
     private fun render(name: String, nightRed: Boolean) {
-        val nav = Navigator(NavBackStack<NavKey>(StargazeRoute(39.74, -104.99, "Denver")))
+        val nav = Navigator(NavigationState.single(StargazeRoute(39.74, -104.99, "Denver")))
         rule.setContent {
             TrailTheme(mode = ThemeMode.Dark, dynamicColor = false, nightRed = nightRed) {
                 Backdrop { StargazeScreen(nav, 39.74, -104.99, "Denver") }

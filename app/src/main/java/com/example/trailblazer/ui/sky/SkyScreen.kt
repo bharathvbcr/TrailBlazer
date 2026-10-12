@@ -43,6 +43,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.trailblazer.container
 import com.example.trailblazer.permissions.AppPermission
@@ -93,7 +94,7 @@ import com.trailblazer.core.astro.Horizontal
 @Composable
 fun SkyScreen(nav: Navigator) {
     val ctx = LocalContext.current
-    val vm: SkyViewModel = viewModel { SkyViewModel(ctx.container) }
+    val vm: SkyViewModel = viewModel { SkyViewModel(ctx.container, createSavedStateHandle()) }
     val settings = vm.settings.collectAsStateWithLifecycle().value ?: return
     val fmt = remember(settings) { Fmt(ctx, settings) }
     val sky by vm.sky.collectAsStateWithLifecycle()
@@ -131,7 +132,7 @@ fun SkyScreen(nav: Navigator) {
                     IconButton(onClick = { vm.step(1) }) { Icon(TrailIcons.Chevron, "Next day") }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
-                    if (offset != 0) FilterChip(selected = false, onClick = { vm.dayOffset.value = 0 }, label = { Text("Today") })
+                    if (offset != 0) FilterChip(selected = false, onClick = { vm.setDayOffset(0) }, label = { Text("Today") })
                     FilterChip(selected = place?.manual == true, onClick = { placeDialog = true }, label = { Text("Change place") })
                 }
             }
@@ -179,9 +180,9 @@ fun SkyScreen(nav: Navigator) {
     if (placeDialog) PlacePicker(
         title = "Choose a place",
         onDismiss = { placeDialog = false },
-        onPick = { places -> places.firstOrNull()?.let { vm.manualPlace.value = SkyPlace(it.position, it.label, true) }; placeDialog = false },
+        onPick = { places -> places.firstOrNull()?.let { vm.setManualPlace(SkyPlace(it.position, it.label, true)) }; placeDialog = false },
         // Here means follow the live position, not a fixed copy of it.
-        here = HereOption("Use my location") { vm.manualPlace.value = null; placeDialog = false; null },
+        here = HereOption("Use my location") { vm.setManualPlace(null); placeDialog = false; null },
     )
     if (consentDialog) AlertDialog(
         onDismissRequest = { consentDialog = false },
@@ -204,7 +205,7 @@ private fun SunCard(s: SkyState, fmt: Fmt) {
     val colors = sunColors()
     val last = (sun.windowEndMs - 1).coerceAtLeast(sun.windowStartMs)
     val marker = if (s.isToday) s.nowMs else sun.solarNoonMs
-    var at by remember(sun.windowStartMs, sun.windowEndMs) { mutableLongStateOf((marker ?: sun.windowStartMs).coerceIn(sun.windowStartMs, last)) }
+    var at by rememberSaveable(sun.windowStartMs, sun.windowEndMs) { mutableLongStateOf((marker ?: sun.windowStartMs).coerceIn(sun.windowStartMs, last)) }
     GlassCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(TrailIcons.Sun, null, tint = LocalStatusColors.current.caution)
@@ -439,7 +440,7 @@ private fun MoonCompass(s: SkyState, fmt: Fmt) {
     val start = s.sun.windowStartMs
     val end = s.sun.windowEndMs
     val initial = (if (s.isToday) s.nowMs else m.transitMs ?: (start + end) / 2).coerceIn(start, end - 1)
-    var at by remember(start, end) { mutableLongStateOf(initial) }
+    var at by rememberSaveable(start, end) { mutableLongStateOf(initial) }
     Text(
         listOfNotNull(fmt.time(at), altitudeAt(s.moonPath, start, at)?.let { if (it >= 0) "Moon ${it.roundToInt()}° up" else "Moon below the horizon" }).joinToString(" · "),
         style = MaterialTheme.typography.labelLarge,

@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -76,15 +77,30 @@ class NowViewModel(private val c: AppContainer) : ViewModel() {
      * enabled; a reboot resets the hardware counter, which is detected (value below baseline) and re-baselined.
      */
     val steps: StateFlow<Reading<Long>?> = settings.map { it?.stepsEnabled == true }.distinctUntilChanged().flatMapLatest { on ->
-        if (!on) flowOf(null) else combine(c.steps.stepsSinceBoot, settings) { r, s ->
-            if (r !is Reading.Value) return@combine r
-            val base = s?.stepsBaseline
-            if (base == null || r.value < base) {
-                viewModelScope.launch { c.prefs.update { it.copy(stepsBaseline = r.value) } }
-                r.copy(value = 0L)
-            } else r.copy(value = r.value - base)
-        }
+        if (!on) flowOf(null) else combine(c.steps.stepsSinceBoot, settings) { r, s -> r to s?.stepsBaseline }
+            // The transform above only computes. Re-baselining is a write, so it runs here, in the collector: in
+            // line with the emission that needs it, not as a new coroutine per emission racing the one before.
+            .onEach { (r, base) -> if (r is Reading.Value && needsBaseline(r.value, base)) rebaseline(r.value) }
+            .map { (r, base) ->
+                when {
+                    r !is Reading.Value -> r
+                    needsBaseline(r.value, base) -> r.copy(value = 0L)
+                    else -> r.copy(value = r.value - base!!)
+                }
+            }
     }.stateIn(viewModelScope, started, null)
+
+    /** No baseline yet, or the hardware counter restarted below it (a reboot). */
+    private fun needsBaseline(raw: Long, base: Long?): Boolean = base == null || raw < base
+
+    /**
+     * Stores [raw] as the step baseline, unless the stored one already stands: the check runs inside the store's own
+     * atomic update, so the many readings that arrive before the new baseline comes back round cannot each move it
+     * forward and silently erase the steps counted since.
+     */
+    private suspend fun rebaseline(raw: Long) {
+        c.prefs.update { s -> if (needsBaseline(raw, s.stepsBaseline)) s.copy(stepsBaseline = raw) else s }
+    }
 
     /**
      * Emits the speed (m/s) each time the overspeed alert fires. Cold: it listens to location only while collected

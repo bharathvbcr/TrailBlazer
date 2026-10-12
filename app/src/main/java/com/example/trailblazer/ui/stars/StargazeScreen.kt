@@ -49,6 +49,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.trailblazer.container
 import com.example.trailblazer.permissions.AppPermission
@@ -79,7 +80,7 @@ private const val ADAPT_MS = 20 * 60_000L
 fun StargazeScreen(nav: Navigator, lat: Double?, lon: Double?, label: String?) {
     val ctx = LocalContext.current
     val routePlace = if (lat != null && lon != null && lat in -90.0..90.0 && lon in -180.0..180.0) StarPlace(LatLon(lat, lon), label, true) else null
-    val vm: StargazeViewModel = viewModel { StargazeViewModel(ctx.container, routePlace) }
+    val vm: StargazeViewModel = viewModel(key = "stargaze-$lat-$lon-$label") { StargazeViewModel(ctx.container, routePlace, createSavedStateHandle()) }
     val settings = vm.settings.collectAsStateWithLifecycle().value ?: return
     val fmt = remember(settings) { Fmt(ctx, settings) }
     val place by vm.place.collectAsStateWithLifecycle()
@@ -144,7 +145,7 @@ fun StargazeScreen(nav: Navigator, lat: Double?, lon: Double?, label: String?) {
                     )
                     Slider(
                         value = offset.toFloat(),
-                        onValueChange = { vm.chartOffsetMin.value = (it / 15).roundToInt() * 15 },
+                        onValueChange = { vm.setChartOffsetMin((it / 15).roundToInt() * 15) },
                         valueRange = 0f..720f,
                         steps = 47,
                         modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Time ahead" },
@@ -155,7 +156,7 @@ fun StargazeScreen(nav: Navigator, lat: Double?, lon: Double?, label: String?) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), modifier = Modifier.fillMaxWidth()) {
                         FilterChip(
                             selected = follow,
-                            onClick = { vm.followCompass.value = !follow },
+                            onClick = { vm.setFollowCompass(!follow) },
                             enabled = vm.compassAvailable,
                             label = { Text(if (vm.compassAvailable) "Follow compass" else "No compass") },
                         )

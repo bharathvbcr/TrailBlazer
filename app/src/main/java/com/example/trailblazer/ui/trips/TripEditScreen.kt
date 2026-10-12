@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.trailblazer.container
 import com.example.trailblazer.data.GeoFormat
@@ -83,7 +84,7 @@ fun TripEditScreen(nav: Navigator, tripId: String?, seed: List<SeedPlace> = empt
     val ctx = LocalContext.current
     // Keyed on the seed too: sharing a second place to the same trip must build a fresh editor that adds it.
     val vm: TripEditViewModel = viewModel(key = "trip-$tripId-${seed.hashCode()}") {
-        TripEditViewModel(ctx.container, tripId, seed.mapNotNull { s -> LatLon.of(s.lat, s.lon)?.let { ParsedPlace(it, s.name) } })
+        TripEditViewModel(ctx.container, tripId, seed.mapNotNull { s -> LatLon.of(s.lat, s.lon)?.let { ParsedPlace(it, s.name) } }, createSavedStateHandle())
     }
     val settings = vm.settings.collectAsStateWithLifecycle().value ?: return
     val fmt = remember(settings) { Fmt(ctx, settings) }
