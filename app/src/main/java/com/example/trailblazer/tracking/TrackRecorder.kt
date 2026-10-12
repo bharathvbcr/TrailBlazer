@@ -50,6 +50,9 @@ class TrackRecorder(private val dao: TrackDao, private val clock: Clock) {
         return t
     }
 
+    /** Whether the database holds a track that is not Finished. */
+    suspend fun hasOpenTrack(): Boolean = dao.open() != null
+
     private suspend fun restore(t: TrackEntity) {
         stats = TrackStats()
         var last: TrackPoint? = null
@@ -82,9 +85,23 @@ class TrackRecorder(private val dao: TrackDao, private val clock: Clock) {
 
     fun flushDue(): Boolean = buffer.size >= BATCH_SIZE || (buffer.isNotEmpty() && clock.nowMs() - lastFlushMs >= FLUSH_MS)
 
+    /** Writes the buffered points and the track's statistics in one transaction. Throws with nothing written and the buffer kept. */
     suspend fun flush() {
         val t = track ?: return
+        commit(t.state)
+    }
+
+    /** Writes the buffered points, the statistics and the new [state] in one transaction, so a track is never ended with points missing. */
+    suspend fun setState(state: TrackState) {
+        if (track == null) return
+        commit(state)
+    }
+
+    private suspend fun commit(state: TrackState) {
+        val t = track ?: return
         val updated = t.copy(
+            state = state,
+            endedMs = if (state == TrackState.Finished) clock.nowMs() else t.endedMs,
             distanceM = stats.distanceM,
             gainM = stats.gainM,
             lossM = stats.lossM,
@@ -92,19 +109,10 @@ class TrackRecorder(private val dao: TrackDao, private val clock: Clock) {
             maxSpeedMps = stats.maxSpeedMps,
             pointCount = nextSeq,
         )
-        val batch = ArrayList(buffer)
-        dao.appendPoints(updated, batch)
+        dao.appendPoints(updated, ArrayList(buffer))
         buffer.clear()
         track = updated
         lastFlushMs = clock.nowMs()
-    }
-
-    suspend fun setState(state: TrackState) {
-        flush()
-        val t = track ?: return
-        val updated = t.copy(state = state, endedMs = if (state == TrackState.Finished) clock.nowMs() else t.endedMs)
-        dao.update(updated)
-        track = updated
     }
 
     val distanceM: Double get() = stats.distanceM

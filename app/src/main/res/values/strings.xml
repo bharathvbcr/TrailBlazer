@@ -7,4 +7,10 @@
     <string name="pause">Pause</string>
     <string name="resume">Resume</string>
     <string name="stop">Stop</string>
+    <string name="recording_stopped">Recording stopped</string>
+    <string name="interrupt_permission_revoked">Stopped because location permission was removed.</string>
+    <string name="interrupt_location_disabled">Stopped because location was turned off.</string>
+    <string name="interrupt_precise_required">Stopped because only approximate location is allowed. Recording needs precise location: allow it in the app\'s permission settings, then resume.</string>
+    <string name="interrupt_storage_failed">Stopped because the phone could not save the track (storage may be full). Free up space, then resume. The last few seconds of points may be missing.</string>
+    <string name="interrupt_foreground_blocked">Stopped because Android would not let recording run in the background. Open the app and resume.</string>
 </resources>

@@ -13,6 +13,7 @@ import com.example.trailblazer.data.Waypoint
 import com.example.trailblazer.location.Fix
 import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.tracking.InterruptReason
+import com.example.trailblazer.tracking.StartResult
 import com.trailblazer.core.trip.Trip
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -112,10 +113,15 @@ class TripsViewModel(private val c: AppContainer) : ViewModel() {
         activeTileSource.value?.closeInBackground()
     }
 
-    fun startRecording(): Boolean = c.tracking.start()
+    fun startRecording() = report(c.tracking.start())
     fun pauseRecording() = c.tracking.pause()
-    fun resumeRecording(): Boolean = c.tracking.resume()
+    fun resumeRecording() = report(c.tracking.resume())
     fun stopRecording() = c.tracking.stop()
+
+    /** A refused start says why where the Tracks screen shows messages. */
+    private fun report(r: StartResult) {
+        if (r is StartResult.Refused) message.value = r.reason.message
+    }
 
     fun deleteTrip(id: String) = viewModelScope.launch { c.trips.delete(id) }
     fun deleteWaypoint(id: String) = viewModelScope.launch {

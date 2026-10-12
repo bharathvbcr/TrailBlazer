@@ -111,6 +111,59 @@ class TrackRecorderTest {
     }
 
     @Test
+    fun endingATrackIsOneTransactionOfPointsAndState() = runBlocking {
+        val dao = FakeTrackDao()
+        val r = TrackRecorder(dao, clock)
+        val t = r.openOrStart("T")
+        for (i in 0 until 4) r.offer(fix(i, i * 10.0))
+
+        r.setState(TrackState.Finished)
+
+        assertEquals("one write for the points and the state together", 1, dao.appendCalls)
+        assertEquals("never a separate state write that could land without the points", 0, dao.updateCalls)
+        assertEquals(TrackState.Finished, dao.row(t.id)!!.state)
+        assertEquals(4, dao.allPoints.size)
+    }
+
+    @Test
+    fun aFailedWriteLeavesTheBufferAndTheStateForARetry() = runBlocking {
+        val dao = FakeTrackDao()
+        val r = TrackRecorder(dao, clock)
+        val t = r.openOrStart("T")
+        for (i in 0 until 4) r.offer(fix(i, i * 10.0))
+        dao.failWrites = android.database.sqlite.SQLiteFullException()
+
+        try {
+            r.setState(TrackState.Finished)
+            org.junit.Assert.fail("the write should have failed")
+        } catch (_: android.database.sqlite.SQLiteFullException) {
+        }
+        assertEquals(TrackState.Recording, dao.row(t.id)!!.state)
+        assertEquals(0, dao.allPoints.size)
+        assertEquals(TrackState.Recording, r.track!!.state)
+
+        dao.failWrites = null
+        r.setState(TrackState.Finished)
+        assertEquals(TrackState.Finished, dao.row(t.id)!!.state)
+        assertEquals("nothing was lost by the failure", 4, dao.allPoints.size)
+    }
+
+    @Test
+    fun pointsForADeletedTrackFailLoudlyWithADatabaseException() = runBlocking {
+        val r = TrackRecorder(db.tracks(), clock)
+        val t = r.openOrStart("T")
+        for (i in 0 until 3) r.offer(fix(i, i * 10.0))
+        db.tracks().delete(t.id)
+
+        try {
+            r.flush()
+            org.junit.Assert.fail("a missing track row must not be written to silently")
+        } catch (e: android.database.sqlite.SQLiteException) {
+            // The recording service turns this into a visible pause (see RecordingSessionTest) rather than a crash.
+        }
+    }
+
+    @Test
     fun hundredThousandPointsStreamWithBoundedMemory() = runBlocking {
         val dao = db.tracks()
         val id = "big"

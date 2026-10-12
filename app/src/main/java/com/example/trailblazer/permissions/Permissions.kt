@@ -14,6 +14,12 @@ import kotlinx.coroutines.flow.map
 /** Runtime permissions the app asks for, each only when the feature that needs it is first used. */
 enum class AppPermission(val manifest: Array<String>) {
     Location(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)),
+    /**
+     * Precise (fine) location alone. [Location] is also granted for approximate access, but satellite status and
+     * track recording need precise fixes: approximate ones are kilometres wide and recording drops them as too coarse.
+     * It is its own entry so [Permissions.flowOf] sees an approximate to precise upgrade as a membership change.
+     */
+    PreciseLocation(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)),
     Camera(arrayOf(Manifest.permission.CAMERA)),
     Microphone(arrayOf(Manifest.permission.RECORD_AUDIO)),
     Notifications(if (Build.VERSION.SDK_INT >= 33) arrayOf(Manifest.permission.POST_NOTIFICATIONS) else emptyArray()),
@@ -42,8 +48,6 @@ class Permissions(private val context: Context) {
         AppPermission.Location -> p.manifest.any { has(it) }
         else -> p.manifest.all { has(it) }
     }
-
-    fun hasFineLocation(): Boolean = has(Manifest.permission.ACCESS_FINE_LOCATION)
 
     private fun has(name: String) = ContextCompat.checkSelfPermission(context, name) == PackageManager.PERMISSION_GRANTED
 
