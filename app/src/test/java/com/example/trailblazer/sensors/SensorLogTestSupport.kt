@@ -3,6 +3,7 @@ package com.example.trailblazer.sensors
 import android.hardware.Sensor
 import com.trailblazer.core.sensors.log.GnssMeasurementRow
 import kotlinx.coroutines.CompletableJob
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -57,10 +58,13 @@ class LoggerFixture(
     val clocks = FakeLogClocks()
     val foreground = MutableStateFlow(true)
     val job: CompletableJob = SupervisorJob()
+
+    /** Exceptions that reached the application scope. On a device each one would end the process, so tests expect none. */
+    val uncaught = java.util.concurrent.CopyOnWriteArrayList<Throwable>()
     val files = SensorLogFiles(dir, freeBytes)
     val logger = SensorLogger(
         sensors = sensors, gnss = gnss, files = files, exporter = exporter,
-        scope = CoroutineScope(job + Dispatchers.Default), foreground = foreground, device = "Test Phone (Android 16, API 36)",
+        scope = CoroutineScope(job + Dispatchers.Default + CoroutineExceptionHandler { _, e -> uncaught += e }), foreground = foreground, device = "Test Phone (Android 16, API 36)",
         io = io, limits = limits, rates = rates, clocks = clocks, newCallbackThread = { null },
     )
 
@@ -76,6 +80,13 @@ fun waitFor(what: String, timeoutMs: Long = 30_000L, condition: () -> Boolean) {
         if (System.nanoTime() > deadline) throw AssertionError("Timed out waiting for: $what")
         Thread.sleep(5)
     }
+}
+
+/** Cancels each fixture's scope and fails if anything reached the application scope's exception handler. */
+fun finishFixtures(fixtures: List<LoggerFixture>) {
+    fixtures.forEach { it.job.cancel() }
+    val escaped = fixtures.flatMap { it.uncaught }
+    if (escaped.isNotEmpty()) throw AssertionError("uncaught exceptions reached the app scope: $escaped", escaped.first())
 }
 
 fun SensorLogger.awaitFinished(): LoggerState.Finished {

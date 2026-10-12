@@ -26,7 +26,7 @@ class SensorLogOrphanTest {
 
     @After
     fun stopEverything() {
-        fixtures.forEach { it.job.cancel() }
+        finishFixtures(fixtures)
     }
 
     private val anchor = ClockAnchor(1_700_000_000_123L, 5_000_000_000L)
@@ -59,6 +59,23 @@ class SensorLogOrphanTest {
         assertEquals("interrupted", end["stop_reason"])
         assertEquals("true", end["recovered"])
         assertEquals(cut.length.toString(), end["truncated_bytes"])
+    }
+
+    @Test
+    fun anOrphanThatCannotBeRepairedIsSkippedWithoutFailingStartUp() {
+        val dir = tmp.newFolder()
+        val stuck = orphan(dir)
+        assertTrue(stuck.setReadOnly())
+        val before = stuck.readBytes()
+        val f = fixture(dir)
+        // Give the start-up scan time to run (it has no state to wait on: it must leave the logger idle).
+        waitFor("the start-up scan to finish") { f.files.pending().isNotEmpty() }
+        Thread.sleep(300)
+        // Running as root (a container) can write a read-only file; then the repair succeeds and is offered instead.
+        val offered = f.logger.state.value
+        assertTrue(offered.toString(), offered == LoggerState.Idle || offered is LoggerState.Finished)
+        if (offered == LoggerState.Idle) assertTrue("file untouched", before.contentEquals(stuck.readBytes()))
+        assertTrue("nothing reached the app scope", f.uncaught.isEmpty())
     }
 
     @Test

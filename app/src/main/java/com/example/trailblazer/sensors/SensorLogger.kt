@@ -187,6 +187,9 @@ class SensorLogger(
             } catch (e: CancellationException) {
                 markNotExporting("Save cancelled. The recording is still on this phone.")
                 throw e
+            } catch (e: Exception) {
+                // Nothing may escape into the application scope (an uncaught exception there ends the process).
+                ExportOutcome.Failed("Could not save: ${e.message ?: e::class.java.simpleName}.")
             }
             when (outcome) {
                 is ExportOutcome.Saved -> withContext(NonCancellable + io) {
@@ -244,7 +247,8 @@ class SensorLogger(
     private fun refreshPending() {
         if (session != null || _state.value !is LoggerState.Idle) return
         for (p in files.pending()) {
-            val log = if (p.interrupted) files.recover(p.file) else p
+            // A file that cannot be repaired now (read-only, disk full) is skipped, never allowed to fail start-up.
+            val log = if (p.interrupted) runCatching { files.recover(p.file) }.getOrNull() else p
             if (log != null) {
                 val reason = StopReason(if (p.interrupted) StopReason.Kind.Interrupted else StopReason.Kind.Earlier)
                 _state.value = LoggerState.Finished(log, null, reason)

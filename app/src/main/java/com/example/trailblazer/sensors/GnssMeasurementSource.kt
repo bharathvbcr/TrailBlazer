@@ -33,8 +33,9 @@ interface GnssMeasurementSource {
 }
 
 /**
- * Raw GNSS measurements through `LocationManagerCompat.registerGnssMeasurementsCallback` (an executor on API 30+, a
- * handler on older releases; the compat call picks). Needs precise location, the permission the satellite list already
+ * Raw GNSS measurements through `LocationManagerCompat.registerGnssMeasurementsCallback` with an executor owned by this
+ * source (the overload compiles against androidx.core 1.18; behaviour below API 30 was not checked). Needs precise
+ * location, the permission the satellite list already
  * uses; this adds none. Chipsets differ in which fields they fill, so every optional field is read only when its `has`
  * check is true and is otherwise left null.
  */

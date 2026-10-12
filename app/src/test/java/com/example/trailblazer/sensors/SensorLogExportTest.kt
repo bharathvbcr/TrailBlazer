@@ -35,7 +35,7 @@ class SensorLogExportTest {
 
     @After
     fun stopEverything() {
-        fixtures.forEach { it.job.cancel() }
+        finishFixtures(fixtures)
     }
 
     private fun source(size: Int = 200_000): File = tmp.newFile().apply { writeBytes(ByteArray(size) { (it % 251).toByte() }) }
@@ -163,6 +163,35 @@ class SensorLogExportTest {
         assertFalse(state.exporting)
         assertTrue(f.logger.notice.value!!, f.logger.notice.value!!.contains("disk on fire"))
         assertTrue(f.logger.notice.value!!.contains("still on this phone"))
+    }
+
+    @Test
+    fun aProviderThatThrowsAnUncheckedExceptionFailsTheSaveInsteadOfCrashingTheApp() {
+        for (broken in listOf<(Uri) -> OutputStream?>(
+            { throw UnsupportedOperationException("mode not supported") },
+            {
+                object : OutputStream() {
+                    override fun write(b: Int) = throw IllegalStateException("provider died")
+                }
+            },
+        )) {
+            val (f, done) = finishedFixture(SensorLogExporter(broken, {}, Long.MAX_VALUE))
+            runBlocking { f.logger.export(uri)!!.join() }
+            assertTrue("file kept", done.log.file.exists())
+            assertFalse((f.logger.state.value as LoggerState.Finished).exporting)
+            assertTrue(f.logger.notice.value!!, f.logger.notice.value!!.contains("still on this phone"))
+            assertTrue("nothing reached the app scope", f.uncaught.isEmpty())
+        }
+    }
+
+    @Test
+    fun aMissingPrivateFileFailsTheSaveAndKeepsTheState() {
+        val (f, done) = finishedFixture(SensorLogExporter({ ByteArrayOutputStream() }, {}, Long.MAX_VALUE))
+        done.log.file.delete() // the private file vanished (cleared storage): the copy cannot read it
+        runBlocking { f.logger.export(uri)!!.join() }
+        assertFalse((f.logger.state.value as LoggerState.Finished).exporting)
+        assertTrue(f.logger.notice.value!!, f.logger.notice.value!!.isNotEmpty())
+        assertTrue("nothing reached the app scope", f.uncaught.isEmpty())
     }
 
     @Test

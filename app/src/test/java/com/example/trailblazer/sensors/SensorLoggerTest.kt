@@ -37,7 +37,7 @@ class SensorLoggerTest {
 
     @After
     fun stopEverything() {
-        fixtures.forEach { it.job.cancel() }
+        finishFixtures(fixtures)
     }
 
     private fun endNote(file: java.io.File): Map<String, String> {

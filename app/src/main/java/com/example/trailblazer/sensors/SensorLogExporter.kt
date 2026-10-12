@@ -43,6 +43,9 @@ class SensorLogExporter(
             return@withContext fail(e)
         } catch (e: SecurityException) {
             return@withContext ExportOutcome.Failed("The chosen location is not writable (${e.message ?: "permission denied"}).")
+        } catch (e: RuntimeException) {
+            // A document provider may throw anything from open (UnsupportedOperationException for a mode it does not know).
+            return@withContext fail(e)
         } ?: return@withContext ExportOutcome.Failed("The chosen location could not be opened for writing.")
         var copied = 0L
         try {
@@ -61,12 +64,13 @@ class SensorLogExporter(
                     out.flush()
                 }
             }
-        } catch (e: IOException) {
-            discardPartial(destination)
-            return@withContext fail(e)
         } catch (e: kotlinx.coroutines.CancellationException) {
             discardPartial(destination)
             throw e
+        } catch (e: Exception) {
+            // Providers also throw unchecked exceptions from write and close; none may escape into the app scope.
+            discardPartial(destination)
+            return@withContext fail(e)
         }
         if (copied != expected) {
             discardPartial(destination)
@@ -75,7 +79,7 @@ class SensorLogExporter(
         ExportOutcome.Saved(copied)
     }
 
-    private fun fail(e: IOException): ExportOutcome.Failed {
+    private fun fail(e: Throwable): ExportOutcome.Failed {
         val noSpace = e.isNoSpace()
         return ExportOutcome.Failed(
             if (noSpace) "There is not enough space at the chosen location. Free some space or pick another location."
