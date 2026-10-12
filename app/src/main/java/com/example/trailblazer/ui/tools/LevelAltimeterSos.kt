@@ -389,7 +389,7 @@ fun SosScreen(nav: Navigator) {
         when (active) {
             SosMode.Torch -> if (!torch.play(Morse.SOS) { lit = it }) { failed = "The torch is unavailable (no flash, or the camera is in use)."; active = null }
             SosMode.Whistle -> if (!whistle.play(Morse.whistleTimeline()) { lit = it }) { failed = "The whistle is unavailable (the phone's speaker could not be opened)."; active = null }
-            SosMode.Screen -> torchlessScreen(Morse.SOS) { lit = it }
+            SosMode.Screen -> if (!torchlessScreen(Morse.SOS) { lit = it }) { failed = "The screen signal has nothing to show."; active = null }
             null -> Unit
         }
     }
@@ -439,8 +439,12 @@ fun SosScreen(nav: Navigator) {
     }
 }
 
-/** Screen-only morse (for phones without a torch): drives [onPulse] on the same timeline, until cancelled. */
-private suspend fun torchlessScreen(timeline: List<com.trailblazer.core.sos.Pulse>, onPulse: (Boolean) -> Unit) {
+/**
+ * Screen-only morse (for phones without a torch): drives [onPulse] on the same timeline, until cancelled.
+ * Returns false at once, without a pulse, when the timeline never switches on (an empty one would otherwise spin).
+ */
+internal suspend fun torchlessScreen(timeline: List<com.trailblazer.core.sos.Pulse>, onPulse: (Boolean) -> Unit): Boolean {
+    if (Morse.isSilent(timeline)) return false
     try {
         while (true) for (p in timeline) {
             onPulse(p.on)

@@ -19,6 +19,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
+import java.net.InetAddress
+import java.net.ServerSocket
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -122,6 +124,25 @@ class OpenMeteoTimeoutTest {
     fun aTransportErrorIsStillAFailureNotATimeout() = runTest(timeout = 10.seconds) {
         val client = OpenMeteoClient(ScriptedTransport { throw IOException("unreachable") }, clock)
         assertEquals(ForecastResult.Failed("unreachable"), client.forecast(place, consented = true))
+    }
+
+    /**
+     * A real loopback socket that completes the TCP handshake (the kernel accepts into the backlog) and never
+     * answers the TLS hello. Closing the connection to enforce the deadline makes the blocked read throw
+     * SocketException; the caller must still be told "timed out".
+     */
+    @Test
+    fun aServerThatNeverAnswersTimesOutInsteadOfReportingASocketError() = runBlocking {
+        val budgetMs = 400L
+        ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { server ->
+            val transport = HttpTransport { UrlConnectionTransport().get("https://127.0.0.1:${server.localPort}/forecast") }
+            val client = OpenMeteoClient(transport, clock, timeoutMs = budgetMs)
+            val begun = System.nanoTime()
+            val result = client.forecast(place, consented = true)
+            val elapsedMs = (System.nanoTime() - begun) / 1_000_000
+            assertEquals(ForecastResult.Failed("timed out"), result)
+            assertTrue("took ${elapsedMs}ms for a ${budgetMs}ms budget", elapsedMs < budgetMs + 3_000)
+        }
     }
 
     /** Blocking socket calls ignore coroutine cancellation; the helper must unblock them by closing the connection. */

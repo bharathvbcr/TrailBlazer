@@ -8,9 +8,12 @@ import com.trailblazer.core.weather.OmHourly
 import com.trailblazer.core.weather.OmResponse
 import com.trailblazer.core.weather.WmoCode
 import com.trailblazer.core.weather.sanitized
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -26,7 +29,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 /** The one network seam in the app. Tests replace it to prove nothing is sent before consent. */
@@ -43,7 +45,8 @@ fun interface HttpTransport {
 internal suspend fun <T> blockingCancellable(onCancel: () -> Unit, block: () -> T): T = withContext(Dispatchers.IO) {
     coroutineScope {
         val finished = AtomicBoolean(false)
-        val watcher = launch {
+        // Undispatched: the watcher is already waiting for cancellation before the blocking call starts.
+        val watcher = launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 awaitCancellation()
             } finally {
@@ -110,13 +113,23 @@ sealed interface ForecastResult {
  * opted in; coordinates are rounded to 0.01° (~1 km) before they leave the phone; results are cached
  * for 30 minutes per rounded location.
  */
-class OpenMeteoClient(private val http: HttpTransport, private val clock: Clock) {
+class OpenMeteoClient internal constructor(
+    private val http: HttpTransport,
+    private val clock: Clock,
+    private val timeoutMs: Long,
+) {
+    constructor(http: HttpTransport, clock: Clock) : this(http, clock, REQUEST_TIMEOUT_MS)
+
     private val json = Json { ignoreUnknownKeys = true; isLenient = false; explicitNulls = false }
     private val mutex = Mutex()
-    private val cache = AtomicReference<Forecast?>(null)
 
-    /** Bumped by [clearCache]; a fetch that began before a bump must not put its answer back in the cache. */
-    private val generation = AtomicLong()
+    /**
+     * The cached forecast and the generation it belongs to. [clearCache] swaps in a new object with the next
+     * generation, so a fetch that began before the clear fails its compare-and-set and cannot put its answer back.
+     */
+    private class Slot(val generation: Long, val forecast: Forecast?)
+
+    private val slot = AtomicReference(Slot(0L, null))
 
     fun url(p: LatLon): String = String.format(
         Locale.ROOT,
@@ -134,21 +147,27 @@ class OpenMeteoClient(private val http: HttpTransport, private val clock: Clock)
         if (!consented) return ForecastResult.NotConsented
         val key = rounded(position)
         return mutex.withLock {
-            val c = cache.get()
+            val before = slot.get()
+            val c = before.forecast
             if (!force && c != null && c.requestedFor == key && clock.nowMs() - c.fetchedMs < CACHE_MS) {
                 return@withLock ForecastResult.Ok(c, fromCache = true)
             }
-            val startedAt = generation.get()
             try {
                 // The lock is held for the whole call, so the call as a whole is bounded, not only each read.
-                val parsed = withTimeoutOrNull(REQUEST_TIMEOUT_MS) {
-                    val body = http.get(url(key))
-                    json.decodeFromString(OmResponse.serializer(), body).sanitized()
+                val parsed = withTimeoutOrNull(timeoutMs) {
+                    try {
+                        val body = http.get(url(key))
+                        json.decodeFromString(OmResponse.serializer(), body).sanitized()
+                    } catch (e: IOException) {
+                        // A connection closed to enforce the deadline (or the caller's cancellation) surfaces
+                        // as "Socket closed"; that is the timeout, not a network error.
+                        currentCoroutineContext().ensureActive()
+                        throw e
+                    }
                 } ?: return@withLock ForecastResult.Failed("timed out")
-                // Cleared while the request was in flight (consent withdrawn, data wiped): drop the answer.
-                if (generation.get() != startedAt) return@withLock ForecastResult.NotConsented
                 val f = Forecast(parsed, clock.nowMs(), key)
-                cache.set(f)
+                // Cleared while the request was in flight (consent withdrawn, data wiped): drop the answer.
+                if (!slot.compareAndSet(before, Slot(before.generation, f))) return@withLock ForecastResult.NotConsented
                 ForecastResult.Ok(f, fromCache = false)
             } catch (e: IOException) {
                 ForecastResult.Failed(e.message ?: "network error")
@@ -165,8 +184,7 @@ class OpenMeteoClient(private val http: HttpTransport, private val clock: Clock)
      * toggles and wipes that cannot suspend, and waiting for a slow request would delay the privacy action.
      */
     fun clearCache() {
-        generation.incrementAndGet()
-        cache.set(null)
+        slot.updateAndGet { Slot(it.generation + 1, null) }
     }
 
     companion object {

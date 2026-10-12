@@ -2,10 +2,9 @@ package com.example.trailblazer.data
 
 import android.content.Context
 import androidx.datastore.core.CorruptionException
-import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
-import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.CoroutineScope
@@ -20,14 +19,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
 
 /**
  * A settings file that no longer parses must reset to defaults, not crash every read and write.
  *
- * Each test opens its own store over a fresh garbage file. The app-wide store is a process singleton that other
- * tests have already read from, so it cannot be the first reader of a corrupt file here; these stores are built
- * with the same [settingsCorruptionHandler] the app-wide one is declared with.
+ * The stores here come from [createSettingsStore], the same function that builds the app-wide store, so taking the
+ * corruption handler out of production configuration fails these tests. They use a file name of their own because
+ * DataStore allows one active instance per file and the app-wide store is already open on "settings".
  */
 @RunWith(AndroidJUnit4::class)
 class PrefsCorruptionTest {
@@ -37,22 +35,16 @@ class PrefsCorruptionTest {
     @After
     fun tearDown() = scope.cancel()
 
-    private fun garbageFile(name: String): File {
-        val file = File(context.cacheDir, "corrupt-$name/settings.preferences_pb")
+    private fun writeGarbage(name: String) {
+        val file = context.preferencesDataStoreFile(name)
         file.parentFile!!.mkdirs()
         file.writeBytes(ByteArray(64) { 0xFF.toByte() }) // a varint that never ends: not a valid protobuf
-        return file
     }
-
-    private fun store(file: File, handled: Boolean): DataStore<Preferences> = PreferenceDataStoreFactory.create(
-        corruptionHandler = if (handled) settingsCorruptionHandler else null,
-        scope = scope,
-        produceFile = { file },
-    )
 
     @Test
     fun garbageBytesInTheSettingsFileFallBackToDefaultsAndStayWritable() = runBlocking {
-        val prefs = PrefsRepository(context, store(garbageFile("handled"), handled = true))
+        writeGarbage("corrupt-handled")
+        val prefs = PrefsRepository(context, createSettingsStore(context, scope, "corrupt-handled"))
         assertEquals(Settings(), prefs.settings.first())
 
         prefs.update { it.copy(nightRed = true, theme = ThemeMode.Dark) }
@@ -67,7 +59,8 @@ class PrefsCorruptionTest {
     @Test
     fun theSameGarbageBreaksEveryEditWithoutTheHandler() = runBlocking {
         // Control: proves the input above really is corrupt, so the test above is not passing vacuously.
-        val unhandled = store(garbageFile("unhandled"), handled = false)
+        writeGarbage("corrupt-unhandled")
+        val unhandled = PreferenceDataStoreFactory.create(scope = scope) { context.preferencesDataStoreFile("corrupt-unhandled") }
         try {
             unhandled.edit { it.clear() }
             fail("editing a corrupt file without a handler should throw")
