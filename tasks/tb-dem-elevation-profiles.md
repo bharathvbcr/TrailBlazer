@@ -23,8 +23,11 @@ Home workspace: None
 While recorded tracks calculate real elevation gain and loss with a 3m hysteresis filter, planned trips currently only calculate straight-line distances and daylight per stop. Integrating an offline digital elevation model (DEM / SRTM 1-arc-second HGT) sampler will enable pre-trip elevation profiles, gradient warnings, and realistic cumulative ascent/descent planning.
 
 ## Planned files
-- core/src/main/kotlin/com/trailblazer/core/geo/DemElevation.kt
-- app/src/main/java/com/example/trailblazer/ui/trips/ElevationProfilePlot.kt
+- core/src/commonMain/kotlin/com/trailblazer/core/geo/Dem.kt (SRTM `.hgt` tiles: name, size, bilinear sampling, void policy)
+- core/src/commonMain/kotlin/com/trailblazer/core/trip/ElevationProfile.kt (route sampling, gain/loss, peaks and valleys, steep stretches)
+- core/src/commonMain/kotlin/com/trailblazer/core/track/Track.kt (`ElevationClimb`, the shared 3 m hysteresis filter)
+- app/src/main/java/com/example/trailblazer/data/DemTileManager.kt (SAF import of `.hgt` tiles, lazy reads)
+- app/src/main/java/com/example/trailblazer/ui/trips/ElevationProfilePlot.kt (Elevation card in the trip editor)
 
 ## Acceptance criteria
 - [ ] Sample elevation along multi-stop routes using local SRTM / HGT elevation tiles

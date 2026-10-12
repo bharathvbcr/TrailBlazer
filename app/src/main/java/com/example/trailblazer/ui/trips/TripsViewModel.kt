@@ -8,16 +8,22 @@ import com.example.trailblazer.data.GeoFormat
 import com.example.trailblazer.data.IoResult
 import com.example.trailblazer.data.Settings
 import com.example.trailblazer.data.TrackSummary
+import com.example.trailblazer.data.closeInBackground
 import com.example.trailblazer.data.Waypoint
 import com.example.trailblazer.location.Fix
 import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.tracking.InterruptReason
+import com.example.trailblazer.tracking.StartResult
 import com.trailblazer.core.trip.Trip
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 class TripsViewModel(private val c: AppContainer) : ViewModel() {
     private val started = SharingStarted.WhileSubscribed(5_000)
@@ -37,8 +43,32 @@ class TripsViewModel(private val c: AppContainer) : ViewModel() {
     /** One-line result of the last import/export, shown until dismissed. */
     val message = MutableStateFlow<String?>(null)
 
+    private val mapsLock = Mutex()
+
+    /** Installed SRTM elevation tiles (`.hgt`), used for the elevation profile of a planned trip. */
+    val demTiles = MutableStateFlow<List<com.example.trailblazer.data.DemTileInfo>>(emptyList())
+
+    private suspend fun refreshDemTiles() {
+        demTiles.value = withContext(Dispatchers.IO) { c.demTiles.listTiles() }
+    }
+
+    fun importDemTiles(uris: List<Uri>) = viewModelScope.launch {
+        message.value = c.demTiles.importAll(uris)
+    }
+
+    fun deleteDemTile(id: com.trailblazer.core.geo.DemTileId) = viewModelScope.launch {
+        message.value = if (c.demTiles.deleteTile(id)) {
+            "Deleted elevation tile ${id.fileName}"
+        } else {
+            "Could not delete elevation tile ${id.fileName}: it is not installed or could not be removed."
+        }
+    }
+
     init {
-        refreshMaps()
+        // Tiles also arrive from the trip editor, so the list follows the manager's revision (which it bumps on every
+        // import and delete, and which emits once on subscription) instead of refreshing after its own actions.
+        viewModelScope.launch { c.demTiles.revision.collect { refreshDemTiles() } }
+        viewModelScope.launch { refreshMaps() }
         viewModelScope.launch {
             tracks.collect { summaries ->
                 loadTrackPaths(summaries)
@@ -46,25 +76,33 @@ class TripsViewModel(private val c: AppContainer) : ViewModel() {
         }
     }
 
-    fun refreshMaps() {
-        availableMaps.value = c.offlineMaps.listMaps()
+    /** Re-reads the installed maps and the active one, off the main thread; serialised so refreshes cannot interleave. */
+    private suspend fun refreshMaps() = mapsLock.withLock {
+        availableMaps.value = withContext(Dispatchers.IO) { c.offlineMaps.listMaps() }
         val old = activeTileSource.value
         val next = c.offlineMaps.openActiveSource()
         if (old?.file?.absolutePath != next?.file?.absolutePath) {
-            old?.close()
             activeTileSource.value = next
+            old?.closeInBackground()
+        } else {
+            // The same archive is already open and in use; this duplicate handle is not needed.
+            next?.closeInBackground()
         }
     }
 
-    private suspend fun loadTrackPaths(summaries: List<TrackSummary>) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+    private suspend fun loadTrackPaths(summaries: List<TrackSummary>) = withContext(Dispatchers.Default) {
         val paths = mutableListOf<List<com.trailblazer.core.geo.LatLon>>()
         summaries.take(20).forEach { summary ->
             val pts = mutableListOf<com.trailblazer.core.geo.LatLon>()
             var idx = 0
+            var last: com.trailblazer.core.geo.LatLon? = null
             val stride = (summary.pointCount / 300).coerceAtLeast(1)
             c.tracks.forEachPoint(summary.id) { pt ->
                 if (idx++ % stride == 0) pts.add(pt.position)
+                last = pt.position
             }
+            // Thinning must not cut off the end of the track: the end marker sits on the real last fix.
+            last?.let { if (pts.lastOrNull() != it) pts.add(it) }
             if (pts.size >= 2) paths.add(pts)
         }
         trackPaths.value = paths
@@ -74,7 +112,7 @@ class TripsViewModel(private val c: AppContainer) : ViewModel() {
         val result = c.offlineMaps.importMap(uri)
         if (result.isSuccess) {
             val info = result.getOrThrow()
-            message.value = "Imported map “${info.name}” (${info.formattedSize})"
+            message.value = "Imported map “${info.name}” (${info.formattedSize})" + (info.note?.let { " - $it" } ?: "")
             refreshMaps()
         } else {
             message.value = "Import failed: ${result.exceptionOrNull()?.message ?: "Unknown error"}"
@@ -94,14 +132,18 @@ class TripsViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     override fun onCleared() {
-        super.onCleared()
-        activeTileSource.value?.close()
+        activeTileSource.value?.closeInBackground()
     }
 
-    fun startRecording(): Boolean = c.tracking.start()
+    fun startRecording() = report(c.tracking.start())
     fun pauseRecording() = c.tracking.pause()
-    fun resumeRecording(): Boolean = c.tracking.resume()
+    fun resumeRecording() = report(c.tracking.resume())
     fun stopRecording() = c.tracking.stop()
+
+    /** A refused start says why where the Tracks screen shows messages. */
+    private fun report(r: StartResult) {
+        if (r is StartResult.Refused) message.value = r.reason.message
+    }
 
     fun deleteTrip(id: String) = viewModelScope.launch { c.trips.delete(id) }
     fun deleteWaypoint(id: String) = viewModelScope.launch {

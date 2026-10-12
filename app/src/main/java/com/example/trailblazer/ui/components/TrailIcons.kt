@@ -60,6 +60,7 @@ object TrailIcons {
     val Warning = icon("warning", "M12,3L22,20H2Z M12,10V14M12,17V17.1")
     val Check = icon("check", "M5,12L10,17L19,7")
     val Add = icon("add", "M12,5V19M5,12H19")
+    val Remove = icon("remove", "M5,12H19")
     val Up = icon("up", "M12,19V5M6,11L12,5L18,11")
     val Down = icon("down", "M12,5V19M6,13L12,19L18,13")
     val Copy = icon("copy", "M8,8H20V20H8Z M4,16V4H16")

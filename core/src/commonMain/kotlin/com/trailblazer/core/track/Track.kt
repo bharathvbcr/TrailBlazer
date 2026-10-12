@@ -17,6 +17,49 @@ data class TrackPoint(
 )
 
 /**
+ * Cumulative climb and descent with a hysteresis band: a change only counts once it reaches [hysteresisM] from the last
+ * counted level, so sensor, GPS or DEM noise does not add up to phantom climbing. This is the one filter behind both
+ * recorded tracks ([TrackStats]) and planned routes (the trip elevation profile). O(1) memory per sample.
+ *
+ * Null and non-finite samples are ignored. [breakRun] forgets the reference level, for a stretch with no data: the
+ * climb across unknown ground is not guessed, so the next sample starts afresh.
+ */
+class ElevationClimb(private val hysteresisM: Double = DEFAULT_HYSTERESIS_M) {
+    companion object {
+        /** Wide enough to swallow GPS, barometer and DEM noise, narrow enough not to hide a real climb. */
+        const val DEFAULT_HYSTERESIS_M = 3.0
+    }
+
+    var gainM = 0.0; private set
+    var lossM = 0.0; private set
+    var minM: Double? = null; private set
+    var maxM: Double? = null; private set
+
+    private var ref: Double? = null
+
+    fun add(elevationM: Double?) {
+        val e = elevationM?.takeIf { it.isFinite() } ?: return
+        minM = minOf(minM ?: e, e)
+        maxM = maxOf(maxM ?: e, e)
+        val level = ref
+        if (level == null) {
+            ref = e
+        } else {
+            val delta = e - level
+            if (abs(delta) >= hysteresisM) {
+                if (delta > 0) gainM += delta else lossM -= delta
+                ref = e
+            }
+        }
+    }
+
+    /** Starts a new run: the next sample is a fresh reference, and nothing is counted across the gap. */
+    fun breakRun() {
+        ref = null
+    }
+}
+
+/**
  * Streaming track statistics: O(1) memory per update, so a 100 000-point track costs the same to
  * summarize as a 10-point one. Elevation gain and loss use a 3 m hysteresis band so GPS/baro noise
  * does not accumulate as fake climbing.
@@ -27,23 +70,23 @@ data class TrackPoint(
  * average speed, distance over time. Distance is the same either way: the straight line between the two fixes.
  */
 class TrackStats(
-    private val hysteresisM: Double = 3.0,
+    hysteresisM: Double = ElevationClimb.DEFAULT_HYSTERESIS_M,
     private val movingThresholdMps: Double = 0.5,
     private val instantSpeedMaxGapMs: Long = 30_000,
 ) {
     var points = 0; private set
     var distanceM = 0.0; private set
     var movingMs = 0L; private set
-    var gainM = 0.0; private set
-    var lossM = 0.0; private set
+    val gainM: Double get() = climb.gainM
+    val lossM: Double get() = climb.lossM
     var maxSpeedMps: Double? = null; private set
-    var minElevationM: Double? = null; private set
-    var maxElevationM: Double? = null; private set
+    val minElevationM: Double? get() = climb.minM
+    val maxElevationM: Double? get() = climb.maxM
     var startMs: Long? = null; private set
     var endMs: Long? = null; private set
 
     private var last: TrackPoint? = null
-    private var elevRef: Double? = null
+    private val climb = ElevationClimb(hysteresisM)
 
     val elapsedMs: Long get() = if (startMs != null && endMs != null) endMs!! - startMs!! else 0L
 
@@ -64,20 +107,7 @@ class TrackStats(
         } else if (prev == null) {
             p.speedMps?.takeIf { it.isFinite() && it >= 0 }?.let { maxSpeedMps = it }
         }
-        p.elevationM?.takeIf { it.isFinite() }?.let { e ->
-            minElevationM = minOf(minElevationM ?: e, e)
-            maxElevationM = maxOf(maxElevationM ?: e, e)
-            val ref = elevRef
-            if (ref == null) {
-                elevRef = e
-            } else {
-                val delta = e - ref
-                if (abs(delta) >= hysteresisM) {
-                    if (delta > 0) gainM += delta else lossM -= delta
-                    elevRef = e
-                }
-            }
-        }
+        climb.add(p.elevationM)
         last = p
     }
 
@@ -218,18 +248,5 @@ object DouglasPeucker {
     private fun wrapLon(d: Double): Double {
         val w = ((d + 540.0) % 360.0) - 180.0
         return if (w.isFinite()) w else 0.0
-    }
-
-    private fun perpendicularM(p: LatLon, a: LatLon, b: LatLon): Double {
-        val k = cos(a.lat * DEG) * Geo.EARTH_RADIUS_M * DEG
-        val kLat = Geo.EARTH_RADIUS_M * DEG
-        val bx = wrapLon(b.lon - a.lon) * k
-        val by = (b.lat - a.lat) * kLat
-        val px = wrapLon(p.lon - a.lon) * k
-        val py = (p.lat - a.lat) * kLat
-        val len2 = bx * bx + by * by
-        if (len2 == 0.0) return kotlin.math.hypot(px, py)
-        val t = ((px * bx + py * by) / len2).coerceIn(0.0, 1.0)
-        return kotlin.math.hypot(px - t * bx, py - t * by)
     }
 }

@@ -2,6 +2,7 @@ package com.example.trailblazer.data
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
@@ -9,12 +10,16 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.preferencesDataStoreFile
 import com.trailblazer.core.geo.CoordinateFormat
 import com.trailblazer.core.units.PressureUnit
 import com.trailblazer.core.units.SpeedUnit
 import com.trailblazer.core.units.TemperatureUnit
 import com.trailblazer.core.units.UnitSystem
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
@@ -67,10 +72,32 @@ data class Settings(
     val activeOfflineMapPath: String? = null,
 )
 
-private val Context.store: DataStore<Preferences> by preferencesDataStore(name = "settings")
+/**
+ * The one place a settings DataStore is configured; the app-wide store and the tests both come from here.
+ * A file that cannot be parsed (a torn write, a full disk, storage corruption) is replaced by empty
+ * preferences, so every setting falls back to its default. Without the handler DataStore rethrows the
+ * corruption on every read and every edit, and the first settings change crashes the app.
+ */
+internal fun createSettingsStore(context: Context, scope: CoroutineScope, name: String = SETTINGS_STORE_NAME): DataStore<Preferences> =
+    PreferenceDataStoreFactory.create(
+        corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+        scope = scope,
+        produceFile = { context.applicationContext.preferencesDataStoreFile(name) },
+    )
+
+private const val SETTINGS_STORE_NAME = "settings"
+
+/** DataStore allows one active instance per file, so the app-wide store is created once per process. */
+private object SettingsStore {
+    @Volatile private var instance: DataStore<Preferences>? = null
+
+    fun get(context: Context): DataStore<Preferences> = instance ?: synchronized(this) {
+        instance ?: createSettingsStore(context, CoroutineScope(Dispatchers.IO + SupervisorJob())).also { instance = it }
+    }
+}
 
 /** Settings in DataStore. Unknown or corrupt values fall back to the defaults above, field by field. */
-class PrefsRepository(private val context: Context) {
+class PrefsRepository(context: Context, private val store: DataStore<Preferences> = SettingsStore.get(context)) {
     private object K {
         val units = stringPreferencesKey("units")
         val speedUnit = stringPreferencesKey("speed_unit")
@@ -96,17 +123,40 @@ class PrefsRepository(private val context: Context) {
         val levelRoll = doublePreferencesKey("level_roll_offset_deg")
         val trackingMode = stringPreferencesKey("tracking_mode")
         val activeOfflineMapPath = stringPreferencesKey("active_offline_map_path")
+        val trackingInterrupt = stringPreferencesKey("tracking_interrupt")
+        val trackingResumeAttempts = stringPreferencesKey("tracking_resume_attempts")
     }
 
     private inline fun <reified E : Enum<E>> Preferences.enum(key: Preferences.Key<String>, default: E): E =
         this[key]?.let { v -> enumValues<E>().firstOrNull { it.name == v } } ?: default
 
-    val settings: Flow<Settings> = context.store.data
+    val settings: Flow<Settings> = store.data
         .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
         .map { readFrom(it) }
 
+    /**
+     * Why the recording service stopped on its own (an `InterruptReason` name), kept apart from [Settings] because it
+     * is service state, not a preference. It outlives the process so the reason is still on screen after a restart.
+     */
+    val trackingInterrupt: Flow<String?> = store.data
+        .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+        .map { it[K.trackingInterrupt] }
+
+    suspend fun setTrackingInterrupt(name: String?) {
+        store.edit { p -> if (name == null) p.remove(K.trackingInterrupt) else p[K.trackingInterrupt] = name }
+    }
+
+    /** Automatic restarts of an interrupted recording, as `count:firstAttemptMs`; see `ResumeBackoff`. */
+    val trackingResumeAttempts: Flow<String?> = store.data
+        .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+        .map { it[K.trackingResumeAttempts] }
+
+    suspend fun setTrackingResumeAttempts(value: String?) {
+        store.edit { p -> if (value == null) p.remove(K.trackingResumeAttempts) else p[K.trackingResumeAttempts] = value }
+    }
+
     suspend fun update(transform: (Settings) -> Settings) {
-        context.store.edit { p ->
+        store.edit { p ->
             // Compute the new state from the stored one, then write every field so the store stays complete.
             val n = transform(readFrom(p))
             p[K.units] = n.units.name
@@ -169,6 +219,6 @@ class PrefsRepository(private val context: Context) {
     }
 
     suspend fun clear() {
-        context.store.edit { it.clear() }
+        store.edit { it.clear() }
     }
 }

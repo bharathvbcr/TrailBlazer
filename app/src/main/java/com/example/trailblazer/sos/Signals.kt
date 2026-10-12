@@ -7,6 +7,7 @@ import android.hardware.camera2.CameraManager
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import com.trailblazer.core.sos.Morse
 import com.trailblazer.core.sos.Pulse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -46,7 +47,7 @@ class TorchController(context: Context) {
 
     /** Plays [timeline] until cancelled (repeating). Returns false if the torch could not be used. */
     suspend fun play(timeline: List<Pulse>, onPulse: (Boolean) -> Unit = {}): Boolean {
-        if (cameraId == null || timeline.isEmpty()) return false
+        if (cameraId == null || Morse.isSilent(timeline)) return false
         try {
             while (currentCoroutineContext().isActive) {
                 for (p in timeline) {
@@ -63,26 +64,51 @@ class TorchController(context: Context) {
     }
 }
 
+private const val WHISTLE_RATE_HZ = 44_100
+
+/** The whistle's output stream: mono 16-bit PCM on the alarm stream, with room for two 100 ms chunks. */
+private fun alarmTrack(): AudioTrack {
+    val frames = WHISTLE_RATE_HZ / 10
+    return AudioTrack.Builder()
+        .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+        .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(WHISTLE_RATE_HZ).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+        .setBufferSizeInBytes(frames * 2 * 2)
+        .setTransferMode(AudioTrack.MODE_STREAM)
+        .build()
+}
+
 /**
  * Distress whistle: a ~3.2 kHz tone (where small speakers are loudest and human hearing most sensitive)
  * played as three long blasts and a pause, on the alarm audio stream. Stops when cancelled.
  */
-class WhistlePlayer {
-    suspend fun play(timeline: List<Pulse>, frequencyHz: Double = 3150.0, onPulse: (Boolean) -> Unit = {}) = withContext(Dispatchers.Default) {
-        val rate = 44_100
+class WhistlePlayer(private val openTrack: () -> AudioTrack = ::alarmTrack) {
+    /**
+     * Plays [timeline] until cancelled (repeating). Returns false, without making a sound, when there is nothing
+     * to play or the audio output cannot be opened or started (no output, a policy restriction, a busy device).
+     */
+    suspend fun play(timeline: List<Pulse>, frequencyHz: Double = 3150.0, onPulse: (Boolean) -> Unit = {}): Boolean = withContext(Dispatchers.Default) {
+        if (Morse.isSilent(timeline)) return@withContext false
+        val rate = WHISTLE_RATE_HZ
         val frames = rate / 10
-        val track = AudioTrack.Builder()
-            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
-            .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
-            .setBufferSizeInBytes(frames * 2 * 2)
-            .setTransferMode(AudioTrack.MODE_STREAM)
-            .build()
+        val track = try {
+            openTrack()
+        } catch (_: UnsupportedOperationException) {
+            return@withContext false
+        } catch (_: IllegalArgumentException) {
+            return@withContext false
+        } catch (_: IllegalStateException) {
+            return@withContext false
+        }
         val tone = ShortArray(frames)
         val silence = ShortArray(frames)
         var phase = 0.0
         val step = 2 * PI * frequencyHz / rate
         try {
-            track.play()
+            try {
+                track.play()
+            } catch (_: IllegalStateException) {
+                return@withContext false
+            }
             while (isActive) {
                 for (p in timeline) {
                     onPulse(p.on)
@@ -108,6 +134,7 @@ class WhistlePlayer {
                     }
                 }
             }
+            true
         } finally {
             onPulse(false)
             runCatching { track.pause(); track.flush(); track.stop() }

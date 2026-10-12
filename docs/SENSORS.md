@@ -86,6 +86,31 @@ Every optional field is checked at this boundary, because mock providers and som
 
 **Last known position.** `lastKnown(maxAgeMs)` returns the newest position the system already holds (from the fused, GPS, network or passive provider), through the same validation as a live fix. It returns null without permission, with location switched off, or when nothing is recent enough. Only Stargazing uses it: while the live fix is still *Acquiring*, it takes a position up to 24 h old, labelled "last known; waiting for GPS". Tracking, the speed alert and *Mark waypoint* never see it.
 
+## External BLE sensors
+
+The Now tab can connect one Bluetooth Low Energy peripheral: a GNSS receiver or a barometer / thermometer / hygrometer. Scanning and connecting need the *Nearby devices* permission (`BLUETOOTH_SCAN` and `BLUETOOTH_CONNECT`) on Android 12+. `BLUETOOTH_SCAN` is declared `neverForLocation`: the app lists nearby sensors and never derives the phone's position from scan results, so Android 12+ needs no location permission for the scan (some beacon advertisements are filtered out, which does not affect location, environmental or serial sensors). On Android 11 and older a BLE scan returns nothing unless location access is allowed, so the dialog asks for that instead. A scan stops after 30 s, when the dialog closes, or when it fails (the reason is shown).
+
+Only these characteristics are subscribed to, each only if the peripheral notifies on it; nothing else is touched:
+
+| Service | Characteristic | Becomes |
+|---|---|---|
+| Location and Navigation (0x1819) | Location and Speed (0x2A67), Position Quality (0x2A69) | A position (`ble_lns`) |
+| Environmental Sensing (0x181A) | Pressure (0x2A6D), Temperature (0x2A6E), Humidity (0x2A6F) | Barometer, ambient temperature, humidity |
+| Nordic UART (6E400001-…) | TX (6E400003-…) | NMEA 0183 text (`ble_nmea`) |
+
+A capability is offered only after its notifications were enabled. GATT operations (MTU request, descriptor writes, reads) run one at a time through `GattOpQueue`; an operation that fails or does not answer within 5 s is skipped and the capability it provided is dropped. The phone's own sensor is replaced only for a channel the peripheral really provides: a thermometer without a Pressure characteristic leaves the phone barometer running, and a barometer-only device leaves the phone GPS running.
+
+**What counts as a fix.**
+
+| Source | Accepted when | Accuracy given to the fix |
+|---|---|---|
+| NMEA GGA, RMC, GLL | Checksum present and correct; fix quality 1–5 (GGA) / status A and mode not N, E, M, S (RMC, GLL); minutes < 60; valid time | GGA: HDOP × 5 m. Otherwise 15 m (`BleFixPolicy.DEFAULT_ACCURACY_M`) |
+| LNS Location and Speed | Location present; coordinates in range; and, only for a device whose LN Feature (0x2A6A, read once at connect) sets bit 20 *Position Status Supported*, Position Status *Position Ok* or *Estimated* | EHPE from Position Quality (≤ 10 s old) or HDOP × 5 m; otherwise 15 m. *Estimated* is 100 m, so it is shown but never recorded |
+
+A device that does not support Position Status sends 0 in those bits next to valid coordinates, so its fixes are accepted. Until the LN Feature read completes, and if it fails, the device is treated as not supporting Position Status: a pending or failed read never drops fixes. An HDOP, EHPE or accuracy of 0 means "unknown", not "perfect", and falls back to the 15 m default.
+
+Every BLE fix carries an accuracy, because `TrackRecorder` drops fixes without one and keeps only those at 30 m or better. The 15 m default is for a receiver that says the fix is valid but gives no error estimate. GGA and RMC (and GLL) that share one UTC second are merged into one fix; a receiver that sends only one of them delivers each fix after a 0.5 s wait. The fix time is the receiver's UTC (RMC date plus time) when it is within a day of the phone clock, else the time of day on the nearest calendar day.
+
 ## GNSS
 
 `GnssRepository` uses `GnssStatusCompat` and reports, for each satellite:

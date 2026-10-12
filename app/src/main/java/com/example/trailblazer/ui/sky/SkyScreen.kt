@@ -1,6 +1,5 @@
 package com.example.trailblazer.ui.sky
 
-import android.content.Intent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -41,7 +40,6 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -63,6 +61,7 @@ import com.example.trailblazer.ui.components.Sparkline
 import com.example.trailblazer.ui.components.TrailIcons
 import com.example.trailblazer.ui.components.WindArrow
 import com.example.trailblazer.ui.components.ValueTile
+import com.example.trailblazer.ui.components.openUrl
 import com.example.trailblazer.ui.nav.Navigator
 import com.example.trailblazer.ui.nav.SettingsRoute
 import com.example.trailblazer.ui.nav.StargazeRoute
@@ -277,10 +276,40 @@ private fun SunCard(s: SkyState, fmt: Fmt) {
     }
 }
 
-private fun bandText(b: Band, fmt: Fmt): String? {
-    val a = b.startMs ?: return null
-    val e = b.endMs ?: return null
-    return "${fmt.time(a)}–${fmt.time(e)}"
+/**
+ * A band as a time range. An end earlier than the start is a band that runs through midnight and reads as
+ * "22:07–01:29"; an open end is a band that runs to the edge of the day.
+ */
+internal fun bandText(b: Band, fmt: Fmt): String? {
+    val a = b.startMs
+    val e = b.endMs
+    return when {
+        a != null && e != null -> "${fmt.time(a)}–${fmt.time(e)}"
+        a != null -> "from ${fmt.time(a)}"
+        e != null -> "until ${fmt.time(e)}"
+        b.allDay -> "All day"
+        else -> null
+    }
+}
+
+/**
+ * The stretches of the day window [windowStartMs, windowEndMs) that [b] covers, as fractions of the window
+ * from 0 to 1, for drawing. Two stretches when the band wraps through the window edge, none when the Sun never
+ * gets there, one spanning everything when it is inside the band all day.
+ */
+internal fun bandSpans(b: Band?, windowStartMs: Long, windowEndMs: Long): List<ClosedFloatingPointRange<Float>> {
+    if (b == null) return emptyList()
+    val span = (windowEndMs - windowStartMs).toFloat().coerceAtLeast(1f)
+    fun f(ms: Long) = ((ms - windowStartMs) / span).coerceIn(0f, 1f)
+    val s = b.startMs
+    val e = b.endMs
+    return when {
+        s == null && e == null -> if (b.allDay) listOf(0f..1f) else emptyList()
+        s == null -> listOf(0f..f(e!!))
+        e == null -> listOf(f(s)..1f)
+        e >= s -> listOf(f(s)..f(e))
+        else -> listOf(f(s)..1f, 0f..f(e))
+    }
 }
 
 /** "+2 min 5 s vs yesterday": near the solstices the change is seconds, so seconds are kept. */
@@ -361,10 +390,10 @@ private fun DayPlot(sun: SolarDay, moon: LunarDay, markerMs: Long?, at: Long, on
             fun x(ms: Long?) = ms?.let { ((it - sun.windowStartMs) / span * size.width).coerceIn(0f, size.width) }
             drawRect(if (sun.dayType == DayType.PolarDay) day else dark)
             fun seg(b: Band?, c: Color) {
-                if (b == null || (b.startMs == null && b.endMs == null)) return
-                val a = x(b.startMs) ?: 0f
-                val e = x(b.endMs) ?: size.width
-                drawRect(c, Offset(a, 0f), Size((e - a).coerceAtLeast(0f), size.height))
+                for (part in bandSpans(b, sun.windowStartMs, sun.windowEndMs)) {
+                    val a = part.start * size.width
+                    drawRect(c, Offset(a, 0f), Size((part.endInclusive * size.width - a).coerceAtLeast(0f), size.height))
+                }
             }
             if (sun.dayType != DayType.PolarDay) {
                 seg(sun.astronomical, astro)
@@ -582,7 +611,7 @@ private fun zambrettiText(z: ZambrettiForecast): String =
     z.name.replace(Regex("([a-z])([A-Z])"), "$1 $2").lowercase().replaceFirstChar { it.uppercase() }
 
 @Composable
-private fun ForecastCard(
+internal fun ForecastCard(
     consented: Boolean,
     result: ForecastResult?,
     loading: Boolean,
@@ -593,6 +622,7 @@ private fun ForecastCard(
     onDisable: () -> Unit,
 ) {
     val ctx = LocalContext.current
+    var linkError by remember { mutableStateOf<String?>(null) }
     GlassCard {
         if (!consented) {
             Text("Off. Everything else in TrailBlazer works offline.", style = MaterialTheme.typography.bodyMedium)
@@ -615,9 +645,10 @@ private fun ForecastCard(
             OutlinedButton(onClick = onRefresh, enabled = !loading) { Text("Refresh") }
             TextButton(onClick = onDisable) { Text("Turn off") }
         }
-        TextButton(onClick = { ctx.startActivity(Intent(Intent.ACTION_VIEW, OpenMeteoClient.ATTRIBUTION_URL.toUri())) }) {
+        TextButton(onClick = { openUrl(ctx, OpenMeteoClient.ATTRIBUTION_URL) { linkError = it } }) {
             Text(OpenMeteoClient.ATTRIBUTION, style = MaterialTheme.typography.bodySmall)
         }
+        linkError?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = LocalStatusColors.current.caution) }
     }
 }
 

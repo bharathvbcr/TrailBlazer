@@ -126,7 +126,7 @@ class TileUtilsTest {
         val jpgBytes = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte())
         assertEquals(TileFormat.RasterJpg, TileFormat.detect(jpgBytes))
 
-        val webpBytes = "RIFF1234WEBPVP8 ".toByteArray(Charsets.US_ASCII)
+        val webpBytes = "RIFF1234WEBPVP8 ".encodeToByteArray()
         assertEquals(TileFormat.RasterWebp, TileFormat.detect(webpBytes))
 
         val gzipBytes = byteArrayOf(0x1F.toByte(), 0x8B.toByte(), 0x08, 0x00)
@@ -138,31 +138,33 @@ class TileUtilsTest {
 
     @Test
     fun testPmtilesHeaderParsing() {
+        // Offsets follow the PMTiles v3 spec: magic "PMTiles" at 0, version at 7, root dir at 8/16, tile data at 56/64,
+        // zoom range at 100/101, min position (lon, lat) at 102/106. (This test used to encode an invented layout.)
         val buffer = ByteArray(127)
-        buffer[0] = 'P'.code.toByte()
-        buffer[1] = 'M'.code.toByte()
-        buffer[2] = 3 // version 3
-        // rootDirectoryOffset = 127 (at offset 3, uint64 LE)
-        buffer[3] = 127
-        // rootDirectoryLength = 500 (at offset 11)
-        buffer[11] = 0xF4.toByte()
-        buffer[12] = 0x01
-        // tileDataOffset = 1000 (at offset 51)
-        buffer[51] = 0xE8.toByte()
-        buffer[52] = 0x03
-        // tileDataLength = 20000 (at offset 59)
-        buffer[59] = 0x20
-        buffer[60] = 0x4E
-        // minZoom = 2 (at offset 95)
-        buffer[95] = 2
-        // maxZoom = 14 (at offset 96)
-        buffer[96] = 14
-        // minLon = -122.5 * 10_000_000 = -1225000000 (at offset 97, int32 LE)
+        "PMTiles".forEachIndexed { i, c -> buffer[i] = c.code.toByte() }
+        buffer[7] = 3 // version 3
+        // rootDirectoryOffset = 127 (uint64 LE)
+        buffer[8] = 127
+        // rootDirectoryLength = 500
+        buffer[16] = 0xF4.toByte()
+        buffer[17] = 0x01
+        // tileDataOffset = 1000
+        buffer[56] = 0xE8.toByte()
+        buffer[57] = 0x03
+        // tileDataLength = 20000
+        buffer[64] = 0x20
+        buffer[65] = 0x4E
+        // internal and tile compression = gzip
+        buffer[97] = 2
+        buffer[98] = 2
+        buffer[100] = 2 // minZoom
+        buffer[101] = 14 // maxZoom
+        // minLon = -122.5 * 10_000_000 = -1225000000 (int32 LE)
         val minLonI = -1225000000
-        buffer[97] = (minLonI and 0xFF).toByte()
-        buffer[98] = ((minLonI shr 8) and 0xFF).toByte()
-        buffer[99] = ((minLonI shr 16) and 0xFF).toByte()
-        buffer[100] = ((minLonI shr 24) and 0xFF).toByte()
+        buffer[102] = (minLonI and 0xFF).toByte()
+        buffer[103] = ((minLonI shr 8) and 0xFF).toByte()
+        buffer[104] = ((minLonI shr 16) and 0xFF).toByte()
+        buffer[105] = ((minLonI shr 24) and 0xFF).toByte()
 
         val header = TileUtils.parsePmtilesHeader(buffer)
         assertNotNull(header)

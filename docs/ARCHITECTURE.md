@@ -4,24 +4,24 @@
 
 | Module | Kind | Package | Contains |
 |---|---|---|---|
-| `:core` | Pure Kotlin/JVM (no Android) | `com.trailblazer.core` | All the maths and file formats. Tested on the plain JVM in seconds. |
+| `:core` | Kotlin Multiplatform: JVM, Android library, macOS and iOS (`macosArm64`, `iosArm64`, `iosSimulatorArm64`, `iosX64`) | `com.trailblazer.core` | All the maths and file formats. `commonTest` runs on the JVM in seconds, and also as Android host tests and natively on Apple targets. Each Apple target builds a static `TrailBlazerCore` framework (no Swift consumer yet). |
 | `:app` | Android application | `com.example.trailblazer` | Sensors, location, storage, the tracking service and the Compose UI. |
 
-`:core` has no Android imports, so everything that can be checked against a reference value (astronomy, geodesy, weather, GPX/KML, map links) lives there.
+`:core` has no Android imports, so everything that can be checked against a reference value (astronomy, geodesy, weather, GPX/KML, map links) lives there. Almost all of it is common Kotlin. The only platform seams are `expect`/`actual` declarations with a JVM, an Android and an Apple actual each: `PlatformTimeZone` (UTC offset and local-to-epoch conversion; `java.util.TimeZone` or `NSTimeZone`) and `io/PlatformIo` (the `Reader`/`Writer` types and gzip decompression).
 
 ### `:core` packages
 
 | Package | Responsibility |
 |---|---|
 | `math` | `mod360`, `angleDiff` (−180, 180], `crossesNorth`, `CircularLowPass`, `MedianFilter` |
-| `time` | Julian day, ΔT, civil dates, ISO-8601 (always `Locale.ROOT`) |
+| `time` | Julian day, ΔT, civil dates, ISO-8601 (`Iso8601`, hand-formatted with zero padding, so the output never depends on a locale) |
 | `astro` | Sun (NOAA/Meeus 25), moon (Meeus 47), coordinate transforms, refraction, `RiseSetFinder`, `SolarEvents`, `LunarPhase`, `LunarEvents`; planets (JPL elements), the bright-star catalogue, precession and apparent place, `NightSky` (darkness intervals, planet and Milky Way visibility, polar alignment), `MeteorShowers` (IMO list), `SkyProjection` (sky chart) |
-| `geo` | `LatLon` (validated), haversine, bearings, destination, cross-track, DMS, `CoordinateParser` |
+| `geo` | `LatLon` (validated), haversine, bearings, destination, intermediate point, cross-track, DMS, `CoordinateParser`; `Hgt` / `DemTile` / `DemTileSet` (SRTM `.hgt` elevation tiles read through a byte-range reader, no file I/O of their own) |
 | `atmo` | ISA, QNH, density altitude, air density, boiling point, dew point |
 | `weather` | `PressureTrend`, `Tendency`, `StormAlert`, `Zambretti` |
-| `track` | `TrackPoint`, streaming `TrackStats`, `DouglasPeucker` |
+| `track` | `TrackPoint`, streaming `TrackStats`, `ElevationClimb` (the 3 m hysteresis climb/descent filter, shared with trip elevation profiles), `DouglasPeucker` |
 | `io` | `XmlPull` (no DTD, no entities), `GpxReader`/`GpxWriter`, `KmlReader`/`KmlWriter` |
-| `trip` | `Stop`, `Trip`, `LegCalculator`, `TripRules`, `DaylightPlanner` |
+| `trip` | `Stop`, `Trip`, `LegCalculator`, `TripRules`, `DaylightPlanner`, `ElevationProfiler` / `ElevationProfile` (elevation along a planned route: samples, gain and loss, peaks and valleys, steep stretches) |
 | `intents` | `MapLinks`: `geo:` URIs, Google Maps directions, OSM directions |
 | `motion` | `Vec3`, g-force, inclination, the 3D-plot orbit camera |
 | `alerts`, `sos`, `units` | Speed alert with hysteresis, morse/whistle timelines, unit conversion |
@@ -36,7 +36,7 @@ Every public function returns a *total* result: a value, `null`, or a sealed "wh
 | `sensors` | `SensorSource` (the `SensorManager` seam), `Reading<T>`, and the barometer, magnetic, environment, motion, step, orientation and acoustic repositories. Also declination. |
 | `location` | `LocationRepository` (`LocationManagerCompat`, no Play Services), `GnssRepository` |
 | `permissions` | `AppPermission` and a `StateFlow` of grants refreshed on every resume |
-| `data` | Room `TrailDb` (waypoints, trips + stops, tracks + points, pressure samples), DataStore `Prefs`, repositories, SAF `ImportExport` |
+| `data` | Room `TrailDb` (waypoints, trips + stops, tracks + points, pressure samples), DataStore `Prefs`, repositories, SAF `ImportExport`, `OfflineMapManager` (map archives), `DemTileManager` (SRTM elevation tiles) |
 | `tracking` | `TrackRecordingService` (foreground, type `location`), `TrackRecorder` (filtering and batching), `TrackingController` |
 | `weather` | `OpenMeteoClient` (consent-gated) and `PressureSampler` |
 | `sos` | `TorchController`, `WhistlePlayer` |
@@ -84,6 +84,7 @@ Rules:
 ## Persistence
 
 - **Room `TrailDb`** uses UUID primary keys. Track points are indexed on `(trackId, seq)` and read with keyset paging (`pointsAfter`), so a 100k-point track is never loaded at once. Schemas are exported to `app/schemas/`.
+- **Offline elevation tiles** are SRTM `.hgt` files in `files/dem/`, imported through the Storage Access Framework by `DemTileManager` (modelled on `OfflineMapManager`: bounded copy, hidden staged temp file, validated by name and exact size, then renamed; `.hgt` only, archives are refused). They are read in place a row at a time, and are not in cloud backup or device transfer (only `datastore/` and the database are). The trip editor's `elevation` flow recomputes the profile when a stop moves or tiles change, and cancels the build still running.
 - **Pressure samples** are recorded every 10 minutes while the app is in the foreground and pruned after 7 days.
 - **DataStore** holds `Settings`. One `readFrom` mapper is the only place that decodes preferences.
 - **Backup:** cloud backup includes `datastore/` only. Device-to-device transfer also includes the database. See `res/xml/data_extraction_rules.xml`.
@@ -97,8 +98,9 @@ Rules:
    - **Wake:** the significant-motion trigger (a wake-up sensor, armed only while resting) or motion in the next samples brings the request back.
    - **Fallback:** a phone without both an accelerometer and significant motion keeps GPS on at the chosen interval, and Settings says so.
    - **Metrics:** the gap is stitched by `TrackStats` (see ALGORITHMS.md, Tracks), so it is not counted as moving time. The same applies when Battery Saver withholds fixes; the request stays registered and fixes continue in the same track.
-4. If location becomes `Unavailable`, recording pauses and records an `InterruptReason` (`LocationPermissionRevoked` or `LocationDisabled`), which the Trips tab explains.
-5. After process death, `MainActivity` calls `resumeIfInterrupted()` on start. The service reattaches to the open track and never creates a new one on its own.
+4. The lifecycle (start, pause, finish, the collector and the 5 s tick) lives in `RecordingSession`, which changes all of it under one lock. Recording needs **precise** location (`AppPermission.PreciseLocation`): approximate fixes are over 30 m wide and would all be dropped, so a start with approximate access only is refused with a reason.
+5. If location becomes `Unavailable`, or a database write fails (`SQLiteException`, a full disk), recording pauses and an `InterruptReason` is stored in DataStore (`InterruptState`). The Trips tab and a notification explain it, and the reason survives the process. A stored reason stops `resumeIfInterrupted()` from restarting behind the user's back.
+6. After process death, `MainActivity` calls `resumeIfInterrupted()` on start, which returns a typed `ResumeResult`. The service reattaches to the open track and never creates a new one on its own. It is `START_NOT_STICKY` on purpose: Android does not let a restarted service enter the foreground with the `location` type from the background without `ACCESS_BACKGROUND_LOCATION` ([restrictions](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start)).
 
 ## UI
 

@@ -6,7 +6,7 @@ Bluetooth Low Energy (BLE) external GPS and environmental sensor support
 Task: ft-762d73834d6aa7e180ec2cf3863da418 (revision 1)
 Updated (Unix seconds): 1791254495
 Type: feature
-Status: completed
+Status: done
 Severity: low
 Owner: Unassigned
 Priority: 3 (Low)

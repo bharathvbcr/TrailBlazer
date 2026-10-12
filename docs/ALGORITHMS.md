@@ -1,6 +1,6 @@
 # Algorithms
 
-Everything here is in `:core` and is tested on the JVM. The sign conventions are the same everywhere:
+Everything here is in `:core` (common Kotlin Multiplatform code) and is tested by the shared `commonTest` suite on the JVM, as Android host tests and natively on Apple targets. The sign conventions are the same everywhere:
 
 - **Latitude:** degrees, north positive, in [−90, 90].
 - **Longitude:** degrees, east positive, in [−180, 180].
@@ -100,6 +100,7 @@ Every root is checked against the real function, so a crossing is never guessed 
 
 - **Distance:** haversine on a sphere with R = 6371.0088 km (the IUGG mean radius). Against Vincenty on WGS-84 the error is within 0.6% (checked in tests). That is good enough for trip legs, which are straight-line distances by design; road distance is not guessed.
 - **Initial and final bearing, destination point, cross-track distance:** from the standard spherical-trigonometry formulas. Results are normalised with `mod360`.
+- **Intermediate point** (`Geo.intermediate`): spherical linear interpolation along the great circle, for sampling a leg at equal spacing. Coincident or antipodal endpoints, which have no unique great circle, return the nearer end.
 - **`angleDiff(a, b)`** returns a value in (−180, 180]. It is used for the dial's shortest-path animation and for the north-crossing buzz (`crossesNorth`), so the 359° → 1° wrap is correct.
 
 ## Coordinate parsing (`geo/CoordinateParser.kt`)
@@ -173,15 +174,16 @@ The Negretti & Zambra forecaster. It needs sea-level pressure in 950–1050 hPa 
   - distance (haversine sum)
   - moving time (speed ≥ 0.5 m/s). A step of up to 30 s uses the device-reported speed. A longer step uses its average speed (distance / time), because an instantaneous speed says nothing about the time before it. Longer steps come from sparse Expedition fixes, GPS resting while still, Battery Saver withholding fixes, a pause, or process death. Distance is the straight line between fixes either way.
   - maximum speed
-  - elevation gain and loss with a **3 m hysteresis** band, so GPS and barometer noise does not add up to phantom climbing
-- **`DouglasPeucker`** is iterative (no recursion, so a 100k-point track cannot overflow the stack). `simplifyToMax(n)` searches for the smallest tolerance that yields ≤ n points. Imported routes over 50 points are simplified to 50 stops. The track detail map path is stride-sampled while streaming, then simplified to at most 500 points. Charts average the points into fixed buckets. Stored tracks are never altered.
+  - elevation gain and loss with a **3 m hysteresis** band, so GPS and barometer noise does not add up to phantom climbing. The filter is `ElevationClimb`, which planned-route elevation profiles use too (see Elevation profiles)
+- **`DouglasPeucker`** is iterative (no recursion, so a 100k-point track cannot overflow the stack). `simplifyToMax(n)` keeps the points in order of how far each one deviates (one ranked pass, a heap of segments) until n remain, so it never returns more than n points and gives the same answer for the same input. Longitude differences wrap at ±180°, so a track across the antimeridian simplifies like any other. Imported routes over 50 points are simplified to 50 stops. The track detail map path is stride-sampled while streaming, then simplified to at most 500 points. Charts average the points into fixed buckets. Stored tracks are never altered.
 
 ## GPX and KML (`io/`)
 
-- **`XmlPull`** is a minimal streaming reader. It never expands DTDs or entities beyond the five predefined ones and numeric character references, so XXE and "billion laughs" inputs have no effect.
-- **`GpxReader.read` and `KmlReader.read`** stop with an error beyond 1,000,000 points (`maxPoints`).
+- **`XmlPull`** is a minimal streaming reader. It never expands DTDs or entities beyond the five predefined ones and numeric character references, so XXE and "billion laughs" inputs have no effect. Character data arrives in chunks of about 32,768 characters, so no text length limits a document.
+- **`XmlEncoding.detect`** picks the character encoding from the file's own bytes: a byte-order mark first (UTF-8, UTF-16, UTF-32), then the `<?xml encoding="…"?>` declaration (UTF-8, ISO-8859-1, ISO-8859-15, US-ASCII, windows-1252 and their usual aliases), then UTF-8. Any other declared name (Shift_JIS, KOI8-R, windows-1251…) is passed to the platform, which decodes it or, if it does not know the name, refuses the file with an import error. A UTF-16/32 declaration the bytes contradict is refused too, instead of being decoded into garbage. Bytes that are invalid in the declared encoding decode to U+FFFD (a stray bad byte in a name does not cost the whole file).
+- **`GpxReader.read` and `KmlReader.read`** stop with an error beyond 1,000,000 points (`maxPoints`). That is the only size limit on a coordinate list: a KML `<coordinates>` list is parsed tuple by tuple as it streams in, so memory grows with the points kept, not with the text. Names and descriptions are read up to 1,000,000 characters each and cut beyond that. A number, timestamp or coordinate tuple longer than 256 characters is an error, not a dropped field. A document of more than 400,000,000 characters is refused whatever its structure.
 - **`GpxReader`** reads `wpt`, `rte`/`rtept` and `trk`/`trkseg`/`trkpt`. A track without timestamps is imported as a *route*; the app does not invent times.
-- **`KmlReader`** reads `Point` and `LineString` placemarks.
+- **`KmlReader`** reads `Point` and `LineString` placemarks and `gx:Track` / `gx:MultiTrack`. Every geometry of a `MultiGeometry` is kept, and a `<when>` outside a `gx:Track` (such as a `TimeStamp`) is not a track time. A `Polygon` is skipped.
 - **Writers** escape `& < > " '` and stream their output. They write tracks as GPX `trk` and KML `LineString`.
 
 ## Map hand-off (`intents/MapLinks.kt`)
@@ -197,6 +199,42 @@ The app builds the URL and fires an intent. It never contacts a map service itse
 - **`LegCalculator`:** straight-line legs, with distance and initial bearing.
 - **`TripRules`:** at least two stops and at most 50. Consecutive stops within 1 m count as the same place, which includes the antimeridian and both poles. Planned dates never go backwards, including across an undated stop. Stop ids are unique. The editor will not save a failing trip and will not hand it to a map app. An imported route is still stored, and the trip list marks it as needing a fix.
 - **`DaylightPlanner`:** sunrise and sunset at each stop on its planned day, in that stop's local-day window.
+
+## Elevation profiles (`geo/Dem.kt`, `trip/ElevationProfile.kt`)
+
+Planned trips get an elevation profile from SRTM tiles stored on the phone. Real tiles are **not bundled** with the app (a 1 arc-second tile is 26 MB); the user imports the `.hgt` files that cover a route, and without them the Trip page says there is no elevation data.
+
+### The `.hgt` format
+
+As described in the NASA *SRTM Collection User Guide* (rev. October 2015, section 2.1.4, pp. 10–11) and read by GDAL's SRTMHGT driver (`srtmhgtdataset.cpp`):
+
+- **Name:** `N36W119.hgt` names the **south-west** corner of a 1° × 1° tile: it covers 36–37 °N and 118–119 °W. Real downloads are often `N36W119.SRTMGL1.hgt`; case is ignored. `S00` and `W000` do not exist (the tile below the equator is `S01`).
+- **Grid:** square, 3,601 posts per side (1 arc-second, about 30 m) or 1,201 (3 arc-second, about 90 m), so the file is exactly `side² x 2` bytes (25,934,402 or 2,884,802), with no header. Any other size is rejected.
+- **Posts:** big-endian signed 16-bit, metres above the EGM96 geoid (a GPS height above the ellipsoid can differ from it by tens of metres). Rows are stored north to south, each row west to east. Row 0 is the north edge, column 0 the west edge.
+- **Edges:** the edge rows and columns lie on whole degrees and repeat in the neighbouring tile, so a point on a whole degree is in two tiles, and both give the same answer.
+- **Void:** −32,768.
+
+### Sampling
+
+For a tile with south-west corner (φ₀, λ₀) and `n` posts per side:
+
+`row = (φ₀ + 1 − φ)(n − 1)`, `col = (λ − λ₀)(n − 1)`, byte offset `(row·n + col)·2`.
+
+- A point inside the tile (edges included) is interpolated **bilinearly** between its four surrounding posts. A fraction within 10⁻⁹ of a post snaps to it, so rounding dust in the degrees-to-grid conversion cannot give a neighbouring void a weight.
+- **Void policy:** a void post that has weight in the answer makes the answer **null** ("unknown"). Nothing is interpolated through −32,768, and nothing is reported as 0 m. A post exactly on a good post with void neighbours is the post. A read that fails is also unknown.
+- **Which tile:** the one holding `floor(φ), floor(λ)`. The north pole (90 °) lies in the top row of the `N89` tiles, and 180 ° / −180 ° in the east edge of `E179` / the west edge of `W180`. A whole-degree point is offered to every tile that contains it, so a void on one tile's edge falls back to the neighbour's copy of the same post.
+- **Lazy reads:** `DemTile` takes a `(offset, length)` reader (a `RandomAccessFile` in the app, bytes in tests) and fetches one row of at most 7,202 bytes at a time, keeping the last six rows. A profile walking along a route reads each row about once; no tile is ever loaded whole. `DemTileSet` keeps at most six tiles open.
+
+### Profile along a route
+
+`ElevationProfiler.sample` walks each leg of the route (consecutive stops) along its **great circle** (`Geo.intermediate`, spherical interpolation, so a long leg does not drift off a constant bearing), at the finest spacing among the installed tiles at the stops: 30 m with 1 arc-second tiles, else 90 m. Each stop is a sample, and distance accumulates over legs, so the x axis is continuous. A route longer than 2,000 samples is sampled more coarsely, never cut off, and the profile says so (`spacingWidened`, shown in the UI).
+
+### Climb, descent, markers, warnings
+
+- **Gain and loss** use `ElevationClimb`, the same 3 m hysteresis filter as recorded tracks (`TrackStats` delegates to it): a change counts once it is 3 m from the last counted level. A stretch without data starts a new run, so no climb is guessed across it, and the totals are then a lower bound (the UI says so).
+- **Peaks and valleys** are the turning points of a zig-zag filter over each run of known samples. A turning point needs a swing of at least 10 m, or a tenth of the whole range if that is more, so DEM noise on a slope makes no markers. The highest and lowest known points are always marked; at most 12 markers are kept, the biggest swings first.
+- **Steep stretches:** the grade is measured over at least 150 m of route, not post to post, and a stretch whose grade passes 25 % is flagged (overlapping flagged windows in one direction are merged). A window is never measured across a gap. DEM posts smooth steep ground, so flagged grades are lower bounds.
+- **Accuracy:** SRTM heights have errors of metres (not measured here), and 3 arc-second posts blur summits and narrow valleys. The profile is a planning aid, not a replacement for a recorded track.
 
 ## Motion (`motion/Motion.kt`)
 
@@ -233,4 +271,6 @@ No two cues come closer than 80 ms. A Level or Steep cue that falls inside that 
 - O. Alduchov & R. Eskridge, "Improved Magnus form approximation of saturation vapor pressure", *J. Appl. Meteor.* 35, 1996.
 - T. Vincenty, "Direct and inverse solutions of geodesics on the ellipsoid", *Survey Review* 23, 1975.
 - D. Douglas & T. Peucker, *The Canadian Cartographer* 10(2), 1973.
+- NASA LP DAAC, *The Shuttle Radar Topography Mission (SRTM) Collection User Guide*, rev. October 2015, section 2.1.4 (HGT format).
+- GDAL, SRTMHGT driver (`frmts/srtmhgt/srtmhgtdataset.cpp`): south-west corner origin, size to grid mapping, −32,768 nodata.
 - UK Met Office, *Pressure tendency* terms. NOAA/NWS observing handbook.
