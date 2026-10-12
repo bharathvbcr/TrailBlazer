@@ -11,6 +11,7 @@ import com.trailblazer.core.io.KmlReader
 import com.trailblazer.core.io.KmlWriter
 import com.trailblazer.core.io.NamedPoint
 import com.trailblazer.core.io.Route
+import com.trailblazer.core.io.XmlEncoding
 import com.trailblazer.core.io.XmlFormatException
 import com.trailblazer.core.track.DouglasPeucker
 import com.trailblazer.core.track.TrackStats
@@ -42,67 +43,47 @@ sealed interface IoResult<out T> {
     data class Failed(val message: String) : IoResult<Nothing>
 }
 
+/**
+ * Opens [input] as characters in the encoding the document itself names: its byte-order mark, else the `encoding` of
+ * its `<?xml ?>` declaration, else UTF-8. The choice is [XmlEncoding.detect]'s, shared with every platform; this only
+ * hands it the leading bytes and maps the answer to a [Charset].
+ *
+ * @throws XmlFormatException when the encoding is unsupported or contradicted by the bytes.
+ */
 internal fun openXmlReader(input: InputStream): PushbackReader {
     val bis = if (input is BufferedInputStream) input else BufferedInputStream(input, 8192)
-    bis.mark(8192)
-    val headerBytes = ByteArray(4096)
-    val readCount = bis.read(headerBytes).coerceAtLeast(0)
+    bis.mark(XmlEncoding.SNIFF_BYTES)
+    val head = ByteArray(XmlEncoding.SNIFF_BYTES)
+    var filled = 0
+    while (filled < head.size) {
+        val n = bis.read(head, filled, head.size - filled)
+        if (n < 0) break
+        filled += n
+    }
     bis.reset()
 
-    var charset = Charsets.UTF_8
-    var bomSkip = 0
-
-    if (readCount >= 4 && headerBytes[0] == 0x00.toByte() && headerBytes[1] == 0x00.toByte() && headerBytes[2] == 0xFE.toByte() && headerBytes[3] == 0xFF.toByte()) {
-        charset = Charset.forName("UTF-32BE")
-        bomSkip = 4
-    } else if (readCount >= 4 && headerBytes[0] == 0xFF.toByte() && headerBytes[1] == 0xFE.toByte() && headerBytes[2] == 0x00.toByte() && headerBytes[3] == 0x00.toByte()) {
-        charset = Charset.forName("UTF-32LE")
-        bomSkip = 4
-    } else if (readCount >= 3 && headerBytes[0] == 0xEF.toByte() && headerBytes[1] == 0xBB.toByte() && headerBytes[2] == 0xBF.toByte()) {
-        charset = Charsets.UTF_8
-        bomSkip = 3
-    } else if (readCount >= 2 && headerBytes[0] == 0xFE.toByte() && headerBytes[1] == 0xFF.toByte()) {
-        charset = Charsets.UTF_16BE
-        bomSkip = 2
-    } else if (readCount >= 2 && headerBytes[0] == 0xFF.toByte() && headerBytes[1] == 0xFE.toByte()) {
-        charset = Charsets.UTF_16LE
-        bomSkip = 2
-    } else if (readCount >= 4 && headerBytes[0] == 0x00.toByte() && headerBytes[1] == 0x3C.toByte() && headerBytes[2] == 0x00.toByte() && headerBytes[3] == 0x3F.toByte()) {
-        charset = Charsets.UTF_16BE
-    } else if (readCount >= 4 && headerBytes[0] == 0x3C.toByte() && headerBytes[1] == 0x00.toByte() && headerBytes[2] == 0x3F.toByte() && headerBytes[3] == 0x00.toByte()) {
-        charset = Charsets.UTF_16LE
-    } else {
-        val asciiHeader = String(headerBytes, 0, readCount, Charsets.ISO_8859_1)
-        val xmlDeclMatch = Regex("""<\?xml\s+[^>]*\?>""").find(asciiHeader)
-        if (xmlDeclMatch != null) {
-            val decl = xmlDeclMatch.value
-            val encMatch = Regex("""encoding\s*=\s*["']([^"']+)["']""").find(decl)
-            if (encMatch != null) {
-                val encName = encMatch.groupValues[1]
-                try {
-                    charset = Charset.forName(encName)
-                } catch (_: Exception) {
-                    charset = Charsets.UTF_8
-                }
-            }
-        }
+    val encoding = XmlEncoding.detect(head, filled)
+    val supported = try {
+        Charset.isSupported(encoding.charset)
+    } catch (_: IllegalArgumentException) {
+        false
     }
-
-    if (bomSkip > 0) {
-        var skipped = 0L
-        while (skipped < bomSkip) {
-            val s = bis.skip(bomSkip.toLong() - skipped)
-            if (s <= 0) {
-                if (bis.read() == -1) break
-                skipped++
-            } else {
-                skipped += s
-            }
-        }
-    }
-
+    if (!supported) throw XmlFormatException("unsupported encoding '${encoding.charset.take(40)}': this device cannot decode it")
+    val charset = Charset.forName(encoding.charset)
+    bis.skipExactly(encoding.bomBytes)
+    // Bytes that are invalid in the declared encoding decode to U+FFFD: a stray bad byte in a name is better than
+    // losing the whole file.
     return PushbackReader(BufferedReader(InputStreamReader(bis, charset)), 8192)
 }
+
+private fun InputStream.skipExactly(count: Int) {
+    var remaining = count
+    while (remaining > 0) {
+        val skipped = skip(remaining.toLong()).toInt()
+        if (skipped > 0) remaining -= skipped else if (read() < 0) return else remaining--
+    }
+}
+
 
 /**
  * GPX/KML import and export through the Storage Access Framework (no storage permission).
