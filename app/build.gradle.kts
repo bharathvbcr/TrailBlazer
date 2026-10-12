@@ -11,17 +11,29 @@ plugins {
 
 /**
  * Release identity. Gradle properties (`-PversionCode=…`, `-PversionName=…`, or gradle.properties) win; otherwise the
- * commit count of the checkout gives a monotonic versionCode. Without git (a source tarball) the old fixed values apply.
+ * commit count of the checkout gives a monotonic versionCode.
+ *
+ * The count is only a version when the clone has its full history. A shallow clone (`actions/checkout` defaults to
+ * depth 1) counts 1 commit, which would ship a versionCode that Play rejects as older than the last upload. So the
+ * count is used only from a complete clone; otherwise (a shallow clone, or a source tarball with no git) the fixed
+ * development values apply, and the `verifyReleaseIdentity` task refuses to build a SIGNED release from them.
  */
-val gitCommitCount: Int? = runCatching {
+fun git(vararg args: String): String? = runCatching {
     providers.exec {
-        commandLine("git", "rev-list", "--count", "HEAD")
+        commandLine("git", *args)
         isIgnoreExitValue = true
-    }.standardOutput.asText.get().trim().toIntOrNull()
-}.getOrNull()?.takeIf { it > 0 }
-val releaseVersionCode: Int = providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: gitCommitCount ?: 2
+    }.standardOutput.asText.get().trim()
+}.getOrNull()?.takeIf { it.isNotEmpty() }
+
+val explicitVersionCode: Int? = providers.gradleProperty("versionCode").orNull?.let { raw ->
+    raw.toIntOrNull()?.takeIf { it > 0 } ?: throw GradleException("-PversionCode must be a positive integer, got '$raw'.")
+}
+val historyCommitCount: Int? =
+    if (git("rev-parse", "--is-shallow-repository") == "false") git("rev-list", "--count", "HEAD")?.toIntOrNull()?.takeIf { it > 0 } else null
+val releaseVersionCode: Int = explicitVersionCode ?: historyCommitCount ?: 2
 val releaseVersionName: String = providers.gradleProperty("versionName").orNull
-    ?: gitCommitCount?.let { "2.0.$it" } ?: "2.0"
+    ?: historyCommitCount?.let { "2.0.$it" } ?: "2.0"
+val versionCodeIsTrusted = explicitVersionCode != null || historyCommitCount != null
 
 /**
  * Release signing comes only from the environment or Gradle properties, never from the repository. All four values
@@ -44,6 +56,28 @@ if (!releaseSigningConfigured && signingParts.any { it != null }) {
             "TRAILBLAZER_KEY_PASSWORD), or none of them for an unsigned release.",
     )
 }
+
+/**
+ * Runs before every release-variant build (`preReleaseBuild`). A signed release is a shippable one, so it must carry a
+ * trustworthy versionCode and a keystore that exists; an unsigned release (CI, local R8 check) is not subject to this.
+ */
+val verifyReleaseIdentity = tasks.register("verifyReleaseIdentity") {
+    val signed = releaseSigningConfigured
+    val trusted = versionCodeIsTrusted
+    val keystore = signingStoreFile?.let { file(it) }
+    doLast {
+        if (!signed) return@doLast
+        if (!trusted) {
+            throw GradleException(
+                "Refusing to build a SIGNED release with a derived versionCode: this clone is shallow or has no git history, " +
+                    "so the commit count is not a version. Fetch full history (git fetch --unshallow; actions/checkout " +
+                    "fetch-depth: 0) or pass -PversionCode=<n>.",
+            )
+        }
+        if (!keystore!!.isFile) throw GradleException("Release keystore not found: $keystore")
+    }
+}
+tasks.configureEach { if (name == "preReleaseBuild") dependsOn(verifyReleaseIdentity) }
 
 android {
     namespace = "com.example.trailblazer"

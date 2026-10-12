@@ -53,3 +53,7 @@ build/
 .cxx
 local.properties
 debug.keystore
+
+# Release signing material
+*.jks
+*.keystore

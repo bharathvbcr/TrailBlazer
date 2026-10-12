@@ -66,7 +66,7 @@ flowchart TD
         UI[Jetpack Compose + Material 3 + Haze]
     end
 
-    subgraph CoreLayer [":core (Pure Kotlin JVM Module)"]
+    subgraph CoreLayer [":core (Kotlin Multiplatform Module)"]
         Astro["Astro Engine (Meeus / JPL)"]
         Geo["Geodesy &amp; Coordinate Parsing"]
         Atmo["Atmosphere &amp; Weather (ISA / Zambretti)"]
@@ -89,8 +89,8 @@ flowchart TD
     TR -.-> CoreLayer
 ```
 
-- **`:core` (Pure Kotlin/JVM):**
-  Zero Android dependencies. Contains all astronomy calculations (Meeus, JPL planetary elements, IAU 1976 precession), geodesy (haversine, spherical trigonometry, Vincenty comparisons), ICAO atmosphere, Zambretti pressure forecasting, Douglas–Peucker streaming track simplification, coordinate parsers, and XML streaming GPX/KML engines. Runs unit tests on the plain JVM in seconds.
+- **`:core` (Kotlin Multiplatform):**
+  Zero Android dependencies in its common code. Targets the JVM, Android (as a KMP library), macOS (`macosArm64`) and iOS (`iosArm64`, `iosSimulatorArm64`, `iosX64`); each Apple target also builds a static `TrailBlazerCore` framework. Contains all astronomy calculations (Meeus, JPL planetary elements, IAU 1976 precession), geodesy (haversine, spherical trigonometry, Vincenty comparisons), ICAO atmosphere, Zambretti pressure forecasting, Douglas–Peucker streaming track simplification, coordinate parsers, and XML streaming GPX/KML engines. The shared tests (`commonTest`) run on the JVM, as Android host tests, and natively on macOS and the iOS simulator. Only the Android app consumes `:core` today; the frameworks have no Swift shell yet.
 - **`:app` (Android Application):**
   Handles sensor acquisition via `SensorSource`, location via `LocationManagerCompat` (no Google Play Services requirement), Room persistence with keyset pagination, DataStore preferences, foreground tracking service, and Jetpack Compose UI.
 
@@ -125,7 +125,7 @@ Sensors are subscribed through `WhileSubscribed(5_000)` flows: they register har
 
 ## Verification & Testing Suite
 
-TrailBlazer enforces extensive automated test coverage across both JVM and Robolectric layers:
+TrailBlazer enforces extensive automated test coverage across the JVM, Android-host, Apple-native (macOS and iOS simulator) and Robolectric layers:
 
 | Layer | Coverage & Proof |
 |---|---|
@@ -144,19 +144,29 @@ TrailBlazer enforces extensive automated test coverage across both JVM and Robol
 
 - **JDK 21** (`export JAVA_HOME=$(/usr/libexec/java_home -v 21)`)
 - **Android SDK** with Platform 37 (`compileSdk = 37`, `targetSdk = 36`, `minSdk = 24`)
+- **macOS with Xcode** only for the Apple targets of `:core` (native tests and the `TrailBlazerCore` framework). On Linux and Windows Kotlin/Native skips them.
 
 ### Build & Verification Commands
 
 ```bash
-# Run JVM core tests and Robolectric unit tests
+# The gate CI runs on Linux (.github/workflows/ci.yml, job "linux")
+./gradlew :core:jvmTest :core:testAndroidHostTest :app:testDebugUnitTest :app:lintDebug :app:assembleRelease
+
+# The gate CI runs on macOS (job "macos"): every :core target, including native macOS and the iOS simulator,
+# plus the Apple frameworks
+./gradlew :core:allTests :core:linkDebugFrameworkMacosArm64 :core:linkDebugFrameworkIosArm64 :core:linkDebugFrameworkIosSimulatorArm64 :core:linkDebugFrameworkIosX64
+
+# Quick local loop: JVM core tests and Robolectric unit tests
 ./gradlew :core:jvmTest :app:testDebugUnitTest
-
-# Run code style, linting, and assemble debug APK
-./gradlew :app:lintDebug :app:assembleDebug
-
-# Assemble release APK (validates R8 shrinking and ProGuard rules)
-./gradlew :app:assembleRelease
 ```
+
+### Release builds
+
+`./gradlew :app:assembleRelease` runs R8 (shrinking and `proguard-rules.pro`). It produces `app-release-unsigned.apk`, which cannot be installed, unless signing is configured. Credentials come only from the environment or Gradle properties, never the repository: set all four of `TRAILBLAZER_KEYSTORE_PATH`, `TRAILBLAZER_KEYSTORE_PASSWORD`, `TRAILBLAZER_KEY_ALIAS` and `TRAILBLAZER_KEY_PASSWORD` (or `trailblazer.signing.storeFile` / `storePassword` / `keyAlias` / `keyPassword`). A partial set fails the build.
+
+`versionCode` and `versionName` come from `-PversionCode` / `-PversionName` when given. Otherwise `versionCode` is the commit count of the checkout and `versionName` is `2.0.<count>`. A shallow clone has no usable count, so it falls back to fixed development values and a *signed* release from it is refused: fetch full history (`fetch-depth: 0` in CI) or pass `-PversionCode`. `scripts/verify-build-config.sh` checks these rules.
+
+> The application id is still `com.example.trailblazer`, which Google Play rejects. Choosing the real id is an open owner decision (it renames the package across every source file).
 
 ### Dependency Stack
 
@@ -164,10 +174,10 @@ TrailBlazer enforces extensive automated test coverage across both JVM and Robol
 |---|---|---|
 | Gradle | 9.6.0 | Checksum-pinned wrapper |
 | AGP | 9.4.1 | Android Gradle Plugin |
-| Kotlin | 2.3.20 | JVM toolchain 21 |
+| Kotlin | 2.3.20 | JVM toolchain 21 for `:app`, 17 for `:core` |
 | Compose BOM | 2026.09.00 | Material 3 1.4.0 |
-| Room | 2.7.0 | Keyset-paginated SQLite |
-| Haze | 1.3.1 | Frosted-glass backdrop blur |
+| Room | 2.8.5 | Keyset-paginated SQLite |
+| Haze | 2.0.1 | Frosted-glass backdrop blur |
 
 Detailed dependency definitions live in `gradle/libs.versions.toml`.
 
