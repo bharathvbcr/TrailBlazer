@@ -101,7 +101,8 @@ class TrackRecorder(private val dao: TrackDao, private val clock: Clock) {
         val t = track ?: return
         val updated = t.copy(
             state = state,
-            endedMs = if (state == TrackState.Finished) clock.nowMs() else t.endedMs,
+            // Stamped once, on the transition to Finished: a later flush must not move the end of a finished track.
+            endedMs = if (state == TrackState.Finished && t.state != TrackState.Finished) clock.nowMs() else t.endedMs,
             distanceM = stats.distanceM,
             gainM = stats.gainM,
             lossM = stats.lossM,

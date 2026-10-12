@@ -149,6 +149,49 @@ class TrackRecorderTest {
     }
 
     @Test
+    fun aFlushAfterFinishingDoesNotMoveTheEndOfTheTrack() = runBlocking {
+        val dao = FakeTrackDao()
+        val r = TrackRecorder(dao, clock)
+        val t = r.openOrStart("T")
+        for (i in 0 until 3) r.offer(fix(i, i * 10.0))
+        r.setState(TrackState.Finished)
+        val ended = dao.row(t.id)!!.endedMs
+        assertEquals(now, ended)
+
+        now += 60_000
+        r.flush()
+        r.setState(TrackState.Finished)
+
+        assertEquals("endedMs is stamped once, on the transition", ended, dao.row(t.id)!!.endedMs)
+    }
+
+    /**
+     * The real Room transaction, not FakeTrackDao's imitation of it: a trigger makes the track row's update fail after
+     * the points were inserted, and nothing of the transaction may remain.
+     */
+    @Test
+    fun endingATrackRollsBackItsPointsWhenTheStateWriteFailsInRoom() = runBlocking {
+        val r = TrackRecorder(db.tracks(), clock)
+        val t = r.openOrStart("T")
+        for (i in 0 until 4) r.offer(fix(i, i * 10.0))
+        val sqlite = db.openHelper.writableDatabase
+        sqlite.execSQL("CREATE TRIGGER fail_track_update BEFORE UPDATE ON tracks BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END")
+
+        try {
+            r.setState(TrackState.Finished)
+            org.junit.Assert.fail("the update should have been aborted")
+        } catch (_: android.database.sqlite.SQLiteException) {
+        }
+        assertEquals("the inserted points were rolled back with the failed update", -1, db.tracks().maxSeq(t.id))
+        assertEquals(TrackState.Recording, db.tracks().get(t.id)!!.state)
+
+        sqlite.execSQL("DROP TRIGGER fail_track_update")
+        r.setState(TrackState.Finished)
+        assertEquals("the retry wrote everything once", 3, db.tracks().maxSeq(t.id))
+        assertEquals(TrackState.Finished, db.tracks().get(t.id)!!.state)
+    }
+
+    @Test
     fun pointsForADeletedTrackFailLoudlyWithADatabaseException() = runBlocking {
         val r = TrackRecorder(db.tracks(), clock)
         val t = r.openOrStart("T")

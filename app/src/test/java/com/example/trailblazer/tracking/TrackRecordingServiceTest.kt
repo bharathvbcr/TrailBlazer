@@ -18,6 +18,12 @@ import com.trailblazer.core.geo.Geo
 import com.trailblazer.core.geo.LatLon
 import com.trailblazer.core.sensors.Reading
 import com.trailblazer.core.sensors.UnavailableReason
+import com.example.trailblazer.WipeResult
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -59,6 +65,7 @@ class TrackRecordingServiceTest {
         runBlocking {
             app.container.prefs.update { it.copy(trackingMode = TrackingMode.Balanced) }
             app.container.prefs.setTrackingInterrupt(null)
+            app.container.resumeBackoff.reset()
         }
     }
 
@@ -77,6 +84,18 @@ class TrackRecordingServiceTest {
     private fun send(controller: ServiceController<TrackRecordingService>, action: String) {
         controller.withIntent(Intent(app, TrackRecordingService::class.java).setAction(action)).startCommand(0, ++startId)
         idle()
+    }
+
+    /**
+     * Delivers [action] and reports whether the service had entered the foreground when onStartCommand returned. The
+     * refusal that follows needs the DataStore, so it cannot have run yet: only startForeground can have happened.
+     * (Robolectric forgets the foreground notification once the service leaves the foreground, so it cannot be read later.)
+     */
+    private fun sendObservingForeground(controller: ServiceController<TrackRecordingService>, action: String): Boolean {
+        controller.withIntent(Intent(app, TrackRecordingService::class.java).setAction(action)).startCommand(0, ++startId)
+        val entered = shadowOf(controller.get()).lastForegroundNotification != null
+        idle()
+        return entered
     }
 
     private fun fix(provider: String, metersNorth: Double) {
@@ -110,6 +129,7 @@ class TrackRecordingServiceTest {
     fun tearDown() {
         services.forEach { runCatching { it.destroy() } }
         idle()
+        assertFalse("a test left the running flag set for the next test class", TrackRecordingService.running.value)
     }
 
     /**
@@ -341,7 +361,7 @@ class TrackRecordingServiceTest {
         val id = runBlocking { tracks.open() }!!.id
         for (i in 0 until 3) fix(provider, i * 20.0)
 
-        val deletion = app.container.scope.launch { app.container.deleteAllData() }
+        val deletion = app.container.scope.async { app.container.deleteAllData() }
         idle()
 
         // The service is asked to stop before anything is deleted, and the track is still there while it does.
@@ -354,8 +374,83 @@ class TrackRecordingServiceTest {
         send(controller, TrackRecordingService.ACTION_STOP)
         awaitUntil("the deletion") { deletion.isCompleted }
 
+        assertEquals(WipeResult.Done, deletion.getCompleted())
         assertNull(runBlocking { tracks.get(id) })
         assertFalse(TrackRecordingService.running.value)
         assertTrue(runBlocking { tracks.open() } == null)
+    }
+
+    @Test
+    fun deletingAllDataDeletesNothingWhenTheRecordingDoesNotStop() {
+        val (_, provider) = startRecording()
+        val id = runBlocking { tracks.open() }!!.id
+        for (i in 0 until 3) fix(provider, i * 20.0)
+
+        // STOP is never delivered, as when the service is wedged or the process is starved.
+        val deletion = app.container.scope.async { app.container.deleteAllData() }
+        idle()
+        elapse(Duration.ofSeconds(11))
+        awaitUntil("the wipe to give up") { deletion.isCompleted }
+
+        assertEquals(WipeResult.RecordingStillActive, deletion.getCompleted())
+        assertNotNull("the track was not deleted under a recording that is still writing", runBlocking { tracks.get(id) })
+        assertTrue(TrackRecordingService.running.value)
+    }
+
+    @Test
+    fun leavingTheScreenWhileTheRecordingStopsDoesNotAbortTheWipe() {
+        val (controller, _) = startRecording()
+        val id = runBlocking { tracks.open() }!!.id
+        // The settings screen's scope: it only awaits the result, as SettingsScreen does.
+        val screen = CoroutineScope(Dispatchers.Main.immediate + Job())
+        val wiping = app.container.scope.async { app.container.deleteAllData() }
+        screen.launch { wiping.await() }
+        idle()
+
+        screen.cancel() // the user navigates away while the service is still stopping
+        send(controller, TrackRecordingService.ACTION_STOP)
+        awaitUntil("the deletion") { wiping.isCompleted }
+
+        assertEquals(WipeResult.Done, wiping.getCompleted())
+        assertNull(runBlocking { tracks.get(id) })
+    }
+
+    // --- foreground contract ---
+
+    @Test
+    fun aStartThatIsRefusedStillEntersTheForegroundBeforeItStops() {
+        // startForegroundService() obliges the service to call startForeground() before stopping, or Android kills the app.
+        revokeLocation(keepCoarse = true)
+        val controller = newService()
+
+        val entered = sendObservingForeground(controller, TrackRecordingService.ACTION_START)
+
+        assertTrue("startForeground was never called before stopSelf", entered)
+        awaitUntil("the service to stop itself") { shadowOf(controller.get()).isStoppedBySelf }
+        assertEquals(InterruptReason.PreciseLocationRequired, app.container.interrupts.reason.value)
+    }
+
+    @Test
+    fun aStartWithNoLocationGrantAtAllAlsoEntersTheForegroundFirst() {
+        revokeLocation(keepCoarse = false)
+        val controller = newService()
+
+        val entered = sendObservingForeground(controller, TrackRecordingService.ACTION_RESUME)
+
+        assertTrue("startForeground was never called before stopSelf", entered)
+        awaitUntil("the service to stop itself") { shadowOf(controller.get()).isStoppedBySelf }
+        assertEquals(InterruptReason.LocationPermissionRevoked, app.container.interrupts.reason.value)
+    }
+
+    @Test
+    fun theStoppedNotificationHasItsOwnChannelThatCanAlert() {
+        revokeLocation(keepCoarse = true)
+        send(newService(), TrackRecordingService.ACTION_RESUME)
+        awaitUntil("the notification") { shadowOf(nm).getNotification(TrackRecordingService.STOPPED_NOTIFICATION_ID) != null }
+
+        val n = shadowOf(nm).getNotification(TrackRecordingService.STOPPED_NOTIFICATION_ID)
+        assertEquals(TrackRecordingService.ALERT_CHANNEL_ID, n.channelId)
+        assertEquals(NotificationManager.IMPORTANCE_DEFAULT, nm.getNotificationChannel(TrackRecordingService.ALERT_CHANNEL_ID).importance)
+        assertEquals("the recording channel stays quiet", NotificationManager.IMPORTANCE_LOW, nm.getNotificationChannel("tracking").importance)
     }
 }

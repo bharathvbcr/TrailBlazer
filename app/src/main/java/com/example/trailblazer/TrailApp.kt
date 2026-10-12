@@ -35,6 +35,7 @@ import com.example.trailblazer.sensors.SensorSource
 import com.example.trailblazer.sensors.StepRepository
 import com.example.trailblazer.sensors.ThermalRepository
 import com.example.trailblazer.tracking.InterruptState
+import com.example.trailblazer.tracking.ResumeBackoff
 import com.example.trailblazer.tracking.TrackingController
 import com.example.trailblazer.links.LinkLookup
 import com.example.trailblazer.places.GeocoderBackend
@@ -46,6 +47,8 @@ import com.example.trailblazer.weather.HttpTransport
 import com.example.trailblazer.weather.OpenMeteoClient
 import com.example.trailblazer.weather.UrlConnectionTransport
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
 
@@ -115,22 +118,31 @@ class AppContainer(
     val linkLookup by lazy { LinkLookup(redirects) }
     val placeSearch by lazy { PlaceSearch(placeBackend, placeSearchAvailable) }
     val interrupts by lazy { InterruptState(prefs, scope) }
-    val tracking by lazy { TrackingController(context, tracks, permissions, sensorSource, interrupts) }
+    val resumeBackoff by lazy { ResumeBackoff(prefs, clock) }
+    val tracking by lazy { TrackingController(context, tracks, permissions, sensorSource, interrupts, resumeBackoff) }
 
     /**
-     * Removes everything the user has stored. An active recording is finished first: it would otherwise keep
-     * writing points for a track that no longer exists.
+     * Removes everything the user has stored. An active recording is finished first, and if it cannot be (the service
+     * did not stop in time) nothing is deleted: wiping under a recording that keeps writing points would lose data
+     * silently. Once the wipe starts it runs to the end even if the caller is cancelled, so it is never left half done;
+     * callers should still start it from an app-owned scope, not a screen's.
      */
-    suspend fun deleteAllData() {
-        tracking.stopAndAwait()
-        db.withTransaction {
-            db.tracks().deleteAll(); db.trips().deleteAll(); db.waypoints().deleteAll(); db.pressure().deleteAll()
+    suspend fun deleteAllData(): WipeResult {
+        if (!tracking.stopAndAwait()) return WipeResult.RecordingStillActive
+        withContext(NonCancellable) {
+            db.withTransaction {
+                db.tracks().deleteAll(); db.trips().deleteAll(); db.waypoints().deleteAll(); db.pressure().deleteAll()
+            }
+            prefs.clear()
+            tracking.clearInterrupt()
+            weather.clearCache()
         }
-        prefs.clear()
-        tracking.clearInterrupt()
-        weather.clearCache()
+        return WipeResult.Done
     }
 }
+
+/** How [AppContainer.deleteAllData] ended. */
+enum class WipeResult { Done, RecordingStillActive }
 
 class TrailApp : Application() {
     lateinit var container: AppContainer

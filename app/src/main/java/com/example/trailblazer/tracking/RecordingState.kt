@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.annotation.StringRes
 import com.example.trailblazer.R
 import com.example.trailblazer.data.PrefsRepository
+import com.example.trailblazer.sensors.Clock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -50,6 +51,50 @@ sealed interface ResumeResult {
 
     /** The service stopped itself for [reason] and the user has to choose to continue; it is not restarted behind their back. */
     data class Interrupted(val reason: InterruptReason) : ResumeResult
+}
+
+/**
+ * Bounds how often an interrupted recording is restarted automatically. Without it, a full disk loops: the pause
+ * and the stored reason both fail to write, so after a process death the track still says Recording, the app
+ * restarts it on every foreground, it fails again, and a notification is posted each time.
+ *
+ * An attempt is written down before it is made, and a restart that cannot be written down is refused: a disk too
+ * full to record the attempt is a disk too full to record a track. At most [MAX_ATTEMPTS] attempts are allowed within
+ * [WINDOW_MS] of the first; the service calls [reset] once a start has worked, so ordinary process deaths never
+ * add up. A restart the user asks for is never gated.
+ */
+class ResumeBackoff(private val prefs: PrefsRepository, private val clock: Clock) {
+    /** True if the automatic restart may go ahead (and has been recorded); false means leave the track for the user. */
+    suspend fun beginAutoResume(): Boolean {
+        val now = clock.nowMs()
+        val stored = prefs.trackingResumeAttempts.first()?.split(':')
+        val count = stored?.getOrNull(0)?.toIntOrNull()
+        val first = stored?.getOrNull(1)?.toLongOrNull()
+        val open = if (count != null && first != null && now - first in 0..WINDOW_MS) count to first else null
+        val next = (open?.first ?: 0) + 1
+        if (next > MAX_ATTEMPTS) return false
+        return try {
+            prefs.setTrackingResumeAttempts("$next:${open?.second ?: now}")
+            true
+        } catch (e: IOException) {
+            Log.e(TAG, "Could not record a restart attempt, so not restarting", e)
+            false
+        }
+    }
+
+    suspend fun reset() {
+        try {
+            prefs.setTrackingResumeAttempts(null)
+        } catch (e: IOException) {
+            Log.e(TAG, "Could not clear the restart attempts", e)
+        }
+    }
+
+    companion object {
+        const val MAX_ATTEMPTS = 3
+        const val WINDOW_MS = 10 * 60_000L
+        private const val TAG = "TrackRecording"
+    }
 }
 
 /**

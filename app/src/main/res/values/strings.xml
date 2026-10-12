@@ -7,6 +7,7 @@
     <string name="pause">Pause</string>
     <string name="resume">Resume</string>
     <string name="stop">Stop</string>
+    <string name="channel_tracking_alerts">Track recording alerts</string>
     <string name="recording_stopped">Recording stopped</string>
     <string name="interrupt_permission_revoked">Stopped because location permission was removed.</string>
     <string name="interrupt_location_disabled">Stopped because location was turned off.</string>

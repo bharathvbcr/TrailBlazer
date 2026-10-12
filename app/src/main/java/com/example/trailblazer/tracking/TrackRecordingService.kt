@@ -11,6 +11,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.example.trailblazer.MainActivity
@@ -51,6 +52,7 @@ class TrackRecordingService : LifecycleService(), RecordingSession.Listener {
     private lateinit var dutyCycle: GnssDutyCycle
     private var units = UnitSystem.Metric
     private var foreground = false
+    private var latestStartId = 0
 
     /** What the notification currently shows, so an unchanged one is not posted again. */
     private var lastRendered: Rendered? = null
@@ -77,11 +79,21 @@ class TrackRecordingService : LifecycleService(), RecordingSession.Listener {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
+        latestStartId = startId
         when (intent?.action) {
             ACTION_START, ACTION_RESUME -> {
+                // startForegroundService() obliges the service to call startForeground() before it stops, whatever
+                // else turns out to be wrong, so that comes first and every refusal after it.
                 val blocked = promote()
                 lifecycleScope.launch {
-                    if (blocked == null) start() else stopBecause(blocked)
+                    when {
+                        blocked != null -> stopBecause(blocked)
+                        // Coarse access satisfies the location foreground type, so precision is judged only now that
+                        // the service is in the foreground and can leave it properly.
+                        !container.permissions.isGranted(AppPermission.Location) -> stopBecause(InterruptReason.LocationPermissionRevoked)
+                        !container.permissions.isGranted(AppPermission.PreciseLocation) -> stopBecause(InterruptReason.PreciseLocationRequired)
+                        else -> start()
+                    }
                 }
             }
             ACTION_PAUSE -> lifecycleScope.launch { pause() }
@@ -95,13 +107,16 @@ class TrackRecordingService : LifecycleService(), RecordingSession.Listener {
 
     /**
      * Enters the foreground immediately, as Android requires. Returns why it could not, or null once it has.
-     * Recording needs precise location, which is checked here as well as in the controller because the
-     * notification's Resume button starts the service directly.
+     * It judges nothing itself: the permission checks come after it (see [onStartCommand]), because they also
+     * run when the notification's Resume button starts the service directly, bypassing the controller's checks.
+     *
+     * One window stays open: with no location grant at all, Android 14+ refuses a location-type foreground service
+     * with a SecurityException, and then there is nothing legal to call startForeground() with. No other foreground
+     * type fits recording, and adding one to the manifest would be a product decision, not a fix. The window is
+     * narrow: the controller checks the grant before it sends START, and revoking a runtime permission kills the app
+     * process, so only a revoke between that check and this call reaches it.
      */
     private fun promote(): InterruptReason? {
-        val permissions = container.permissions
-        if (!permissions.isGranted(AppPermission.Location)) return InterruptReason.LocationPermissionRevoked
-        if (!permissions.isGranted(AppPermission.PreciseLocation)) return InterruptReason.PreciseLocationRequired
         return try {
             val type = if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
             val rendered = render(TrackState.Recording)
@@ -120,7 +135,10 @@ class TrackRecordingService : LifecycleService(), RecordingSession.Listener {
     private suspend fun start() {
         if (!session.start()) return stopBecause(InterruptReason.StorageFailed)
         if (container.interrupts.current() != null) container.interrupts.set(null)
+        container.resumeBackoff.reset()
         getSystemService(NotificationManager::class.java)?.cancel(STOPPED_NOTIFICATION_ID)
+        // onDestroy already cleared the flag if the service went away while the start was still writing.
+        if (lifecycle.currentState == Lifecycle.State.DESTROYED) return
         _running.value = true
         updateNotification(TrackState.Recording)
     }
@@ -131,7 +149,7 @@ class TrackRecordingService : LifecycleService(), RecordingSession.Listener {
             reason != null -> stopBecause(reason)
             foreground -> updateNotification(TrackState.Paused)
             // Nothing is running to show a notification for (the process was restarted): there is nothing left to keep alive.
-            else -> stopSelf()
+            else -> stopSelf(latestStartId)
         }
     }
 
@@ -173,7 +191,8 @@ class TrackRecordingService : LifecycleService(), RecordingSession.Listener {
         foreground = false
         lastRendered = null
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        // With the latest start id, so a START queued behind the STOP that led here is not stopped before it runs.
+        stopSelf(latestStartId)
     }
 
     override fun onDestroy() {
@@ -241,8 +260,13 @@ class TrackRecordingService : LifecycleService(), RecordingSession.Listener {
         return b.build()
     }
 
+    /**
+     * Posted on its own default-importance channel: the quiet recording channel would never alert for it. Without
+     * the notification permission (Android 13+) the system drops it, which is accepted: the Tracks screen shows the
+     * same reason from [InterruptState].
+     */
     private fun stoppedNotification(reason: InterruptReason): Notification =
-        NotificationCompat.Builder(this, CHANNEL_ID)
+        NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_track)
             .setContentTitle(getString(R.string.recording_stopped))
             .setContentText(getString(reason.messageRes))
@@ -258,6 +282,7 @@ class TrackRecordingService : LifecycleService(), RecordingSession.Listener {
         const val ACTION_RESUME = "com.example.trailblazer.track.RESUME"
         const val ACTION_STOP = "com.example.trailblazer.track.STOP"
         private const val CHANNEL_ID = "tracking"
+        const val ALERT_CHANNEL_ID = "tracking_alerts"
         private const val NOTIFICATION_ID = 42
         const val STOPPED_NOTIFICATION_ID = 43
 
@@ -269,6 +294,9 @@ class TrackRecordingService : LifecycleService(), RecordingSession.Listener {
             val nm = context.getSystemService(NotificationManager::class.java) ?: return
             nm.createNotificationChannel(
                 NotificationChannel(CHANNEL_ID, context.getString(R.string.channel_tracking), NotificationManager.IMPORTANCE_LOW),
+            )
+            nm.createNotificationChannel(
+                NotificationChannel(ALERT_CHANNEL_ID, context.getString(R.string.channel_tracking_alerts), NotificationManager.IMPORTANCE_DEFAULT),
             )
         }
 

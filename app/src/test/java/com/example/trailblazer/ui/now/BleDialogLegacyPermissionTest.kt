@@ -19,8 +19,8 @@ import org.robolectric.annotation.Config
 
 /**
  * Before Android 12 the Bluetooth permissions are install-time, and a BLE scan returns nothing unless location access is
- * granted at runtime, so the dialog gates on location there. Robolectric SDK 28 exercises the pre-API-31 branch of
- * AppPermission.Bluetooth (BLUETOOTH, BLUETOOTH_ADMIN).
+ * granted at runtime, so the dialog gates on precise location there. Robolectric SDKs 28 and 29 exercise the pre-API-31 branch of
+ * AppPermission.Bluetooth (ACCESS_FINE_LOCATION; BLUETOOTH and BLUETOOTH_ADMIN are install-time and never requested).
  */
 @RunWith(AndroidJUnit4::class)
 @Config(sdk = [28])
@@ -53,5 +53,37 @@ class BleDialogLegacyPermissionTest {
         app.container.permissions.refresh()
         rule.waitForIdle()
         assertEquals(1, rule.onAllNodesWithText("Scan for sensors").fetchSemanticsNodes().size)
+    }
+
+    /** From Android 10 a BLE scan needs precise location: approximate access finds nothing, so it must not open the gate. */
+    @Test
+    @Config(sdk = [29])
+    fun approximateLocationDoesNotOpenTheScanGateOnAndroid10() {
+        shadowOf(app).grantPermissions(Manifest.permission.BLUETOOTH, Manifest.permission.BLUETOOTH_ADMIN, Manifest.permission.ACCESS_COARSE_LOCATION)
+        shadowOf(app).denyPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
+        app.container.permissions.refresh()
+        rule.setContent {
+            BleSensorDialog(
+                status = BleConnectionState.Disconnected,
+                devices = emptyList(),
+                onScan = {},
+                onStopScan = {},
+                onConnect = { _, _ -> },
+                onDisconnect = {},
+                onDismiss = {},
+            )
+        }
+        assertTrue(rule.onAllNodesWithText("Scan for sensors").fetchSemanticsNodes().isEmpty())
+        rule.onNodeWithText("precise location", substring = true).assertExists()
+
+        shadowOf(app).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
+        app.container.permissions.refresh()
+        rule.waitForIdle()
+        assertEquals(1, rule.onAllNodesWithText("Scan for sensors").fetchSemanticsNodes().size)
+    }
+
+    @Test
+    fun theLegacyBluetoothRequirementIsPreciseLocationNotInstallTimePermissions() {
+        assertEquals(listOf(Manifest.permission.ACCESS_FINE_LOCATION), com.example.trailblazer.permissions.AppPermission.Bluetooth.manifest.toList())
     }
 }

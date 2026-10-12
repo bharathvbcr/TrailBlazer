@@ -18,6 +18,7 @@ class TrackingController(
     private val permissions: Permissions,
     sensors: SensorSource,
     private val interrupts: InterruptState,
+    private val backoff: ResumeBackoff,
 ) {
     /** Whether a motion-gated [com.example.trailblazer.data.TrackingMode] can let GPS sleep on this phone. */
     val canRestGps: Boolean = GnssDutyCycle(sensors).canSleep
@@ -70,15 +71,22 @@ class TrackingController(
         val t = open.first() ?: return ResumeResult.NothingToResume
         if (t.state != TrackState.Recording) return ResumeResult.NothingToResume
         interrupts.current()?.let { return ResumeResult.Interrupted(it) }
+        if (!backoff.beginAutoResume()) {
+            // Restarts keep failing, or cannot even be recorded (a full disk): leave the track to the user.
+            interrupts.set(InterruptReason.StorageFailed)
+            return ResumeResult.Interrupted(InterruptReason.StorageFailed)
+        }
         return when (val r = start()) {
             StartResult.Started -> ResumeResult.Resumed
             is StartResult.Refused -> {
                 // Put the reason where the Tracks screen shows it, so the track does not just sit "interrupted" unexplained.
-                when (r.reason) {
-                    StartRefusal.LocationPermissionMissing -> interrupts.set(InterruptReason.LocationPermissionRevoked)
-                    StartRefusal.PreciseLocationRequired -> interrupts.set(InterruptReason.PreciseLocationRequired)
-                    StartRefusal.BackgroundStartBlocked -> Unit
-                }
+                interrupts.set(
+                    when (r.reason) {
+                        StartRefusal.LocationPermissionMissing -> InterruptReason.LocationPermissionRevoked
+                        StartRefusal.PreciseLocationRequired -> InterruptReason.PreciseLocationRequired
+                        StartRefusal.BackgroundStartBlocked -> InterruptReason.ForegroundStartBlocked
+                    },
+                )
                 ResumeResult.Blocked(r.reason)
             }
         }

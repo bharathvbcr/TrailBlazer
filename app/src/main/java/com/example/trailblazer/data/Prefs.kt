@@ -124,6 +124,7 @@ class PrefsRepository(context: Context, private val store: DataStore<Preferences
         val trackingMode = stringPreferencesKey("tracking_mode")
         val activeOfflineMapPath = stringPreferencesKey("active_offline_map_path")
         val trackingInterrupt = stringPreferencesKey("tracking_interrupt")
+        val trackingResumeAttempts = stringPreferencesKey("tracking_resume_attempts")
     }
 
     private inline fun <reified E : Enum<E>> Preferences.enum(key: Preferences.Key<String>, default: E): E =
@@ -137,12 +138,21 @@ class PrefsRepository(context: Context, private val store: DataStore<Preferences
      * Why the recording service stopped on its own (an `InterruptReason` name), kept apart from [Settings] because it
      * is service state, not a preference. It outlives the process so the reason is still on screen after a restart.
      */
-    val trackingInterrupt: Flow<String?> = context.store.data
+    val trackingInterrupt: Flow<String?> = store.data
         .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
         .map { it[K.trackingInterrupt] }
 
     suspend fun setTrackingInterrupt(name: String?) {
-        context.store.edit { p -> if (name == null) p.remove(K.trackingInterrupt) else p[K.trackingInterrupt] = name }
+        store.edit { p -> if (name == null) p.remove(K.trackingInterrupt) else p[K.trackingInterrupt] = name }
+    }
+
+    /** Automatic restarts of an interrupted recording, as `count:firstAttemptMs`; see `ResumeBackoff`. */
+    val trackingResumeAttempts: Flow<String?> = store.data
+        .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+        .map { it[K.trackingResumeAttempts] }
+
+    suspend fun setTrackingResumeAttempts(value: String?) {
+        store.edit { p -> if (value == null) p.remove(K.trackingResumeAttempts) else p[K.trackingResumeAttempts] = value }
     }
 
     suspend fun update(transform: (Settings) -> Settings) {

@@ -34,6 +34,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.trailblazer.WipeResult
 import com.example.trailblazer.container
 import com.example.trailblazer.data.NorthReference
 import com.example.trailblazer.data.Settings
@@ -53,6 +54,7 @@ import com.trailblazer.core.units.PressureUnit
 import com.trailblazer.core.units.SpeedUnit
 import com.trailblazer.core.units.TemperatureUnit
 import com.trailblazer.core.units.UnitSystem
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -64,6 +66,7 @@ fun SettingsScreen(nav: Navigator) {
     val fmt = remember(s) { Fmt(ctx, s) }
     val scope = rememberCoroutineScope()
     var wipe by rememberSaveable { mutableStateOf(false) }
+    var wipeBlocked by remember { mutableStateOf(false) }
     fun set(f: (Settings) -> Settings) = scope.launch { c.prefs.update(f) }
     val stepsPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         c.permissions.refresh()
@@ -187,10 +190,18 @@ fun SettingsScreen(nav: Navigator) {
         confirmButton = {
             TextButton(onClick = {
                 wipe = false
-                scope.launch { c.deleteAllData() }
+                // On the app's scope: leaving this screen while a recording is being stopped must not cancel the deletion.
+                val wiping = c.scope.async { c.deleteAllData() }
+                scope.launch { if (wiping.await() == WipeResult.RecordingStillActive) wipeBlocked = true }
             }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
         },
         dismissButton = { TextButton(onClick = { wipe = false }) { Text("Cancel") } },
+    )
+    if (wipeBlocked) AlertDialog(
+        onDismissRequest = { wipeBlocked = false },
+        title = { Text("Nothing was deleted") },
+        text = { Text("A track is still recording and did not stop in time. Finish it from the Trips tab, then delete again.") },
+        confirmButton = { TextButton(onClick = { wipeBlocked = false }) { Text("OK") } },
     )
 }
 
