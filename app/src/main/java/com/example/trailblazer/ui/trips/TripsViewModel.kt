@@ -17,7 +17,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 class TripsViewModel(private val c: AppContainer) : ViewModel() {
     private val started = SharingStarted.WhileSubscribed(5_000)
@@ -37,8 +41,10 @@ class TripsViewModel(private val c: AppContainer) : ViewModel() {
     /** One-line result of the last import/export, shown until dismissed. */
     val message = MutableStateFlow<String?>(null)
 
+    private val mapsLock = Mutex()
+
     init {
-        refreshMaps()
+        viewModelScope.launch { refreshMaps() }
         viewModelScope.launch {
             tracks.collect { summaries ->
                 loadTrackPaths(summaries)
@@ -46,25 +52,33 @@ class TripsViewModel(private val c: AppContainer) : ViewModel() {
         }
     }
 
-    fun refreshMaps() {
-        availableMaps.value = c.offlineMaps.listMaps()
+    /** Re-reads the installed maps and the active one, off the main thread; serialised so refreshes cannot interleave. */
+    private suspend fun refreshMaps() = mapsLock.withLock {
+        availableMaps.value = withContext(Dispatchers.IO) { c.offlineMaps.listMaps() }
         val old = activeTileSource.value
         val next = c.offlineMaps.openActiveSource()
         if (old?.file?.absolutePath != next?.file?.absolutePath) {
-            old?.close()
             activeTileSource.value = next
+            old?.close()
+        } else {
+            // The same archive is already open and in use; this duplicate handle is not needed.
+            next?.close()
         }
     }
 
-    private suspend fun loadTrackPaths(summaries: List<TrackSummary>) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+    private suspend fun loadTrackPaths(summaries: List<TrackSummary>) = withContext(Dispatchers.Default) {
         val paths = mutableListOf<List<com.trailblazer.core.geo.LatLon>>()
         summaries.take(20).forEach { summary ->
             val pts = mutableListOf<com.trailblazer.core.geo.LatLon>()
             var idx = 0
+            var last: com.trailblazer.core.geo.LatLon? = null
             val stride = (summary.pointCount / 300).coerceAtLeast(1)
             c.tracks.forEachPoint(summary.id) { pt ->
                 if (idx++ % stride == 0) pts.add(pt.position)
+                last = pt.position
             }
+            // Thinning must not cut off the end of the track: the end marker sits on the real last fix.
+            last?.let { if (pts.lastOrNull() != it) pts.add(it) }
             if (pts.size >= 2) paths.add(pts)
         }
         trackPaths.value = paths

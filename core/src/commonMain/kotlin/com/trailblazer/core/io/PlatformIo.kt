@@ -25,4 +25,12 @@ expect class StringWriter() : Writer {
     override fun toString(): String
 }
 
-expect fun decompressGzip(bytes: ByteArray): ByteArray
+/** Thrown by [decompressGzip] when the output would exceed the caller's limit (a gzip bomb). */
+class DecompressionLimitException(message: String) : IllegalStateException(message)
+
+/**
+ * Inflates [bytes] when they start with the gzip magic and returns them unchanged otherwise.
+ * Output is bounded: more than [maxOutputBytes] inflated bytes throws [DecompressionLimitException] before the rest is
+ * produced, so a tiny hostile archive cannot exhaust memory. Corrupt streams throw an IO exception.
+ */
+expect fun decompressGzip(bytes: ByteArray, maxOutputBytes: Int): ByteArray

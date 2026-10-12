@@ -51,4 +51,7 @@ actual class StringWriter actual constructor() : Writer() {
     actual override fun toString(): String = sb.toString()
 }
 
-actual fun decompressGzip(bytes: ByteArray): ByteArray = bytes
+actual fun decompressGzip(bytes: ByteArray, maxOutputBytes: Int): ByteArray {
+    if (bytes.size > maxOutputBytes) throw DecompressionLimitException("input exceeds $maxOutputBytes bytes")
+    return bytes
+}
