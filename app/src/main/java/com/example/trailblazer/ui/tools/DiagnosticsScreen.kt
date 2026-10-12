@@ -83,6 +83,8 @@ fun DiagnosticsScreen(nav: Navigator) {
     val locale = LocalConfiguration.current.locales[0]
 
     ScreenScaffold(title = "Sensors", onBack = { nav.back() }) {
+        item { SectionTitle("Record to CSV") }
+        item { SensorRecorderCard() }
         item { SectionTitle("3D motion (accelerometer)") }
         item {
             GlassCard {

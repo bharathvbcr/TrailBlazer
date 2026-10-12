@@ -66,7 +66,7 @@ fun SettingsScreen(nav: Navigator) {
     val fmt = remember(s) { Fmt(ctx, s) }
     val scope = rememberCoroutineScope()
     var wipe by rememberSaveable { mutableStateOf(false) }
-    var wipeBlocked by remember { mutableStateOf(false) }
+    var wipeProblem by remember { mutableStateOf<String?>(null) }
     fun set(f: (Settings) -> Settings) = scope.launch { c.prefs.update(f) }
     val stepsPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         c.permissions.refresh()
@@ -186,23 +186,33 @@ fun SettingsScreen(nav: Navigator) {
     if (wipe) AlertDialog(
         onDismissRequest = { wipe = false },
         title = { Text("Delete all data?") },
-        text = { Text("Removes every waypoint, trip, track, pressure reading and setting from this phone. This cannot be undone.") },
+        text = { Text("Removes every waypoint, trip, track, pressure reading, sensor recording and setting from this phone. This cannot be undone.") },
         confirmButton = {
             TextButton(onClick = {
                 wipe = false
                 // On the app's scope: leaving this screen while a recording is being stopped must not cancel the deletion.
                 val wiping = c.scope.async { c.deleteAllData() }
-                scope.launch { if (wiping.await() == WipeResult.RecordingStillActive) wipeBlocked = true }
+                scope.launch {
+                    wipeProblem = when (wiping.await()) {
+                        WipeResult.Done -> null
+                        WipeResult.RecordingStillActive ->
+                            "A recording (a track or a sensor log) is still running and did not stop in time. Stop it, then delete again."
+                        WipeResult.SensorLogsRemain ->
+                            "Your places, trips and settings were deleted, but some sensor recording files could not be deleted. Delete all data again to retry."
+                    }
+                }
             }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
         },
         dismissButton = { TextButton(onClick = { wipe = false }) { Text("Cancel") } },
     )
-    if (wipeBlocked) AlertDialog(
-        onDismissRequest = { wipeBlocked = false },
-        title = { Text("Nothing was deleted") },
-        text = { Text("A track is still recording and did not stop in time. Finish it from the Trips tab, then delete again.") },
-        confirmButton = { TextButton(onClick = { wipeBlocked = false }) { Text("OK") } },
-    )
+    wipeProblem?.let { problem ->
+        AlertDialog(
+            onDismissRequest = { wipeProblem = null },
+            title = { Text("Deleting did not finish") },
+            text = { Text(problem) },
+            confirmButton = { TextButton(onClick = { wipeProblem = null }) { Text("OK") } },
+        )
+    }
 }
 
 @Composable

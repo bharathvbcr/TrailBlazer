@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
@@ -72,7 +73,16 @@ class GnssDutyCycle(private val sensors: SensorSource, private val newGate: () -
         val gate = newGate()
         val still = MutableStateFlow(false)
         val wakes = still.flatMapLatest { if (it) sensors.triggers(Sensor.TYPE_SIGNIFICANT_MOTION) else emptyFlow() }
-        val samples: Flow<SensorSample?> = sensors.batchedSamples(Sensor.TYPE_ACCELEROMETER, SAMPLE_PERIOD_US, MAX_REPORT_LATENCY_US)
+        // The gate is tuned for samples about SAMPLE_PERIOD_US apart. Android may deliver faster than asked, and does
+        // when another listener (the sensor recorder, 200 Hz) holds the accelerometer at a higher rate: feeding all of
+        // them would speed up the gravity tracking, which then follows real motion and reads it as stillness.
+        var lastAcceptedNs = Long.MIN_VALUE
+        val samples: Flow<SensorSample?> = sensors.batchedSamples(Sensor.TYPE_ACCELEROMETER, SAMPLE_PERIOD_US, MAX_REPORT_LATENCY_US).filter { s ->
+            val dt = s.timestampNs - lastAcceptedNs
+            val take = lastAcceptedNs == Long.MIN_VALUE || dt < 0 || dt >= MIN_SAMPLE_SPACING_NS
+            if (take) lastAcceptedNs = s.timestampNs
+            take
+        }
         merge(samples, wakes.map { null }, fixMoved.map { null }).collect { s ->
             if (s == null) gate.onWake() else gate.onSample(s)
             still.value = gate.stationary
@@ -82,6 +92,9 @@ class GnssDutyCycle(private val sensors: SensorSource, private val newGate: () -
 
     private companion object {
         const val SAMPLE_PERIOD_US = 500_000
+
+        /** Four fifths of the period: a 2 Hz stream passes untouched, a 200 Hz one is thinned to 2.5 Hz. */
+        const val MIN_SAMPLE_SPACING_NS = SAMPLE_PERIOD_US * 800L
         const val MAX_REPORT_LATENCY_US = 10_000_000
     }
 }

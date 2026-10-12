@@ -120,6 +120,23 @@ class GnssDutyCycleTest {
     }
 
     @Test
+    fun aFasterAccelerometerStreamDoesNotMakeSteadyWalkingLookStill() = runTest {
+        // The sensor recorder holds the accelerometer at 200 Hz and Android may deliver that to every listener. A steady
+        // 1 Hz sway (a walker's body: 1.2 m/s² amplitude) must still count as motion: fed sample by sample, the gravity
+        // tracking (tuned for 2 Hz) follows it and reads it as rest, and GPS would go to sleep under a walking user.
+        collect(MutableStateFlow(TrackingMode.Balanced))
+        val stepNs = 5_000_000L // 200 Hz
+        for (i in 0 until 6 * 60 * 200) {
+            nowNs += stepNs
+            val sway = (1.2 * kotlin.math.sin(2 * Math.PI * i * 0.005)).toFloat()
+            sensors.emit(accel, 0f, sway, 9.81f, timestampNs = nowNs)
+            if (i % 100 == 0) runCurrent()
+        }
+        runCurrent()
+        assertEquals("six minutes of walking is never stillness", listOf(15_000L), requests)
+    }
+
+    @Test
     fun unobservedTimeIsNeverCountedAsStillness() = runTest {
         collect(MutableStateFlow(TrackingMode.Balanced))
         still(180)

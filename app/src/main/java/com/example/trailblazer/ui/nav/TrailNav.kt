@@ -56,7 +56,11 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.trailblazer.container
+import com.example.trailblazer.ui.components.RecordingIndicator
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -202,6 +206,20 @@ fun TrailNav(sharedText: String? = null, onShareHandled: () -> Unit = {}) {
                 predictivePopTransitionSpec = { edge -> predictivePop(edge) },
             )
         }
+        // On every screen, above the tab pill when there is one: a sensor recording is never running unnoticed.
+        val logger = LocalContext.current.container.sensorLogger
+        val loggerState by logger.state.collectAsStateWithLifecycle()
+        RecordingIndicator(
+            state = loggerState,
+            onStop = logger::stop,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(
+                    bottom = 8.dp + if (!showBar) navBarBottomInset
+                    else if (barHeightPx > 0) with(density) { barHeightPx.toDp() }
+                    else navBarBottomInset + PillEstimate,
+                ),
+        )
         if (showBar) {
             CompositionLocalProvider(LocalHaze provides haze) {
                 Box(

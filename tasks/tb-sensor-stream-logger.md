@@ -23,7 +23,9 @@ Home workspace: None
 The Diagnostics screen visualizes real-time GNSS constellations, 3D accelerometer plots, thermals, and sound levels, but lacks a recording pipeline. Field expeditions, search-and-rescue squads, and environmental researchers need high-rate time-series logging of raw accelerometer, gyroscope, barometer, and GNSS pseudoranges to CSV.
 
 ## Planned files
-- app/src/main/java/com/example/trailblazer/sensors/SensorLogger.kt
+- app/src/main/java/com/example/trailblazer/sensors/SensorLogger.kt (recorder; with SensorLogModel.kt, SensorLogFiles.kt, SensorLogExporter.kt, GnssMeasurementSource.kt, ForegroundTracker.kt)
+- core/src/commonMain/kotlin/com/trailblazer/core/sensors/log/SensorCsv.kt (CSV format, Android-free)
+- app/src/main/java/com/example/trailblazer/ui/tools/SensorRecorderCard.kt (Record switch, Save, Discard)
 - app/src/main/java/com/example/trailblazer/ui/tools/DiagnosticsScreen.kt
 
 ## Acceptance criteria
