@@ -221,10 +221,11 @@ class OfflineMapHardeningTest {
     @Test
     fun theSubsamplingRuleIsPowersOfTwoUnderTheSideAndPixelCaps() {
         assertEquals(1, rasterSampleSize(256, 256))
-        assertEquals(1, rasterSampleSize(1024, 1024))
-        assertEquals(2, rasterSampleSize(1025, 10))
-        assertEquals(4, rasterSampleSize(3000, 600))
-        assertEquals(8, rasterSampleSize(8000, 8000))
+        assertEquals(1, rasterSampleSize(512, 512))
+        assertEquals(2, rasterSampleSize(1024, 1024))
+        assertEquals(2, rasterSampleSize(513, 10))
+        assertEquals(8, rasterSampleSize(3000, 600))
+        assertEquals(16, rasterSampleSize(8000, 8000))
         assertNull("a 64,000,001-pixel declaration", rasterSampleSize(8000, 8001))
         assertNull(rasterSampleSize(60_000, 60_000))
         assertNull(rasterSampleSize(Int.MAX_VALUE, Int.MAX_VALUE))
@@ -380,5 +381,121 @@ class OfflineMapHardeningTest {
         source.use { assertEquals(info.file.absolutePath, it.file.absolutePath) }
         manager.deleteMap(info.file)
         assertNull("a deleted active map leaves nothing to open", manager.openActiveSource())
+    }
+
+    // ---- cancellation while opening ----
+
+    private class FakeSource(override val file: File) : OfflineTileSource {
+        @Volatile
+        var closed = false
+        override val name = "fake"
+        override val format = TileUtils.TileFormat.RasterPng
+        override val minZoom = 0
+        override val maxZoom = 1
+        override val bounds: TileUtils.TileBounds? = null
+        override fun getRawTile(zoom: Int, x: Int, y: Int): ByteArray? = null
+        override fun getTile(zoom: Int, x: Int, y: Int): DecodedTile? = null
+        override fun close() {
+            closed = true
+        }
+    }
+
+    @Test
+    fun aCallerCancelledWhileTheArchiveIsOpeningDoesNotLeakIt() = runBlocking {
+        manager.importMap(Uri.fromFile(mbtiles("lk.mbtiles", MbtilesSpec(tiles = listOf(Triple(1, 0, 0) to byteArrayOf(1)))))).getOrThrow()
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val opened = java.util.concurrent.CopyOnWriteArrayList<FakeSource>()
+        val slow = OfflineMapManager(context, prefs, sourceOpener = { f ->
+            entered.countDown()
+            release.await(10, java.util.concurrent.TimeUnit.SECONDS)
+            FakeSource(f).also { opened.add(it) }
+        })
+        val job = launch(Dispatchers.Default) { slow.openActiveSource() }
+        assertTrue("the open began", entered.await(10, java.util.concurrent.TimeUnit.SECONDS))
+        job.cancel()
+        release.countDown()
+        job.join()
+        assertTrue(job.isCancelled)
+        assertEquals(1, opened.size)
+        assertTrue("the source opened for a cancelled caller was closed", opened.single().closed)
+
+        // Control: an uncancelled caller keeps its source open.
+        val keep = OfflineMapManager(context, prefs, sourceOpener = { f -> FakeSource(f).also { opened.add(it) } })
+        val got = keep.openActiveSource() as FakeSource
+        assertFalse(got.closed)
+    }
+
+    // ---- WAL-mode MBTiles, sidecar files, magic bytes ----
+
+    private fun makeWal(f: File): File {
+        // A rollback-journal database whose header says "WAL" (bytes 18 and 19 = 2), as a WAL-mode file looks once its
+        // -wal file has been left behind on the source device.
+        java.io.RandomAccessFile(f, "rw").use { raf ->
+            raf.seek(18)
+            raf.write(byteArrayOf(2, 2))
+        }
+        return f
+    }
+
+    @Test
+    fun aWalModeMbtilesIsConvertedAndTheUserToldAboutIt() = runBlocking {
+        val src = makeWal(mbtiles("wal.mbtiles", MbtilesSpec(tiles = listOf(Triple(2, 1, 1) to byteArrayOf(4, 2)))))
+        assertTrue("fixture says WAL", isWalDatabase(src))
+        val info = manager.importMap(Uri.fromFile(src)).getOrThrow()
+        assertEquals(OfflineMapManager.WAL_NOTE, info.note)
+        assertFalse("the installed copy is a plain rollback-journal database", isWalDatabase(info.file))
+        assertEquals("no -wal/-shm/-journal files are left", listOf(info.file.name), mapsDirNames())
+        manager.openSource(info.file)!!.use { assertArrayEquals(byteArrayOf(4, 2), it.getRawTile(2, 1, 1)) }
+        assertEquals("no sidecars appear after reading either", listOf(info.file.name), mapsDirNames())
+        // An ordinary file carries no note.
+        val plain = manager.importMap(Uri.fromFile(mbtiles("plain.mbtiles", MbtilesSpec(tiles = listOf(Triple(1, 0, 0) to byteArrayOf(1)))))).getOrThrow()
+        assertNull(plain.note)
+    }
+
+    @Test
+    fun deletingAMapRemovesItsSidecarFilesAndStaleTempsAreSweptWhateverTheirSuffix() = runBlocking {
+        val info = manager.importMap(Uri.fromFile(mbtiles("sc.mbtiles", MbtilesSpec(tiles = listOf(Triple(1, 0, 0) to byteArrayOf(1)))))).getOrThrow()
+        val sidecars = listOf("-wal", "-shm", "-journal").map { File(info.file.path + it).apply { writeText("x") } }
+        assertTrue(manager.deleteMap(info.file))
+        assertTrue("sidecars gone: ${sidecars.filter { it.exists() }}", sidecars.none { it.exists() })
+        assertEquals(emptyList<String>(), mapsDirNames())
+
+        // Leftovers of an import that died: a staged copy and its journal.
+        File(manager.mapsDir, ".import-123.tmp").writeText("partial")
+        File(manager.mapsDir, ".import-123.tmp-wal").writeText("partial")
+        File(manager.mapsDir, ".import-123.tmp-journal").writeText("partial")
+        manager.importMap(Uri.fromFile(File(scratch, "absent.mbtiles")))
+        manager.importMap(Uri.fromFile(mbtiles("again.mbtiles", MbtilesSpec(tiles = listOf(Triple(1, 0, 0) to byteArrayOf(1))))))
+        assertTrue("stale staging files swept: ${mapsDirNames()}", mapsDirNames().none { it.startsWith(".import-") })
+    }
+
+    @Test
+    fun theKindOfArchiveComesFromItsBytesNotItsName() = runBlocking {
+        val pm = MapArchiveFixtures.pmtiles(listOf(Triple(0, 0, 0) to MapArchiveFixtures.contourTile()))
+        val misnamedPm = File(scratch, "really-pmtiles.mbtiles").apply { writeBytes(pm) }
+        val a = manager.importMap(Uri.fromFile(misnamedPm)).getOrThrow()
+        assertTrue("stored as .pmtiles: ${a.file.name}", a.file.name.endsWith(".pmtiles"))
+        assertTrue(manager.openSource(a.file)!!.use { it.getTile(0, 0, 0) is DecodedTile.Vector })
+
+        val misnamedMb = mbtiles("really-mbtiles.pmtiles", MbtilesSpec(tiles = listOf(Triple(1, 0, 0) to byteArrayOf(1))))
+        val b = manager.importMap(Uri.fromFile(misnamedMb)).getOrThrow()
+        assertTrue("stored as .mbtiles: ${b.file.name}", b.file.name.endsWith(".mbtiles"))
+
+        // Magic detection survives short, empty and unreadable files.
+        assertTrue(hasPmtilesMagic(misnamedPm))
+        assertFalse(hasPmtilesMagic(misnamedMb))
+        assertFalse(hasPmtilesMagic(File(scratch, "tiny").apply { writeBytes(byteArrayOf(80, 77)) }))
+        assertFalse(hasPmtilesMagic(File(scratch, "empty").apply { writeBytes(ByteArray(0)) }))
+        assertFalse(hasPmtilesMagic(File(scratch, "nope")))
+        assertFalse(isWalDatabase(File(scratch, "tiny")))
+    }
+
+    @Test
+    fun jpegTilesDecodeToHalfTheMemoryOfPng() {
+        val bmp = android.graphics.Bitmap.createBitmap(256, 256, android.graphics.Bitmap.Config.ARGB_8888)
+        val jpg = java.io.ByteArrayOutputStream().also { bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, it) }.toByteArray()
+        assertEquals(android.graphics.Bitmap.Config.RGB_565, decodeBitmapBounded(jpg)!!.config)
+        assertEquals(android.graphics.Bitmap.Config.ARGB_8888, decodeBitmapBounded(MapArchiveFixtures.png(64, 64))!!.config)
     }
 }

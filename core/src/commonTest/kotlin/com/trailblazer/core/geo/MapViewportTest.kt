@@ -124,11 +124,44 @@ class MapViewportTest {
 
     // ---- polylines ----
 
+    private fun project(
+        pts: List<LatLon>,
+        c: LatLon,
+        zoom: Double,
+        width: Float,
+        height: Float,
+        minStepPx: Float = 1.5f,
+    ): FloatArray {
+        val buffer = TileUtils.PolylineBuffer()
+        TileUtils.projectPolyline(pts, c, zoom, width, height, buffer, minStepPx)
+        return buffer.toArray()
+    }
+
+    @Test
+    fun projectingEveryFrameReusesOneBufferAndNeverLeaksAnOlderLine() {
+        val c = LatLon(46.0, 7.0)
+        val long = (0 until 500).map { LatLon(46.0 + it * 1e-3, 7.0 + it * 1e-3) }
+        val short = long.take(3)
+        val buffer = TileUtils.PolylineBuffer()
+        TileUtils.projectPolyline(long, c, 12.0, w, h, buffer, 0f)
+        assertEquals(500, buffer.count)
+        val storage = buffer.xy
+        // Later frames, shorter or longer-than-before-but-fitting, write into the same array.
+        TileUtils.projectPolyline(short, c, 12.0, w, h, buffer, 0f)
+        assertEquals(3, buffer.count)
+        assertTrue(storage === buffer.xy, "no new array for a shorter polyline")
+        TileUtils.projectPolyline(long, c, 12.5, w, h, buffer, 0f)
+        assertTrue(storage === buffer.xy, "no new array for an equally long polyline")
+        TileUtils.projectPolyline(emptyList(), c, 12.0, w, h, buffer)
+        assertEquals(0, buffer.count)
+        assertEquals(0, buffer.toArray().size)
+    }
+
     @Test
     fun anEmptyOrSinglePointTrackProjectsToWhatIsThere() {
         val c = LatLon(46.0, 7.0)
-        assertEquals(0, TileUtils.projectPolyline(emptyList(), c, 12.0, w, h).size)
-        val one = TileUtils.projectPolyline(listOf(c), c, 12.0, w, h)
+        assertEquals(0, project(emptyList(), c, 12.0, w, h).size)
+        val one = project(listOf(c), c, 12.0, w, h)
         assertEquals(2, one.size)
         assertEquals(w / 2, one[0], 0.01f)
         assertEquals(h / 2, one[1], 0.01f)
@@ -140,7 +173,7 @@ class MapViewportTest {
         val pts = ArrayList<LatLon>()
         for (i in 0..10_000) pts.add(LatLon(46.0 + i * 1e-7, 7.0)) // ~1 cm apart: invisible at z12
         pts.add(LatLon(46.01, 7.01))
-        val out = TileUtils.projectPolyline(pts, c, 12.0, w, h)
+        val out = project(pts, c, 12.0, w, h)
         assertTrue(out.size / 2 < 10, "10,000 invisible points collapse, kept ${out.size / 2}")
         val end = TileUtils.latLonToScreen(pts.last(), c, 12.0, w, h)
         assertEquals(end.x, out[out.size - 2], 1e-3f)
@@ -154,7 +187,7 @@ class MapViewportTest {
         val c = LatLon(46.0, 7.0)
         // Two nearby points: the second is within a pixel of the first but it is the end of the track.
         val pts = listOf(LatLon(46.0, 7.0), LatLon(46.0, 7.0 + 1e-6))
-        val out = TileUtils.projectPolyline(pts, c, 12.0, w, h)
+        val out = project(pts, c, 12.0, w, h)
         assertEquals(4, out.size)
         val end = TileUtils.latLonToScreen(pts[1], c, 12.0, w, h)
         assertEquals(end.x, out[2], 1e-4f)
@@ -164,7 +197,7 @@ class MapViewportTest {
     fun aTrackAcrossTheAntimeridianIsContinuousOnScreen() {
         val c = LatLon(0.0, 179.95)
         val pts = (0..20).map { LatLon(0.0, TileUtils.wrapLon(179.9 + it * 0.01)) }
-        val out = TileUtils.projectPolyline(pts, c, 14.0, w, h, minStepPx = 0f)
+        val out = project(pts, c, 14.0, w, h, minStepPx = 0f)
         assertEquals(pts.size, out.size / 2)
         for (i in 1 until out.size / 2) {
             val dx = out[i * 2] - out[(i - 1) * 2]
@@ -176,7 +209,7 @@ class MapViewportTest {
     fun nonFinitePointsAreSkipped() {
         val c = LatLon(0.0, 0.0)
         val pts = listOf(LatLon(0.0, 0.0), LatLon(0.001, 0.001))
-        val out = TileUtils.projectPolyline(pts, c, 10.0, Float.NaN, h)
+        val out = project(pts, c, 10.0, Float.NaN, h)
         assertEquals(0, out.size, "a NaN viewport yields nothing rather than NaN coordinates")
     }
 

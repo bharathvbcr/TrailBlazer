@@ -144,9 +144,16 @@ class OfflineMapCanvasTest {
             OfflineMapCanvas(tileSource = src, initialCenter = LatLon(46.0, 7.0), initialZoom = 4.0)
         }
         rule.onNodeWithText("Recording (z4.0)").assertIsDisplayed()
+        // Zoom in one level at a time. Up to z8 (more than one level above the archive's z10) nothing can be drawn...
+        repeat(4) { rule.onNodeWithContentDescription("Zoom in").performClick() }
+        rule.onNodeWithText("Recording (z8.0)").assertIsDisplayed()
         rule.waitForIdle()
-        Thread.sleep(300)
-        assertTrue("no tile exists at z4: ${src.requests}", src.requests.isEmpty())
+        // ...and one more level reaches the archive. Waiting for that first request (no sleeping) means any request
+        // wrongly issued while zoomed out would already be in the list by now.
+        rule.onNodeWithContentDescription("Zoom in").performClick()
+        rule.waitUntil(10_000) { src.requests.isNotEmpty() }
+        rule.waitForIdle()
+        assertTrue("only the archive's own level was requested: ${src.requests.map { it.first }.toSet()}", src.requests.all { it.first == 10 })
     }
 
     @Test

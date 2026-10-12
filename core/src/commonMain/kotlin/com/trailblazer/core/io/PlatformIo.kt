@@ -28,8 +28,12 @@ expect class StringWriter() : Writer {
 /** Thrown by [decompressGzip] when the output would exceed the caller's limit (a gzip bomb). */
 class DecompressionLimitException(message: String) : IllegalStateException(message)
 
+/** Thrown by [decompressGzip] on a platform that cannot inflate gzip (today: Apple) when given gzip data. */
+class GzipUnsupportedException(message: String) : UnsupportedOperationException(message)
+
 /**
- * Inflates [bytes] when they start with the gzip magic and returns them unchanged otherwise.
+ * Inflates [bytes] when they start with the gzip magic and returns them unchanged otherwise. Apple targets have no
+ * inflater here: gzip input throws [GzipUnsupportedException] rather than being passed on still compressed.
  * Output is bounded: more than [maxOutputBytes] inflated bytes throws [DecompressionLimitException] before the rest is
  * produced, so a tiny hostile archive cannot exhaust memory. Corrupt streams throw an IO exception.
  */

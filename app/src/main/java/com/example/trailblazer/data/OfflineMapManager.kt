@@ -1,5 +1,6 @@
 package com.example.trailblazer.data
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.graphics.Bitmap
@@ -12,10 +13,13 @@ import com.trailblazer.core.geo.TileUtils
 import com.trailblazer.core.geo.TileUtils.TileBounds
 import com.trailblazer.core.geo.TileUtils.TileFormat
 import com.trailblazer.core.geo.TileUtils.VectorTile
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -24,6 +28,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.RandomAccessFile
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.cancellation.CancellationException
 
 sealed interface DecodedTile {
@@ -49,7 +54,7 @@ interface OfflineTileSource : Closeable {
 internal const val MAX_TILE_BLOB_BYTES = 8 * 1024 * 1024
 
 /** Raster tiles are decoded down to at most this many pixels on a side. */
-internal const val MAX_RASTER_SIDE = 1024
+internal const val MAX_RASTER_SIDE = 512
 
 /** A raster tile that declares more pixels than this (a decompression bomb) is not decoded at all. */
 internal const val MAX_RASTER_PIXELS = 64_000_000L
@@ -66,7 +71,11 @@ internal fun decodeBitmapBounded(raw: ByteArray): Bitmap? {
     } catch (_: RuntimeException) {
         null
     } ?: return null
-    val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+    val opts = BitmapFactory.Options().apply {
+        inSampleSize = sample
+        // JPEG has no alpha, so half the memory costs nothing visible; PNG and WebP may be translucent.
+        if (probe.outMimeType == "image/jpeg") inPreferredConfig = Bitmap.Config.RGB_565
+    }
     return try {
         BitmapFactory.decodeByteArray(raw, 0, raw.size, opts)
     } catch (_: OutOfMemoryError) {
@@ -121,6 +130,34 @@ private fun boundsOrNull(minLon: Double, minLat: Double, maxLon: Double, maxLat:
     return if (ok) TileBounds(minLat, minLon, maxLat, maxLon) else null
 }
 
+private fun readHeader(file: File, length: Int): ByteArray? =
+    try {
+        // readFully: a bare read() may legally return fewer bytes than asked for.
+        ByteArray(length).also { buf -> java.io.DataInputStream(file.inputStream()).use { it.readFully(buf) } }
+    } catch (_: IOException) {
+        null
+    }
+
+private fun hasSqliteMagic(file: File): Boolean =
+    readHeader(file, 16)?.contentEquals("SQLite format 3\u0000".toByteArray(Charsets.US_ASCII)) == true
+
+/** True when the file starts with the PMTiles magic: what a file is is decided by its bytes, not its name. */
+internal fun hasPmtilesMagic(file: File): Boolean =
+    readHeader(file, 7)?.contentEquals("PMTiles".toByteArray(Charsets.US_ASCII)) == true
+
+/** True when the SQLite header says the database is in write-ahead-log mode (read/write format version 2, bytes 18/19). */
+internal fun isWalDatabase(file: File): Boolean {
+    val h = readHeader(file, 20) ?: return false
+    return h[18].toInt() == 2 || h[19].toInt() == 2
+}
+
+private val SIDECAR_SUFFIXES = listOf("-wal", "-shm", "-journal")
+
+/** Removes SQLite's -wal / -shm / -journal files beside [file] (they are never wanted once the main file is gone or replaced). */
+private fun deleteSqliteSidecars(file: File) {
+    for (suffix in SIDECAR_SUFFIXES) File(file.path + suffix).delete()
+}
+
 /**
  * An MBTiles archive, opened read-only. Rows are stored TMS (y from the south); callers use XYZ and the flip happens
  * here. All SQL is fixed text with bound parameters, and a blob larger than [MAX_TILE_BLOB_BYTES] is never loaded.
@@ -141,12 +178,7 @@ class MbtilesTileSource(override val file: File) : OfflineTileSource {
         if (!file.exists() || file.length() < 16) {
             throw IllegalArgumentException("File is not a valid SQLite database")
         }
-        val header = ByteArray(16)
-        file.inputStream().use { it.read(header) }
-        val magic = "SQLite format 3\u0000".toByteArray(Charsets.US_ASCII)
-        if (!header.contentEquals(magic)) {
-            throw IllegalArgumentException("Invalid SQLite header for MBTiles file")
-        }
+        if (!hasSqliteMagic(file)) throw IllegalArgumentException("Invalid SQLite header for MBTiles file")
 
         db = SQLiteDatabase.openDatabase(file.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
 
@@ -288,6 +320,8 @@ data class OfflineMapInfo(
     val maxZoom: Int,
     val bounds: TileBounds?,
     val sizeBytes: Long,
+    /** Something the user should know about this import (for example a WAL-mode source), shown after it. */
+    val note: String? = null,
 ) {
     val formattedSize: String
         get() = when {
@@ -314,15 +348,30 @@ internal suspend fun copyBounded(input: java.io.InputStream, output: java.io.Out
     }
 }
 
+private val backgroundCloser = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+/**
+ * Closes the source on an IO thread. Closing a SQLite database or file can block, so UI callbacks (a ViewModel's
+ * `onCleared`, a composable's dispose) use this instead of calling [close] on the main thread.
+ */
+fun OfflineTileSource.closeInBackground() {
+    backgroundCloser.launch { close() }
+}
+
 /**
  * Owns the app's offline map archives. Imports copy the picked file into app storage (so no persistable SAF grant is
  * needed and a later-moved or deleted source cannot break the map), bounded in size, through a hidden temp file that is
  * validated before it is renamed into place, and removed on any failure or cancellation.
+ *
+ * What a file is is decided by its bytes (the "PMTiles" magic, the SQLite header), not by its name; the stored copy gets
+ * the matching extension.
  */
 class OfflineMapManager(
     private val context: Context,
     private val prefs: PrefsRepository,
     private val maxImportBytes: Long = DEFAULT_MAX_IMPORT_BYTES,
+    /** Replaces how an installed archive is opened; tests use it to observe opens. */
+    private val sourceOpener: ((File) -> OfflineTileSource?)? = null,
 ) {
     val mapsDir: File = File(context.filesDir, "maps").apply { mkdirs() }
 
@@ -336,21 +385,25 @@ class OfflineMapManager(
         return files.mapNotNull { inspectFile(it) }.sortedBy { it.name }
     }
 
-    fun inspectFile(file: File): OfflineMapInfo? = inspect(file, file.name.endsWith(".pmtiles", ignoreCase = true))
+    fun inspectFile(file: File): OfflineMapInfo? = inspect(file)
 
-    private fun inspect(file: File, isPmtiles: Boolean): OfflineMapInfo? {
+    /** PMTiles by magic bytes; anything else with a SQLite header is MBTiles; an unrecognisable file falls back to its extension. */
+    private fun isPmtilesFile(file: File): Boolean =
+        hasPmtilesMagic(file) || (!hasSqliteMagic(file) && file.name.endsWith(".pmtiles", ignoreCase = true))
+
+    private fun inspect(file: File, note: String? = null): OfflineMapInfo? {
         if (!file.exists() || file.length() == 0L) return null
         return try {
-            openAs(file, isPmtiles).use { s ->
-                OfflineMapInfo(file, s.name, s.format, s.minZoom, s.maxZoom, s.bounds, file.length())
+            openAs(file).use { s ->
+                OfflineMapInfo(file, s.name, s.format, s.minZoom, s.maxZoom, s.bounds, file.length(), note)
             }
         } catch (_: Exception) {
             null
         }
     }
 
-    private fun openAs(file: File, isPmtiles: Boolean): OfflineTileSource =
-        if (isPmtiles) PmtilesTileSource(file) else MbtilesTileSource(file)
+    private fun openAs(file: File): OfflineTileSource =
+        if (isPmtilesFile(file)) PmtilesTileSource(file) else MbtilesTileSource(file)
 
     private fun insideMapsDir(file: File): Boolean =
         try {
@@ -358,6 +411,20 @@ class OfflineMapManager(
         } catch (_: IOException) {
             false
         }
+
+    // File.getUsableSpace is the right question here: a quick "will the copy plausibly fit" pre-check against what this
+    // app can actually write. (StorageManager.getAllocatableBytes also counts other apps' cache that we would still have
+    // to ask the system to free.) A copy that runs out anyway fails cleanly with an IOException.
+    @SuppressLint("UsableSpace")
+    private fun freeBytes(): Long = mapsDir.usableSpace
+
+    /** Switches a copied WAL-mode MBTiles to the rollback journal so it opens cleanly read-only and leaves no sidecars. */
+    private fun convertToRollbackJournal(file: File) {
+        SQLiteDatabase.openDatabase(file.absolutePath, null, SQLiteDatabase.OPEN_READWRITE).use { db ->
+            db.rawQuery("PRAGMA journal_mode=DELETE", null).use { it.moveToFirst() }
+        }
+        deleteSqliteSidecars(file)
+    }
 
     suspend fun importMap(uri: Uri): Result<OfflineMapInfo> = withContext(Dispatchers.IO) {
         importLock.withLock<Result<OfflineMapInfo>> {
@@ -377,16 +444,15 @@ class OfflineMapManager(
 
                 val sourceName = originalName?.takeIf { it.isNotBlank() } ?: uri.lastPathSegment ?: "offline_map.mbtiles"
                 val safeName = sourceName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
-                val isPmtiles = safeName.endsWith(".pmtiles", ignoreCase = true)
-                val ext = if (isPmtiles) ".pmtiles" else ".mbtiles"
-                val baseName = safeName.removeSuffix(ext).removeSuffix(".mbtiles").removeSuffix(".pmtiles").take(100).ifEmpty { "offline_map" }
+                val baseName = safeName.removeSuffix(".mbtiles").removeSuffix(".pmtiles").take(100).ifEmpty { "offline_map" }
 
                 declaredSize?.let { size ->
                     if (size > maxImportBytes) return@withLock Result.failure(IOException("File is ${size / MIB} MB; the limit is ${maxImportBytes / MIB} MB"))
-                    if (size > mapsDir.usableSpace - STORAGE_RESERVE_BYTES) return@withLock Result.failure(IOException("Not enough free storage for ${size / MIB} MB"))
+                    if (size > freeBytes() - STORAGE_RESERVE_BYTES) return@withLock Result.failure(IOException("Not enough free storage for ${size / MIB} MB"))
                 }
 
-                mapsDir.listFiles { _, n -> n.startsWith(TEMP_PREFIX) && n.endsWith(TEMP_SUFFIX) }?.forEach { it.delete() }
+                // Leftovers of an import that was killed mid-copy (this process holds the only import lock).
+                mapsDir.listFiles { _, n -> n.startsWith(TEMP_PREFIX) }?.forEach { it.delete() }
 
                 val input = resolver.openInputStream(uri) ?: return@withLock Result.failure(IOException("Could not open file"))
                 val staged = File(mapsDir, "$TEMP_PREFIX${System.nanoTime()}$TEMP_SUFFIX")
@@ -399,10 +465,20 @@ class OfflineMapManager(
                     }
                 }
 
-                if (inspect(staged, isPmtiles) == null) {
-                    return@withLock Result.failure(IllegalArgumentException("File is not a valid MBTiles or PMTiles archive"))
+                val isPmtiles = isPmtilesFile(staged)
+                var note: String? = null
+                if (!isPmtiles && hasSqliteMagic(staged) && isWalDatabase(staged)) {
+                    // Only the main file was copied. Rows still sitting in the source's separate -wal file are not in it.
+                    convertToRollbackJournal(staged)
+                    note = WAL_NOTE
                 }
 
+                if (inspect(staged) == null) {
+                    return@withLock Result.failure(IllegalArgumentException("File is not a valid MBTiles or PMTiles archive"))
+                }
+                deleteSqliteSidecars(staged)
+
+                val ext = if (isPmtiles) ".pmtiles" else ".mbtiles"
                 var target = File(mapsDir, "$baseName$ext")
                 var counter = 1
                 while (target.exists()) {
@@ -412,7 +488,7 @@ class OfflineMapManager(
                 if (!staged.renameTo(target)) throw IOException("Could not move the map into place")
                 temp = null
 
-                val info = inspect(target, isPmtiles)
+                val info = inspect(target, note)
                 if (info == null) {
                     target.delete()
                     return@withLock Result.failure(IllegalArgumentException("File is not a valid MBTiles or PMTiles archive"))
@@ -425,7 +501,10 @@ class OfflineMapManager(
             } catch (e: Exception) {
                 Result.failure(e)
             } finally {
-                temp?.delete()
+                temp?.let {
+                    it.delete()
+                    deleteSqliteSidecars(it)
+                }
             }
         }
     }
@@ -433,29 +512,46 @@ class OfflineMapManager(
     fun openSource(file: File): OfflineTileSource? {
         if (!file.exists()) return null
         return try {
-            openAs(file, file.name.endsWith(".pmtiles", ignoreCase = true))
+            sourceOpener?.invoke(file) ?: openAs(file)
         } catch (_: Exception) {
             null
         }
     }
 
-    /** The map chosen in settings, else the first installed one; null when none is usable. Runs off the main thread. */
-    suspend fun openActiveSource(): OfflineTileSource? = withContext(Dispatchers.IO) {
+    /**
+     * The map chosen in settings, else the first installed one; null when none is usable. Opens on an IO thread, and
+     * if the caller is cancelled while that is happening the source that was just opened is closed, not leaked.
+     */
+    suspend fun openActiveSource(): OfflineTileSource? {
+        val opened = AtomicReference<OfflineTileSource?>(null)
+        try {
+            return withContext(Dispatchers.IO) {
+                pickActiveSource().also { opened.set(it) }
+            }
+        } catch (e: CancellationException) {
+            // withContext waits for its block, so by now the block has either published a source or never opened one.
+            opened.getAndSet(null)?.close()
+            throw e
+        }
+    }
+
+    private suspend fun pickActiveSource(): OfflineTileSource? {
         val currentPath = prefs.settings.first().activeOfflineMapPath
         if (currentPath != null) {
             val file = File(currentPath)
             if (insideMapsDir(file)) {
-                openSource(file)?.let { return@withContext it }
+                openSource(file)?.let { return it }
             }
         }
-        listMaps().firstOrNull()?.let { openSource(it.file) }
+        return listMaps().firstOrNull()?.let { openSource(it.file) }
     }
 
-    /** Deletes an installed map; if it was the active one the first remaining map becomes active. */
+    /** Deletes an installed map and its SQLite sidecar files; if it was the active one the first remaining map becomes active. */
     suspend fun deleteMap(file: File): Boolean = withContext(Dispatchers.IO) {
         if (!insideMapsDir(file)) return@withContext false
         val wasActive = prefs.settings.first().activeOfflineMapPath == file.absolutePath
         val deleted = file.delete()
+        if (deleted) deleteSqliteSidecars(file)
         if (deleted && wasActive) {
             val next = listMaps().firstOrNull()?.file?.absolutePath
             prefs.update { it.copy(activeOfflineMapPath = next) }
@@ -465,6 +561,7 @@ class OfflineMapManager(
 
     companion object {
         const val DEFAULT_MAX_IMPORT_BYTES = 8L * 1024 * 1024 * 1024
+        const val WAL_NOTE = "This file was saved in WAL mode; changes still held in its separate -wal file are not in the imported copy."
         private const val STORAGE_RESERVE_BYTES = 256L * 1024 * 1024
         private const val MIB = 1024L * 1024
         private const val TEMP_PREFIX = ".import-"

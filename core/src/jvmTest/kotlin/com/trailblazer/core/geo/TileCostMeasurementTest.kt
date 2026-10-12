@@ -1,5 +1,6 @@
 package com.trailblazer.core.geo
 
+import com.trailblazer.core.budgetMs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -43,7 +44,7 @@ class TileCostMeasurementTest {
         }
         println("MEASURE decode ${tile.size / 1024} KiB gzip tile, $points points: ${"%.1f".format(ms)} ms (min of 7, JVM)")
         assertEquals(40 * 5000, points)
-        assertTrue(ms < 3000.0, "decoding took $ms ms")
+        assertTrue(ms < budgetMs(3000).toDouble(), "decoding took $ms ms")
     }
 
     @Test
@@ -51,11 +52,20 @@ class TileCostMeasurementTest {
         // 100,000 GPS fixes on a 30 km walk.
         val pts = (0 until 100_000).map { i -> LatLon(46.0 + i * 3e-6, 7.0 + kotlin.math.sin(i / 2000.0) * 0.02) }
         val center = LatLon(46.15, 7.0)
-        val ms = minOfRuns(9) { TileUtils.projectPolyline(pts, center, 12.0, 1080f, 1920f) }
-        val kept = TileUtils.projectPolyline(pts, center, 12.0, 1080f, 1920f).size / 2
+        // Before: a fresh 200,000-float array on every frame. After: one buffer reused by every frame.
+        val allocating = minOfRuns(15) {
+            TileUtils.projectPolyline(pts, center, 12.0, 1080f, 1920f, TileUtils.PolylineBuffer())
+        }
+        val reused = TileUtils.PolylineBuffer()
+        TileUtils.projectPolyline(pts, center, 12.0, 1080f, 1920f, reused)
+        val reusedMs = minOfRuns(15) { TileUtils.projectPolyline(pts, center, 12.0, 1080f, 1920f, reused) }
+        val kept = reused.count
         val naive = minOfRuns(9) { for (p in pts) TileUtils.latLonToScreen(p, center, 12.0, 1080f, 1920f) }
-        println("MEASURE project 100,000 track points: ${"%.2f".format(ms)} ms, keeps $kept of 100,000 (naive per-point project: ${"%.2f".format(naive)} ms) (min of 9, JVM)")
+        println(
+            "MEASURE project 100,000 track points: fresh buffer per frame ${"%.2f".format(allocating)} ms, reused buffer " +
+                "${"%.2f".format(reusedMs)} ms, keeps $kept of 100,000 (naive per-point project: ${"%.2f".format(naive)} ms) (min of 15, JVM)",
+        )
         assertTrue(kept < 5000, "kept $kept")
-        assertTrue(ms < 1000.0)
+        assertTrue(reusedMs < budgetMs(1000).toDouble())
     }
 }

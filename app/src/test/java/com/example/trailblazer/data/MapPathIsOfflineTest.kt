@@ -20,6 +20,7 @@ class MapPathIsOfflineTest {
         "app/src/main/java/com/example/trailblazer/data/OfflineMapManager.kt",
         "app/src/main/java/com/example/trailblazer/ui/trips/OfflineMapCanvas.kt",
         "app/src/main/java/com/example/trailblazer/ui/trips/TileLoader.kt",
+        "app/src/main/java/com/example/trailblazer/ui/trips/VectorTilePaths.kt",
         "core/src/commonMain/kotlin/com/trailblazer/core/geo/TileUtils.kt",
         "core/src/commonMain/kotlin/com/trailblazer/core/geo/PmtilesArchive.kt",
         "core/src/androidMain/kotlin/com/trailblazer/core/io/PlatformIo.kt",

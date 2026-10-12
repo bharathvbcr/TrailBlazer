@@ -8,6 +8,7 @@ import com.example.trailblazer.data.GeoFormat
 import com.example.trailblazer.data.IoResult
 import com.example.trailblazer.data.Settings
 import com.example.trailblazer.data.TrackSummary
+import com.example.trailblazer.data.closeInBackground
 import com.example.trailblazer.data.Waypoint
 import com.example.trailblazer.location.Fix
 import com.trailblazer.core.sensors.Reading
@@ -59,10 +60,10 @@ class TripsViewModel(private val c: AppContainer) : ViewModel() {
         val next = c.offlineMaps.openActiveSource()
         if (old?.file?.absolutePath != next?.file?.absolutePath) {
             activeTileSource.value = next
-            old?.close()
+            old?.closeInBackground()
         } else {
             // The same archive is already open and in use; this duplicate handle is not needed.
-            next?.close()
+            next?.closeInBackground()
         }
     }
 
@@ -88,7 +89,7 @@ class TripsViewModel(private val c: AppContainer) : ViewModel() {
         val result = c.offlineMaps.importMap(uri)
         if (result.isSuccess) {
             val info = result.getOrThrow()
-            message.value = "Imported map “${info.name}” (${info.formattedSize})"
+            message.value = "Imported map “${info.name}” (${info.formattedSize})" + (info.note?.let { " - $it" } ?: "")
             refreshMaps()
         } else {
             message.value = "Import failed: ${result.exceptionOrNull()?.message ?: "Unknown error"}"
@@ -108,8 +109,7 @@ class TripsViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     override fun onCleared() {
-        super.onCleared()
-        activeTileSource.value?.close()
+        activeTileSource.value?.closeInBackground()
     }
 
     fun startRecording(): Boolean = c.tracking.start()

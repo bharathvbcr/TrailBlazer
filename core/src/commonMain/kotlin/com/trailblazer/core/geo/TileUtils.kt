@@ -1,6 +1,7 @@
 package com.trailblazer.core.geo
 
 import com.trailblazer.core.io.DecompressionLimitException
+import com.trailblazer.core.io.GzipUnsupportedException
 import com.trailblazer.core.io.decompressGzip
 import kotlin.math.PI
 import kotlin.math.abs
@@ -358,9 +359,26 @@ object TileUtils {
     }
 
     /**
-     * Projects [points] to screen coordinates for drawing a polyline, writing x,y pairs into the result. Points that
-     * land within [minStepPx] of the previous kept point (and non-finite points) are dropped; the last point is always
-     * kept so the end marker is exact. A 1M-point track costs one pass and draws only what is distinguishable.
+     * Reusable output of [projectPolyline]: `count` screen points as x,y pairs in `xy`. The array grows when a longer
+     * polyline needs it and is otherwise reused, so drawing a track every frame allocates nothing. Not thread safe.
+     */
+    class PolylineBuffer {
+        var xy: FloatArray = FloatArray(0)
+            private set
+        var count: Int = 0
+            internal set
+
+        internal fun ensureCapacity(points: Int) {
+            if (xy.size < points * 2) xy = FloatArray(points * 2)
+        }
+
+        fun toArray(): FloatArray = xy.copyOf(count * 2)
+    }
+
+    /**
+     * Projects [points] to screen coordinates for drawing a polyline into [out]. Points that land within [minStepPx]
+     * of the previous kept point (and non-finite points) are dropped; the last point is always kept so the end marker
+     * is exact. A 1M-point track costs one pass and draws only what is distinguishable.
      */
     fun projectPolyline(
         points: List<LatLon>,
@@ -368,15 +386,18 @@ object TileUtils {
         zoom: Double,
         widthPx: Float,
         heightPx: Float,
+        out: PolylineBuffer,
         minStepPx: Float = 1.5f,
-    ): FloatArray {
-        if (points.isEmpty()) return FloatArray(0)
+    ) {
+        out.count = 0
+        if (points.isEmpty()) return
+        out.ensureCapacity(points.size)
         val worldSize = TILE_SIZE * 2.0.pow(zoom)
         val cx = normX(center.lon)
         val cy = normY(center.lat)
         val halfW = widthPx / 2.0
         val halfH = heightPx / 2.0
-        val out = FloatArray(points.size * 2)
+        val xy = out.xy
         var count = 0
         var lastX = 0f
         var lastY = 0f
@@ -391,8 +412,8 @@ object TileUtils {
             val y = (halfH + (normY(p.lat) - cy) * worldSize).toFloat()
             if (!x.isFinite() || !y.isFinite()) continue
             if (count == 0 || (x - lastX) * (x - lastX) + (y - lastY) * (y - lastY) >= step2) {
-                out[count * 2] = x
-                out[count * 2 + 1] = y
+                xy[count * 2] = x
+                xy[count * 2 + 1] = y
                 count++
                 lastX = x
                 lastY = y
@@ -404,11 +425,11 @@ object TileUtils {
             }
         }
         if (pendingDropped) {
-            out[count * 2] = pendingX
-            out[count * 2 + 1] = pendingY
+            xy[count * 2] = pendingX
+            xy[count * 2 + 1] = pendingY
             count++
         }
-        return out.copyOf(count * 2)
+        out.count = count
     }
 
     // Hilbert Curve and PMTiles v3 Tile ID Calculations
@@ -642,6 +663,8 @@ object TileUtils {
             decompressGzip(bytes, MAX_INFLATED_BYTES)
         } catch (e: DecompressionLimitException) {
             throw MalformedTileException("$what inflates past $MAX_INFLATED_BYTES bytes")
+        } catch (e: GzipUnsupportedException) {
+            throw MalformedTileException("$what is gzip-compressed, which this platform cannot decompress")
         } catch (e: Exception) {
             throw MalformedTileException("$what is not a valid gzip stream")
         }
@@ -875,7 +898,11 @@ object TileUtils {
         return out
     }
 
-    private fun parseMvtGeometry(g: ProtoReader, extent: Int, budget: MvtBudget): List<List<TilePoint>> {
+    /**
+     * Decodes a feature's geometry commands. A line or polygon part is one list of points. A Point feature (single or
+     * multi) yields one single-point list per point, so a multi-point is not mistaken for a two-point line.
+     */
+    private fun parseMvtGeometry(g: ProtoReader, extent: Int, type: GeometryType, budget: MvtBudget): List<List<TilePoint>> {
         val geometry = ArrayList<List<TilePoint>>()
         var current = ArrayList<TilePoint>()
         var cx = 0L
@@ -901,7 +928,8 @@ object TileUtils {
                         if (dx < 0L || dx > 0xFFFFFFFFL || dy < 0L || dy > 0xFFFFFFFFL) throw MalformedTileException("geometry parameter out of range")
                         cx += decodeZigzag(dx)
                         cy += decodeZigzag(dy)
-                        current.add(TilePoint(cx.toFloat() / extent, cy.toFloat() / extent))
+                        val point = TilePoint(cx.toFloat() / extent, cy.toFloat() / extent)
+                        if (type == GeometryType.Point) geometry.add(listOf(point)) else current.add(point)
                     }
                 }
                 7 -> {
@@ -962,7 +990,7 @@ object TileUtils {
                 }
             }
         }
-        val geometry = if (geom != null) parseMvtGeometry(geom, extent, budget) else emptyList()
+        val geometry = if (geom != null) parseMvtGeometry(geom, extent, type, budget) else emptyList()
         return VectorFeature(id, type, geometry, props, layerName)
     }
 

@@ -68,6 +68,12 @@ object TileFixtures {
         }
 
         fun moveTo(x: Long, y: Long): Geom = apply { cmd(1, 1); point(x, y) }
+
+        /** One MoveTo command carrying several points: how a MultiPoint is encoded. */
+        fun moveToMany(vararg xy: Long): Geom = apply {
+            cmd(1, xy.size / 2)
+            for (i in xy.indices step 2) point(xy[i], xy[i + 1])
+        }
         fun lineTo(vararg xy: Long): Geom = apply {
             cmd(2, xy.size / 2)
             for (i in xy.indices step 2) point(xy[i], xy[i + 1])

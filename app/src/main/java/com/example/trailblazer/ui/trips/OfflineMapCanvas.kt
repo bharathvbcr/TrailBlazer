@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
@@ -79,10 +80,6 @@ import kotlin.math.floor
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
-/** Memory the tile caches may hold, per map view. */
-private const val RASTER_CACHE_BYTES = 24L * 1024 * 1024
-private const val VECTOR_CACHE_BYTES = 16L * 1024 * 1024
-
 /** The widest zoom out the gestures allow; overlays stay visible even where the archive has no tiles. */
 private const val MIN_VIEW_ZOOM = 1.0
 
@@ -92,13 +89,13 @@ private const val MIN_VIEW_ZOOM = 1.0
  */
 @Composable
 fun OfflineMapCanvas(
+    modifier: Modifier = Modifier,
     tileSource: OfflineTileSource? = null,
     routes: List<List<Stop>> = emptyList(),
     waypoints: List<Waypoint> = emptyList(),
     tracks: List<List<LatLon>> = emptyList(),
     currentLocation: LatLon? = null,
     accuracyM: Double? = null,
-    modifier: Modifier = Modifier,
     initialCenter: LatLon? = null,
     initialZoom: Double? = null,
     onImportClick: (() -> Unit)? = null,
@@ -139,16 +136,21 @@ fun OfflineMapCanvas(
         var showWaypoints by remember { mutableStateOf(true) }
         var showTracks by remember { mutableStateOf(true) }
 
-        // Byte-bounded caches and the loader that fills them; a new archive starts from empty ones.
-        val loader = remember(tileSource) {
+        // Byte-bounded caches and the loader that fills them; a new archive (or screen size) starts from empty ones.
+        // The budget holds a whole worst-case screen of tiles (see rasterCacheBytes) within a share of the heap limit.
+        val loader = remember(tileSource, widthPx.toInt(), heightPx.toInt()) {
             tileSource?.let {
+                val heap = Runtime.getRuntime().maxMemory()
                 TileLoader(
                     it,
-                    TileCache<Bitmap>(RASTER_CACHE_BYTES) { b -> b.allocationByteCount.toLong() },
-                    TileCache(VECTOR_CACHE_BYTES) { v -> v.estimatedBytes },
+                    TileCache<Bitmap>(rasterCacheBytes(widthPx.toInt(), heightPx.toInt(), heap)) { b -> b.allocationByteCount.toLong() },
+                    TileCache(vectorCacheBytes(widthPx.toInt(), heightPx.toInt(), heap)) { v -> v.bytes },
                 )
             }
         }
+        // Drawing reuses one projection buffer and one path for every track on every frame.
+        val trackBuffer = remember { TileUtils.PolylineBuffer() }
+        val trackPath = remember { Path() }
         var cacheRevision by remember { mutableIntStateOf(0) }
 
         val measurer = rememberTextMeasurer()
@@ -233,7 +235,7 @@ fun OfflineMapCanvas(
                 // 4. Draw overlays
                 // Recorded GPS tracks
                 if (showTracks) {
-                    tracks.forEach { path -> drawTrackPath(path, center, zoom, size.width, size.height, cs.primary) }
+                    tracks.forEach { path -> drawTrackPath(path, center, zoom, size.width, size.height, cs.primary, trackBuffer, trackPath) }
                 }
 
                 // Planned trip routes and stops
@@ -470,7 +472,7 @@ private fun DrawScope.drawTiles(
             }
             val vt = loader.vector(z, wx, y)
             if (vt != null) {
-                drawVectorTile(vt, origin.x, origin.y, tileSize)
+                drawPreparedTile(vt, origin.x, origin.y, tileSize)
                 continue
             }
 
@@ -503,7 +505,7 @@ private fun DrawScope.drawTiles(
                 if (pVec != null) {
                     val parent = TileUtils.tileOriginOnScreen(ax, ay, az, center, zoom, widthPx, heightPx)
                     clipRect(left.toFloat(), top.toFloat(), (left + dst.width).toFloat(), (top + dst.height).toFloat()) {
-                        drawVectorTile(pVec, parent.x, parent.y, tileSize * span)
+                        drawPreparedTile(pVec, parent.x, parent.y, tileSize * span)
                     }
                     break
                 }
@@ -512,49 +514,42 @@ private fun DrawScope.drawTiles(
     }
 }
 
-private fun DrawScope.drawVectorTile(
-    tile: TileUtils.VectorTile,
-    tileScreenX: Float,
-    tileScreenY: Float,
-    tileSize: Float,
-) {
-    val contourMajorColor = Color(0xFFC48A54)
-    val contourMinorColor = Color(0xFF8C5E35).copy(alpha = 0.7f)
-    val waterColor = Color(0xFF3884B8).copy(alpha = 0.8f)
-    val trailColor = Color(0xFFE67E22)
+private val ContourMajorColor = Color(0xFFC48A54)
+private val ContourMinorColor = Color(0xFF8C5E35).copy(alpha = 0.7f)
+private val WaterColor = Color(0xFF3884B8).copy(alpha = 0.8f)
+private val TrailColor = Color(0xFFE67E22)
+private val OtherColor = Color(0xFF7F8C8D)
+private val PointColor = Color(0xFFE8E8E8)
 
-    for (layer in tile.layers) {
-        val isWater = layer.name.contains("water", ignoreCase = true)
-        val isRoad = layer.name.contains("road", ignoreCase = true) || layer.name.contains("trail", ignoreCase = true)
+private fun colorOf(kind: VectorKind): Color = when (kind) {
+    VectorKind.ContourMajor -> ContourMajorColor
+    VectorKind.ContourMinor -> ContourMinorColor
+    VectorKind.Water -> WaterColor
+    VectorKind.Road -> TrailColor
+    VectorKind.Other -> OtherColor
+}
 
-        for (feature in layer.features) {
-            val color = when {
-                feature.isContour -> {
-                    val ele = feature.elevationM
-                    if (ele != null && ele.toInt() % 100 == 0) contourMajorColor else contourMinorColor
-                }
-                isWater -> waterColor
-                isRoad -> trailColor
-                else -> Color(0xFF7F8C8D)
-            }
-            val strokeW = when {
-                feature.isContour && (feature.elevationM?.toInt()?.rem(100) == 0) -> 2.2f
-                feature.isContour -> 1.2f
-                isWater -> 2.5f
-                isRoad -> 1.8f
-                else -> 1.0f
-            }
-
-            for (line in feature.geometry) {
-                if (line.size < 2) continue
-                val path = Path()
-                path.moveTo(tileScreenX + line[0].x * tileSize, tileScreenY + line[0].y * tileSize)
-                for (i in 1 until line.size) {
-                    path.lineTo(tileScreenX + line[i].x * tileSize, tileScreenY + line[i].y * tileSize)
-                }
-                drawPath(path, color, style = Stroke(width = strokeW, cap = StrokeCap.Round))
-            }
+/**
+ * Draws a prepared tile with its top-left at ([x], [y]) and [size] pixels across. The paths are in tile-normalised
+ * coordinates, so one scale transform places them and stroke widths are divided by the scale to stay in pixels.
+ */
+private fun DrawScope.drawPreparedTile(tile: PreparedVectorTile, x: Float, y: Float, size: Float) {
+    if (size <= 0f || !size.isFinite()) return
+    withTransform({
+        translate(x, y)
+        scale(size, size, pivot = Offset.Zero)
+    }) {
+        for (kp in tile.paths) {
+            drawPath(kp.path, colorOf(kp.kind), style = Stroke(width = kp.kind.strokeWidth / size, cap = StrokeCap.Round))
         }
+    }
+    val pts = tile.points
+    var i = 0
+    while (i + 1 < pts.size) {
+        val c = Offset(x + pts[i] * size, y + pts[i + 1] * size)
+        drawCircle(Color.Black.copy(alpha = 0.5f), 4.5f, c)
+        drawCircle(PointColor, 3f, c)
+        i += 2
     }
 }
 
@@ -565,14 +560,17 @@ private fun DrawScope.drawTrackPath(
     widthPx: Float,
     heightPx: Float,
     primaryColor: Color,
+    buffer: TileUtils.PolylineBuffer,
+    p: Path,
 ) {
     if (points.isEmpty()) return
     // Sub-pixel neighbours are dropped; first and last points are kept exactly.
-    val xy = TileUtils.projectPolyline(points, center, zoom, widthPx, heightPx)
-    val n = xy.size / 2
+    TileUtils.projectPolyline(points, center, zoom, widthPx, heightPx, buffer)
+    val n = buffer.count
     if (n == 0) return
+    val xy = buffer.xy
     if (n >= 2) {
-        val p = Path()
+        p.rewind()
         p.moveTo(xy[0], xy[1])
         for (i in 1 until n) p.lineTo(xy[i * 2], xy[i * 2 + 1])
         // Draw track line with slight glow
@@ -581,7 +579,7 @@ private fun DrawScope.drawTrackPath(
     }
     // Start marker (Green) and end marker (Red); a one-fix track is just its start.
     drawCircle(Color(0xFF2ECC71), 7f, Offset(xy[0], xy[1]))
-    if (n >= 2) drawCircle(Color(0xFFE74C3C), 7f, Offset(xy[xy.size - 2], xy[xy.size - 1]))
+    if (n >= 2) drawCircle(Color(0xFFE74C3C), 7f, Offset(xy[n * 2 - 2], xy[n * 2 - 1]))
 }
 
 private fun DrawScope.drawTripRoute(

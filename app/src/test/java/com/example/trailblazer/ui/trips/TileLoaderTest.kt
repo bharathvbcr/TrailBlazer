@@ -50,7 +50,7 @@ class TileLoaderTest {
     }
 
     private fun loader(source: OfflineTileSource, rasterBytes: Long = 64L * 1024 * 1024) =
-        TileLoader(source, TileCache<Bitmap>(rasterBytes) { it.allocationByteCount.toLong() }, TileCache(1L shl 20) { it.estimatedBytes })
+        TileLoader(source, TileCache<Bitmap>(rasterBytes) { it.allocationByteCount.toLong() }, TileCache<PreparedVectorTile>(1L shl 20) { it.bytes })
 
     // ---- cache ----
 
@@ -97,10 +97,76 @@ class TileLoaderTest {
         val side = 256 // 256 KiB each
         val src = FakeSource(bitmapSide = side)
         val ld = loader(src, rasterBytes = 4L * 1024 * 1024)
-        ld.load(TileRange(10, 0, 23, 0, 23)) { } // 576 tiles = 144 MiB if all were kept
-        assertTrue("held ${ld.rasters.sizeBytes} bytes", ld.rasters.sizeBytes <= 4L * 1024 * 1024)
+        // A pan across 36 screens of 4 x 4 tiles: 576 tiles = 144 MiB in all. Each screen fits the budget, so the
+        // cache holds the current one (plus what is left of the last) and never the whole trip.
+        for (sx in 0 until 6) for (sy in 0 until 6) {
+            ld.load(TileRange(10, sx * 4, sx * 4 + 3, sy * 4, sy * 4 + 3)) { }
+            assertTrue("held ${ld.rasters.sizeBytes} bytes", ld.rasters.sizeBytes <= 4L * 1024 * 1024)
+        }
         assertTrue(ld.rasters.count in 1..16)
         assertEquals(576, src.requests.size)
+    }
+
+    // ---- a screenful always fits ----
+
+    private val viewports = listOf(1080 to 2340, 2560 to 1600, 720 to 1280, 1440 to 3120)
+    private val centres = listOf(LatLon(46.0, 7.0), LatLon(-33.9, 151.2), LatLon(64.1, -21.9), LatLon(0.0, 179.9))
+    private val zooms = listOf(12.0, 12.25, 12.5, 12.99, 13.0, 4.0, 15.0)
+
+    @Test
+    fun theBudgetHoldsAWorstCaseScreenWithHeadroom() {
+        val heap = 512L * 1024 * 1024
+        for ((w, h) in viewports) {
+            val budget = rasterCacheBytes(w, h, heap)
+            for (c in centres) for (zoom in zooms) {
+                val tz = TileUtils.renderTileZoom(zoom, 0, 22)!!
+                val r = TileUtils.visibleTileRange(c, zoom, w.toFloat(), h.toFloat(), tz)
+                val tiles = (r.maxX - r.minX + 1).toLong() * (r.maxY - r.minY + 1)
+                assertTrue("$tiles tiles at $w x $h z$zoom exceed the worst case ${worstCaseVisibleTiles(w, h)}", tiles <= worstCaseVisibleTiles(w, h))
+                assertTrue("budget $budget cannot hold $tiles tiles at $w x $h z$zoom with headroom", tiles * RASTER_TILE_BYTES * 3 / 2 <= budget)
+            }
+        }
+        // The budget is still capped by the heap on a small device.
+        assertEquals(128L * 1024 * 1024, rasterCacheBytes(1440, 3120, 256L * 1024 * 1024))
+        assertEquals(MIN_RASTER_CACHE_BYTES, rasterCacheBytes(100, 100, 16L * 1024 * 1024))
+    }
+
+    @Test
+    fun afterALoadEveryVisibleTileIsCached() = runBlocking {
+        val heap = 512L * 1024 * 1024
+        for ((w, h) in listOf(1080 to 2340, 2560 to 1600)) {
+            for (zoom in listOf(12.0, 12.5)) {
+                val src = FakeSource(bitmapSide = 512) // 1 MiB each, as a retina tile decodes
+                val ld = TileLoader(
+                    src,
+                    TileCache<Bitmap>(rasterCacheBytes(w, h, heap)) { it.allocationByteCount.toLong() },
+                    TileCache<PreparedVectorTile>(vectorCacheBytes(w, h, heap)) { it.bytes },
+                )
+                val tz = TileUtils.renderTileZoom(zoom, 0, 14)!!
+                val r = TileUtils.visibleTileRange(LatLon(46.0, 7.0), zoom, w.toFloat(), h.toFloat(), tz)
+                ld.load(r) { }
+                var missing = 0
+                for (x in r.minX..r.maxX) for (y in r.minY..r.maxY) {
+                    if (ld.raster(tz, TileUtils.wrapTileX(x, tz), y) == null) missing++
+                }
+                val visible = (r.maxX - r.minX + 1) * (r.maxY - r.minY + 1)
+                assertEquals("$missing of $visible visible tiles were evicted at $w x $h z$zoom", 0, missing)
+            }
+        }
+    }
+
+    @Test
+    fun tilesOfTheViewBeingLoadedSurviveEvenWhenTheyExceedTheBudget() = runBlocking {
+        val src = FakeSource(bitmapSide = 512)
+        val ld = loader(src, rasterBytes = 4L * 1024 * 1024)
+        val a = TileRange(10, 0, 4, 0, 3) // 20 tiles = 20 MiB against a 4 MiB budget
+        ld.load(a) { }
+        assertEquals(20, ld.rasters.count)
+        // Moving on releases them: the next view's tiles stay, the old ones are evicted down to the budget.
+        val b = TileRange(10, 100, 101, 100, 100)
+        ld.load(b) { }
+        for (x in 100..101) assertNotNull(ld.raster(10, x, 100))
+        assertTrue("held ${ld.rasters.sizeBytes}", ld.rasters.sizeBytes <= 4L * 1024 * 1024)
     }
 
     // ---- loading ----

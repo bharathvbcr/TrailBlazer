@@ -38,6 +38,29 @@ class MvtParserTest {
     }
 
     @Test
+    fun pointFeaturesComeBackOnePointPerList() {
+        val multi = Geom().moveToMany(409, 819, 2048, 1024, 4096, 0).build()
+        val single = Geom().moveTo(2048, 2048).build()
+        val tile = TileUtils.parseMvt(
+            TileFixtures.mvtTile(
+                TileFixtures.mvtLayer("peaks", listOf(FeatureSpec(1, multi, id = 1), FeatureSpec(1, single, id = 2))),
+            ),
+        )
+        val (m, s) = tile.layers.single().features
+        assertEquals(TileUtils.GeometryType.Point, m.type)
+        assertEquals(3, m.geometry.size, "three points, not one three-point line")
+        assertTrue(m.geometry.all { it.size == 1 })
+        assertEquals(TileUtils.TilePoint(409f / 4096f, 819f / 4096f), m.geometry[0].single())
+        assertEquals(TileUtils.TilePoint(0.5f, 0.25f), m.geometry[1].single())
+        assertEquals(TileUtils.TilePoint(1f, 0f), m.geometry[2].single())
+        assertEquals(1, s.geometry.size)
+        assertEquals(TileUtils.TilePoint(0.5f, 0.5f), s.geometry.single().single())
+        // A two-point multipoint is still two points (it used to come back as one 2-point list).
+        val two = TileUtils.parseMvt(TileFixtures.mvtTile(TileFixtures.mvtLayer("p", listOf(FeatureSpec(1, Geom().moveToMany(1, 1, 5, 5).build())))))
+        assertEquals(2, two.layers.single().features.single().geometry.size)
+    }
+
+    @Test
     fun aGzippedTileDecodesLikeThePlainOne() {
         val plain = TileFixtures.contourTile()
         assertEquals(TileUtils.parseMvt(plain), TileUtils.parseMvt(TileFixtures.gzip(plain)))

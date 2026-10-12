@@ -1,6 +1,7 @@
 package com.trailblazer.core.geo
 
 import com.trailblazer.core.geo.TileFixtures.Entry
+import com.trailblazer.core.budgetMs
 import java.util.Random
 import kotlin.test.Test
 import kotlin.test.assertTrue
@@ -12,7 +13,7 @@ import kotlin.test.fail
  * or throws [MalformedTileException], never anything else, and never takes long.
  */
 class TileFuzzTest {
-    private val perCallBudgetMs = 2_000L
+    private val perCallBudgetMs = budgetMs(2_000L)
 
     private fun hex(b: ByteArray, max: Int = 96): String =
         b.take(max).joinToString("") { "%02x".format(it) } + if (b.size > max) "...(${b.size} bytes)" else ""

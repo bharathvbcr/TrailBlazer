@@ -50,6 +50,7 @@ import com.example.trailblazer.data.GeoFormat
 import com.example.trailblazer.data.IoResult
 import com.example.trailblazer.data.Settings
 import com.example.trailblazer.data.TrackSummary
+import com.example.trailblazer.data.closeInBackground
 import com.example.trailblazer.ui.Fmt
 import com.example.trailblazer.ui.components.GlassCard
 import com.example.trailblazer.ui.components.LabelValue
@@ -204,7 +205,7 @@ fun TrackDetailScreen(nav: Navigator, trackId: String) {
                         // Opened off the main thread; closed when this card leaves the screen.
                         val tileSource by produceState<com.example.trailblazer.data.OfflineTileSource?>(null) {
                             value = ctx.container.offlineMaps.openActiveSource()
-                            awaitDispose { value?.close() }
+                            awaitDispose { value?.closeInBackground() }
                         }
                         Box(modifier = Modifier.fillMaxWidth().height(320.dp).clip(RoundedCornerShape(16.dp))) {
                             OfflineMapCanvas(

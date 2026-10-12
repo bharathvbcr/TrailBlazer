@@ -14,9 +14,10 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
- * Each test here pins a defect found in the first version of the tile code against the formats' own specifications.
- * They use only the long-standing TileUtils entry points, so they can be run against the code as it was before the
- * fixes to confirm that each one fails there.
+ * Each test here pins a defect found in the first version of the tile code against the formats' own specifications,
+ * with one exception: the Hilbert tile-id test pins behaviour that was already correct (it passed on the original code)
+ * and guards it against the spec's table. They use only the long-standing TileUtils entry points, so they can be run
+ * against the code as it was before the fixes to confirm that the others fail there.
  */
 class TileSpecRegressionTest {
 
