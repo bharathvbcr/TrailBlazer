@@ -64,7 +64,7 @@ class StressTest {
         val mark = TimeSource.Monotonic.markNow()
         val r = block()
         val ms = mark.elapsedNow().inWholeMilliseconds
-        assertTrue(ms <= limitMs, "$what took $ms ms (limit $limitMs)")
+        assertTrue(ms <= budgetMs(limitMs), "$what took $ms ms (limit ${budgetMs(limitMs)})")
         return r
     }
 

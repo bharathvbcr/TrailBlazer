@@ -1,5 +1,6 @@
 package com.trailblazer.core.track
 
+import com.trailblazer.core.budgetMs
 import com.trailblazer.core.geo.Geo
 import com.trailblazer.core.geo.LatLon
 import kotlin.test.Test
@@ -90,7 +91,7 @@ class TrackTest {
         assertTrue(simplified.size in 2..2000)
         assertEquals(pts.first(), simplified.first())
         assertEquals(pts.last(), simplified.last())
-        assertTrue(ms < 20_000, "took $ms ms")
+        assertTrue(ms < budgetMs(20_000), "took $ms ms (limit ${budgetMs(20_000)})")
     }
 
     private fun walk(n: Int, seed: Int, start: LatLon = LatLon(46.0, 7.0)): List<Pair<Int, LatLon>> {

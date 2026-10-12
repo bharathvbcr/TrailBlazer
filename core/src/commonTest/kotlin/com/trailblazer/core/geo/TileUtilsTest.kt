@@ -126,7 +126,7 @@ class TileUtilsTest {
         val jpgBytes = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte())
         assertEquals(TileFormat.RasterJpg, TileFormat.detect(jpgBytes))
 
-        val webpBytes = "RIFF1234WEBPVP8 ".toByteArray(Charsets.US_ASCII)
+        val webpBytes = "RIFF1234WEBPVP8 ".encodeToByteArray()
         assertEquals(TileFormat.RasterWebp, TileFormat.detect(webpBytes))
 
         val gzipBytes = byteArrayOf(0x1F.toByte(), 0x8B.toByte(), 0x08, 0x00)

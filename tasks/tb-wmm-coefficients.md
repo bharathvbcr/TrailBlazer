@@ -6,7 +6,7 @@ Bundle World Magnetic Model (WMM) tables for true heading precision
 Task: ft-30f82be81b20b02696901b76a9214db5 (revision 1)
 Updated (Unix seconds): 1791254445
 Type: improvement
-Status: ready
+Status: done
 Severity: low
 Owner: Unassigned
 Priority: 2 (Normal)

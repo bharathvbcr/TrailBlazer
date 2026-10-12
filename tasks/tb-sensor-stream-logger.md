@@ -6,7 +6,7 @@ High-rate raw sensor stream logger and CSV export for field research
 Task: ft-3a3572d5d626940ac362c1f98fbfa1e5 (revision 1)
 Updated (Unix seconds): 1791254495
 Type: feature
-Status: ready
+Status: backlog
 Severity: low
 Owner: Unassigned
 Priority: 2 (Normal)
