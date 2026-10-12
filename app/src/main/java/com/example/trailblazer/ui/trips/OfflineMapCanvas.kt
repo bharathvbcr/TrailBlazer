@@ -1,9 +1,7 @@
 package com.example.trailblazer.ui.trips
 
 import android.graphics.Bitmap
-import android.util.LruCache
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -23,10 +21,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
@@ -38,11 +34,11 @@ import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -52,6 +48,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
@@ -64,10 +61,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.trailblazer.data.DecodedTile
 import com.example.trailblazer.data.OfflineTileSource
 import com.example.trailblazer.data.Waypoint
-import com.example.trailblazer.ui.components.GlassCard
 import com.example.trailblazer.ui.components.TrailIcons
 import com.example.trailblazer.ui.components.stopLetter
 import com.trailblazer.core.geo.LatLon
@@ -76,16 +71,29 @@ import com.trailblazer.core.plot.SeriesPlot
 import com.trailblazer.core.trip.Stop
 import com.trailblazer.core.trip.StopKind
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
+import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
+/** Memory the tile caches may hold, per map view. */
+private const val RASTER_CACHE_BYTES = 24L * 1024 * 1024
+private const val VECTOR_CACHE_BYTES = 16L * 1024 * 1024
+
+/** The widest zoom out the gestures allow; overlays stay visible even where the archive has no tiles. */
+private const val MIN_VIEW_ZOOM = 1.0
+
+/**
+ * Pans and zooms an offline map archive with the user's trips, waypoints, recorded tracks and live position drawn over
+ * it. [routes] are separate trips: each is joined start to end on its own, never to the next one.
+ */
 @Composable
 fun OfflineMapCanvas(
     tileSource: OfflineTileSource? = null,
-    stops: List<Stop> = emptyList(),
+    routes: List<List<Stop>> = emptyList(),
     waypoints: List<Waypoint> = emptyList(),
     tracks: List<List<LatLon>> = emptyList(),
     currentLocation: LatLon? = null,
@@ -102,9 +110,9 @@ fun OfflineMapCanvas(
         val heightPx = with(density) { maxHeight.toPx() }
 
         // Initial center and zoom based on content
-        val allPoints = remember(stops, waypoints, tracks, currentLocation) {
+        val allPoints = remember(routes, waypoints, tracks, currentLocation) {
             buildList {
-                addAll(stops.map { it.position })
+                routes.forEach { r -> addAll(r.map { it.position }) }
                 addAll(waypoints.map { it.position })
                 tracks.forEach { addAll(it) }
                 currentLocation?.let { add(it) }
@@ -119,56 +127,48 @@ fun OfflineMapCanvas(
             }
         }
 
+        // The view may stretch the archive's deepest tiles a few levels ("overzoom") and no further.
+        val maxAllowedZoom = tileSource?.let { TileUtils.maxViewZoom(it.maxZoom) } ?: 19.0
+
         var center by remember { mutableStateOf(initialCenter ?: defaultViewport.first) }
-        var zoom by remember { mutableDoubleStateOf(initialZoom ?: defaultViewport.second) }
+        var zoom by remember { mutableDoubleStateOf((initialZoom ?: defaultViewport.second).coerceIn(MIN_VIEW_ZOOM, maxAllowedZoom)) }
+        LaunchedEffect(maxAllowedZoom) { if (zoom > maxAllowedZoom) zoom = maxAllowedZoom }
 
         // Layer toggles
         var showTrips by remember { mutableStateOf(true) }
         var showWaypoints by remember { mutableStateOf(true) }
         var showTracks by remember { mutableStateOf(true) }
 
-        // LRU caches for tile bitmaps and vector tiles
-        val bitmapCache = remember { LruCache<String, Bitmap>(64) }
-        val vectorCache = remember { LruCache<String, TileUtils.VectorTile>(64) }
+        // Byte-bounded caches and the loader that fills them; a new archive starts from empty ones.
+        val loader = remember(tileSource) {
+            tileSource?.let {
+                TileLoader(
+                    it,
+                    TileCache<Bitmap>(RASTER_CACHE_BYTES) { b -> b.allocationByteCount.toLong() },
+                    TileCache(VECTOR_CACHE_BYTES) { v -> v.estimatedBytes },
+                )
+            }
+        }
         var cacheRevision by remember { mutableIntStateOf(0) }
-        val coroutineScope = rememberCoroutineScope()
 
         val measurer = rememberTextMeasurer()
         val cs = MaterialTheme.colorScheme
 
-        val minAllowedZoom = (tileSource?.minZoom?.toDouble() ?: 1.0).coerceAtLeast(1.0)
-        val maxAllowedZoom = (tileSource?.maxZoom?.toDouble() ?: 18.0).coerceAtMost(20.0)
+        val maxZoomNow by rememberUpdatedState(maxAllowedZoom)
+        val sizeNow by rememberUpdatedState(Pair(widthPx, heightPx))
 
-        // Request missing tiles in background
-        val intZoom = floor(zoom).toInt().coerceIn(minAllowedZoom.toInt(), maxAllowedZoom.toInt())
-        val range = remember(center, zoom, widthPx, heightPx, intZoom) {
-            TileUtils.visibleTileRange(center, zoom, widthPx, heightPx)
-        }
-
-        LaunchedEffect(range, tileSource) {
-            if (tileSource == null) return@LaunchedEffect
-            withContext(Dispatchers.IO) {
-                var loadedAny = false
-                val z = range.zoom
-                for (x in range.minX..range.maxX) {
-                    for (y in range.minY..range.maxY) {
-                        val key = "$z/$x/$y"
-                        if (bitmapCache.get(key) == null && vectorCache.get(key) == null) {
-                            val decoded = tileSource.getTile(z, x, y)
-                            if (decoded != null) {
-                                when (decoded) {
-                                    is DecodedTile.Raster -> bitmapCache.put(key, decoded.bitmap)
-                                    is DecodedTile.Vector -> vectorCache.put(key, decoded.vectorTile)
-                                }
-                                loadedAny = true
-                            }
-                        }
-                    }
+        // Fetch the tiles the view needs. A new view cancels the old one's remaining tiles; decoding is off the main thread.
+        LaunchedEffect(loader, tileSource) {
+            val src = tileSource ?: return@LaunchedEffect
+            val ld = loader ?: return@LaunchedEffect
+            snapshotFlow {
+                val (w, h) = sizeNow
+                TileUtils.renderTileZoom(zoom, src.minZoom, src.maxZoom)?.let { tz ->
+                    TileUtils.visibleTileRange(center, zoom, w, h, tz)
                 }
-                if (loadedAny) {
-                    withContext(Dispatchers.Main) {
-                        cacheRevision++
-                    }
+            }.distinctUntilChanged().collectLatest { range ->
+                if (range != null) {
+                    withContext(Dispatchers.IO) { ld.load(range) { cacheRevision++ } }
                 }
             }
         }
@@ -176,35 +176,26 @@ fun OfflineMapCanvas(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(center, zoom) {
-                    detectTransformGestures { _, pan, zoomChange, _ ->
-                        val oldZoom = zoom
-                        val newZoom = (zoom * zoomChange).coerceIn(1.0, 19.0)
-                        val newCenter = TileUtils.screenToLatLon(
-                            size.width / 2f - pan.x,
-                            size.height / 2f - pan.y,
-                            center,
-                            oldZoom,
-                            size.width.toFloat(),
-                            size.height.toFloat(),
+                .pointerInput(Unit) {
+                    detectTransformGestures { centroid, pan, zoomChange, _ ->
+                        val view = TileUtils.applyGesture(
+                            center, zoom, centroid.x, centroid.y, pan.x, pan.y, zoomChange,
+                            size.width.toFloat(), size.height.toFloat(), MIN_VIEW_ZOOM, maxZoomNow,
                         )
-                        center = newCenter
-                        zoom = newZoom
+                        center = view.center
+                        zoom = view.zoom
                     }
                 }
-                .pointerInput(center, zoom) {
+                .pointerInput(Unit) {
                     detectTapGestures(
-                        onDoubleTap = { tapOffset ->
-                            val tappedPos = TileUtils.screenToLatLon(
-                                tapOffset.x,
-                                tapOffset.y,
-                                center,
-                                zoom,
-                                size.width.toFloat(),
-                                size.height.toFloat(),
+                        onDoubleTap = { tap ->
+                            // Zoom in one level about the tapped point, which stays where it is.
+                            val view = TileUtils.applyGesture(
+                                center, zoom, tap.x, tap.y, 0f, 0f, 2f,
+                                size.width.toFloat(), size.height.toFloat(), MIN_VIEW_ZOOM, maxZoomNow,
                             )
-                            center = tappedPos
-                            zoom = (zoom + 1.0).coerceAtMost(maxAllowedZoom)
+                            center = view.center
+                            zoom = view.zoom
                         },
                     )
                 },
@@ -214,7 +205,7 @@ fun OfflineMapCanvas(
                     .fillMaxSize()
                     .semantics { contentDescription = "Offline topographical map canvas" },
             ) {
-                // Read revision so cache updates trigger recomposition
+                // Read revision so cache updates trigger a redraw
                 @Suppress("UNUSED_VARIABLE")
                 val rev = cacheRevision
 
@@ -225,32 +216,31 @@ fun OfflineMapCanvas(
                 drawTopoGrid(center, zoom, size.width, size.height, cs.outlineVariant.copy(alpha = 0.25f))
 
                 // 3. Render tiles (raster or vector)
-                if (tileSource != null) {
-                    drawTiles(
-                        tileSource = tileSource,
-                        range = range,
-                        center = center,
-                        zoom = zoom,
-                        widthPx = size.width,
-                        heightPx = size.height,
-                        bitmapCache = bitmapCache,
-                        vectorCache = vectorCache,
-                    )
+                if (tileSource != null && loader != null) {
+                    val tz = TileUtils.renderTileZoom(zoom, tileSource.minZoom, tileSource.maxZoom)
+                    if (tz != null) {
+                        drawTiles(
+                            range = TileUtils.visibleTileRange(center, zoom, size.width, size.height, tz),
+                            center = center,
+                            zoom = zoom,
+                            widthPx = size.width,
+                            heightPx = size.height,
+                            loader = loader,
+                        )
+                    }
                 }
 
                 // 4. Draw overlays
                 // Recorded GPS tracks
                 if (showTracks) {
-                    tracks.forEach { path ->
-                        if (path.size >= 2) {
-                            drawTrackPath(path, center, zoom, size.width, size.height, cs.primary)
-                        }
-                    }
+                    tracks.forEach { path -> drawTrackPath(path, center, zoom, size.width, size.height, cs.primary) }
                 }
 
                 // Planned trip routes and stops
-                if (showTrips && stops.isNotEmpty()) {
-                    drawTripRoute(stops, center, zoom, size.width, size.height, cs, measurer)
+                if (showTrips) {
+                    routes.forEach { stops ->
+                        if (stops.isNotEmpty()) drawTripRoute(stops, center, zoom, size.width, size.height, cs, measurer)
+                    }
                 }
 
                 // Saved standalone waypoints
@@ -260,7 +250,7 @@ fun OfflineMapCanvas(
 
                 // Current GPS location
                 if (currentLocation != null) {
-                    drawCurrentLocation(currentLocation, accuracyM, center, zoom, size.width, size.height, cs)
+                    drawCurrentLocation(currentLocation, accuracyM, center, zoom, size.width, size.height)
                 }
 
                 // 5. Draw Scale Bar and North Arrow
@@ -310,7 +300,7 @@ fun OfflineMapCanvas(
                     modifier = Modifier.padding(top = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    if (stops.isNotEmpty()) {
+                    if (routes.any { it.isNotEmpty() }) {
                         FilterChip(
                             selected = showTrips,
                             onClick = { showTrips = !showTrips },
@@ -401,7 +391,7 @@ fun OfflineMapCanvas(
                         onClick = {
                             val fit = TileUtils.fitViewport(allPoints, widthPx.toInt(), heightPx.toInt())
                             center = fit.first
-                            zoom = fit.second
+                            zoom = fit.second.coerceIn(MIN_VIEW_ZOOM, maxAllowedZoom)
                         },
                         containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
                         contentColor = MaterialTheme.colorScheme.onSurface,
@@ -412,7 +402,7 @@ fun OfflineMapCanvas(
                 }
 
                 SmallFloatingActionButton(
-                    onClick = { zoom = (zoom + 1.0).coerceAtMost(maxAllowedZoom) },
+                    onClick = { zoom = (zoom + 1.0).coerceIn(MIN_VIEW_ZOOM, maxAllowedZoom) },
                     containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
                     contentColor = MaterialTheme.colorScheme.onSurface,
                     elevation = FloatingActionButtonDefaults.elevation(2.dp),
@@ -421,27 +411,31 @@ fun OfflineMapCanvas(
                 }
 
                 SmallFloatingActionButton(
-                    onClick = { zoom = (zoom - 1.0).coerceAtLeast(minAllowedZoom) },
+                    onClick = { zoom = (zoom - 1.0).coerceIn(MIN_VIEW_ZOOM, maxAllowedZoom) },
                     containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
                     contentColor = MaterialTheme.colorScheme.onSurface,
                     elevation = FloatingActionButtonDefaults.elevation(2.dp),
                 ) {
-                    Icon(TrailIcons.Close, contentDescription = "Zoom out", modifier = Modifier.size(18.dp))
+                    Icon(TrailIcons.Remove, contentDescription = "Zoom out", modifier = Modifier.size(18.dp))
                 }
             }
         }
     }
 }
 
+/** Grid lines on the edges of the tiles at the current level, so they move with the map rather than the screen. */
 private fun DrawScope.drawTopoGrid(center: LatLon, zoom: Double, widthPx: Float, heightPx: Float, gridColor: Color) {
-    val step = 256f * (2.0.pow(zoom - floor(zoom))).toFloat()
-    if (step <= 0f) return
-    var x = (widthPx / 2f) % step
+    val tz = floor(zoom).toInt().coerceIn(TileUtils.MIN_ZOOM, TileUtils.MAX_ZOOM)
+    val step = (TileUtils.TILE_SIZE * 2.0.pow(zoom - tz)).toFloat()
+    if (!step.isFinite() || step < 8f) return
+    val origin = TileUtils.tileOriginOnScreen(0, 0, tz, center, zoom, widthPx, heightPx)
+    if (!origin.x.isFinite() || !origin.y.isFinite()) return
+    var x = ((origin.x % step) + step) % step
     while (x < widthPx) {
         drawLine(gridColor, Offset(x, 0f), Offset(x, heightPx), strokeWidth = 1f)
         x += step
     }
-    var y = (heightPx / 2f) % step
+    var y = ((origin.y % step) + step) % step
     while (y < heightPx) {
         drawLine(gridColor, Offset(0f, y), Offset(widthPx, y), strokeWidth = 1f)
         y += step
@@ -449,62 +443,69 @@ private fun DrawScope.drawTopoGrid(center: LatLon, zoom: Double, widthPx: Float,
 }
 
 private fun DrawScope.drawTiles(
-    tileSource: OfflineTileSource,
     range: TileUtils.TileRange,
     center: LatLon,
     zoom: Double,
     widthPx: Float,
     heightPx: Float,
-    bitmapCache: LruCache<String, Bitmap>,
-    vectorCache: LruCache<String, TileUtils.VectorTile>,
+    loader: TileLoader,
 ) {
     val z = range.zoom
-    val scaleFactor = 2.0.pow(zoom - z)
-    val tileSizeOnScreen = (TileUtils.TILE_SIZE * scaleFactor).toFloat()
+    val tileSize = (TileUtils.TILE_SIZE * 2.0.pow(zoom - z)).toFloat()
 
     for (x in range.minX..range.maxX) {
+        val wx = TileUtils.wrapTileX(x, z)
         for (y in range.minY..range.maxY) {
-            val key = "$z/$x/$y"
-            val bounds = TileUtils.tileBounds(x, y, z)
-            val topLeftScreen = TileUtils.latLonToScreen(LatLon(bounds.maxLat, bounds.minLon), center, zoom, widthPx, heightPx)
+            val origin = TileUtils.tileOriginOnScreen(x, y, z, center, zoom, widthPx, heightPx)
+            val left = floor(origin.x).toInt()
+            val top = floor(origin.y).toInt()
+            // Neighbouring tiles share an edge pixel instead of leaving a hairline gap between rounded sizes.
+            val dst = IntSize(ceil(origin.x + tileSize).toInt() - left, ceil(origin.y + tileSize).toInt() - top)
 
-            // 1. Try drawing cached raster tile
-            val bmp = bitmapCache.get(key)
+            // 1. The tile itself, raster or vector (contours / trails).
+            val bmp = loader.raster(z, wx, y)
             if (bmp != null) {
-                drawImage(
-                    image = bmp.asImageBitmap(),
-                    dstOffset = IntOffset(topLeftScreen.x.roundToInt(), topLeftScreen.y.roundToInt()),
-                    dstSize = IntSize(tileSizeOnScreen.roundToInt(), tileSizeOnScreen.roundToInt()),
-                )
+                drawImage(image = bmp.asImageBitmap(), dstOffset = IntOffset(left, top), dstSize = dst)
                 continue
             }
-
-            // 2. Try drawing cached vector tile (contours / trails)
-            val vt = vectorCache.get(key)
+            val vt = loader.vector(z, wx, y)
             if (vt != null) {
-                drawVectorTile(vt, topLeftScreen.x, topLeftScreen.y, tileSizeOnScreen)
+                drawVectorTile(vt, origin.x, origin.y, tileSize)
                 continue
             }
 
-            // 3. Fallback: try parent tile at z - 1 if available in cache
-            if (z > 0) {
-                val pZ = z - 1
-                val pX = x / 2
-                val pY = y / 2
-                val pKey = "$pZ/$pX/$pY"
-                val pBmp = bitmapCache.get(pKey)
+            // 2. Fallback: the nearest cached ancestor, stretched to fill this tile.
+            var ax = x
+            var ay = y
+            for (d in 1..TileLoader.ANCESTOR_DEPTH) {
+                val az = z - d
+                if (az < 0) break
+                ax = ax shr 1
+                ay = ay shr 1
+                val pw = TileUtils.wrapTileX(ax, az)
+                val span = 1 shl d
+                val pBmp = loader.raster(az, pw, ay)
                 if (pBmp != null) {
-                    val subX = (x % 2) * (pBmp.width / 2)
-                    val subY = (y % 2) * (pBmp.height / 2)
-                    val subW = pBmp.width / 2
-                    val subH = pBmp.height / 2
-                    drawImage(
-                        image = pBmp.asImageBitmap(),
-                        srcOffset = IntOffset(subX, subY),
-                        srcSize = IntSize(subW, subH),
-                        dstOffset = IntOffset(topLeftScreen.x.roundToInt(), topLeftScreen.y.roundToInt()),
-                        dstSize = IntSize(tileSizeOnScreen.roundToInt(), tileSizeOnScreen.roundToInt()),
-                    )
+                    val subW = pBmp.width / span
+                    val subH = pBmp.height / span
+                    if (subW > 0 && subH > 0) {
+                        drawImage(
+                            image = pBmp.asImageBitmap(),
+                            srcOffset = IntOffset((wx and (span - 1)) * subW, (y and (span - 1)) * subH),
+                            srcSize = IntSize(subW, subH),
+                            dstOffset = IntOffset(left, top),
+                            dstSize = dst,
+                        )
+                    }
+                    break
+                }
+                val pVec = loader.vector(az, pw, ay)
+                if (pVec != null) {
+                    val parent = TileUtils.tileOriginOnScreen(ax, ay, az, center, zoom, widthPx, heightPx)
+                    clipRect(left.toFloat(), top.toFloat(), (left + dst.width).toFloat(), (top + dst.height).toFloat()) {
+                        drawVectorTile(pVec, parent.x, parent.y, tileSize * span)
+                    }
+                    break
                 }
             }
         }
@@ -547,13 +548,9 @@ private fun DrawScope.drawVectorTile(
             for (line in feature.geometry) {
                 if (line.size < 2) continue
                 val path = Path()
-                val firstX = tileScreenX + line[0].x * tileSize
-                val firstY = tileScreenY + line[0].y * tileSize
-                path.moveTo(firstX, firstY)
+                path.moveTo(tileScreenX + line[0].x * tileSize, tileScreenY + line[0].y * tileSize)
                 for (i in 1 until line.size) {
-                    val px = tileScreenX + line[i].x * tileSize
-                    val py = tileScreenY + line[i].y * tileSize
-                    path.lineTo(px, py)
+                    path.lineTo(tileScreenX + line[i].x * tileSize, tileScreenY + line[i].y * tileSize)
                 }
                 drawPath(path, color, style = Stroke(width = strokeW, cap = StrokeCap.Round))
             }
@@ -562,29 +559,29 @@ private fun DrawScope.drawVectorTile(
 }
 
 private fun DrawScope.drawTrackPath(
-    path: List<LatLon>,
+    points: List<LatLon>,
     center: LatLon,
     zoom: Double,
     widthPx: Float,
     heightPx: Float,
     primaryColor: Color,
 ) {
-    val p = Path()
-    val first = TileUtils.latLonToScreen(path.first(), center, zoom, widthPx, heightPx)
-    p.moveTo(first.x, first.y)
-    for (i in 1 until path.size) {
-        val pt = TileUtils.latLonToScreen(path[i], center, zoom, widthPx, heightPx)
-        p.lineTo(pt.x, pt.y)
+    if (points.isEmpty()) return
+    // Sub-pixel neighbours are dropped; first and last points are kept exactly.
+    val xy = TileUtils.projectPolyline(points, center, zoom, widthPx, heightPx)
+    val n = xy.size / 2
+    if (n == 0) return
+    if (n >= 2) {
+        val p = Path()
+        p.moveTo(xy[0], xy[1])
+        for (i in 1 until n) p.lineTo(xy[i * 2], xy[i * 2 + 1])
+        // Draw track line with slight glow
+        drawPath(p, primaryColor.copy(alpha = 0.35f), style = Stroke(width = 8f, cap = StrokeCap.Round))
+        drawPath(p, primaryColor, style = Stroke(width = 4f, cap = StrokeCap.Round))
     }
-    // Draw track line with slight glow
-    drawPath(p, primaryColor.copy(alpha = 0.35f), style = Stroke(width = 8f, cap = StrokeCap.Round))
-    drawPath(p, primaryColor, style = Stroke(width = 4f, cap = StrokeCap.Round))
-
-    // Start marker (Green)
-    drawCircle(Color(0xFF2ECC71), 7f, Offset(first.x, first.y))
-    // End marker (Red)
-    val last = TileUtils.latLonToScreen(path.last(), center, zoom, widthPx, heightPx)
-    drawCircle(Color(0xFFE74C3C), 7f, Offset(last.x, last.y))
+    // Start marker (Green) and end marker (Red); a one-fix track is just its start.
+    drawCircle(Color(0xFF2ECC71), 7f, Offset(xy[0], xy[1]))
+    if (n >= 2) drawCircle(Color(0xFFE74C3C), 7f, Offset(xy[xy.size - 2], xy[xy.size - 1]))
 }
 
 private fun DrawScope.drawTripRoute(
@@ -665,7 +662,6 @@ private fun DrawScope.drawCurrentLocation(
     zoom: Double,
     widthPx: Float,
     heightPx: Float,
-    cs: androidx.compose.material3.ColorScheme,
 ) {
     val pt = TileUtils.latLonToScreen(pos, center, zoom, widthPx, heightPx)
     val centerOffset = Offset(pt.x, pt.y)
@@ -693,6 +689,7 @@ private fun DrawScope.drawScaleBar(
     distanceFormatter: ((Double) -> String)?,
 ) {
     val mpp = TileUtils.metersPerPixel(center.lat, zoom)
+    if (!mpp.isFinite() || mpp <= 0.0) return
     val targetPx = (widthPx / 4f).coerceIn(60f, 200f)
     val targetDistM = targetPx * mpp
     val niceDistM = SeriesPlot.niceLength(targetDistM)

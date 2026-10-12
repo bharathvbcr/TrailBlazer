@@ -59,7 +59,7 @@ class OfflineMapCanvasTest {
         rule.setContent {
             OfflineMapCanvas(
                 tileSource = null,
-                stops = stops,
+                routes = listOf(stops),
                 waypoints = waypoints,
                 tracks = tracks,
                 currentLocation = LatLon(46.01, 7.01),
@@ -102,5 +102,91 @@ class OfflineMapCanvasTest {
 
         rule.onNodeWithContentDescription("Offline topographical map canvas").assertIsDisplayed()
         rule.onNodeWithText("Test Topo Map (z12.0)").assertIsDisplayed()
+    }
+
+    private class RecordingSource(
+        override val minZoom: Int,
+        override val maxZoom: Int,
+        private val fail: Boolean = false,
+    ) : OfflineTileSource {
+        val requests = java.util.concurrent.CopyOnWriteArrayList<Triple<Int, Int, Int>>()
+        override val file = File("/dummy/rec.mbtiles")
+        override val name = "Recording"
+        override val format = TileUtils.TileFormat.RasterPng
+        override val bounds: TileUtils.TileBounds? = null
+        override fun getRawTile(zoom: Int, x: Int, y: Int): ByteArray? = null
+        override fun getTile(zoom: Int, x: Int, y: Int): DecodedTile? {
+            requests.add(Triple(zoom, x, y))
+            if (fail) throw IllegalStateException("corrupt archive")
+            return DecodedTile.Raster(Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888))
+        }
+        override fun close() {}
+    }
+
+    @Test
+    fun aViewDeeperThanTheArchiveStretchesItsDeepestTiles() {
+        val src = RecordingSource(minZoom = 8, maxZoom = 12)
+        rule.setContent {
+            OfflineMapCanvas(tileSource = src, initialCenter = LatLon(46.0, 7.0), initialZoom = 20.0)
+        }
+        rule.waitUntil(10_000) { src.requests.isNotEmpty() }
+        rule.waitForIdle()
+        assertTrue("never asked past z12: ${src.requests.map { it.first }.toSet()}", src.requests.all { it.first == 12 })
+        // The HUD shows the view clamped to the archive's deepest level + 3 overzoom levels, not 20.
+        rule.onNodeWithText("Recording (z15.0)").assertIsDisplayed()
+        assertTrue("a handful of tiles for one screen, not ${src.requests.size}", src.requests.size <= 80)
+    }
+
+    @Test
+    fun aViewFarOutsideTheArchiveRequestsNothing() {
+        val src = RecordingSource(minZoom = 10, maxZoom = 14)
+        rule.setContent {
+            OfflineMapCanvas(tileSource = src, initialCenter = LatLon(46.0, 7.0), initialZoom = 4.0)
+        }
+        rule.onNodeWithText("Recording (z4.0)").assertIsDisplayed()
+        rule.waitForIdle()
+        Thread.sleep(300)
+        assertTrue("no tile exists at z4: ${src.requests}", src.requests.isEmpty())
+    }
+
+    @Test
+    fun aSourceThatFailsOnEveryTileLeavesTheMapUsable() {
+        val src = RecordingSource(minZoom = 0, maxZoom = 14, fail = true)
+        rule.setContent {
+            OfflineMapCanvas(
+                tileSource = src,
+                tracks = listOf(listOf(LatLon(46.0, 7.0))),
+                initialCenter = LatLon(46.0, 7.0),
+                initialZoom = 12.0,
+            )
+        }
+        rule.waitUntil(10_000) { src.requests.isNotEmpty() }
+        rule.waitForIdle()
+        rule.onNodeWithContentDescription("Offline topographical map canvas").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Zoom in").performClick()
+        rule.onNodeWithText("Recording (z13.0)").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Zoom out").performClick()
+        rule.onNodeWithText("Recording (z12.0)").assertIsDisplayed()
+    }
+
+    @Test
+    fun overlaysTolerateEmptySinglePointAndAntimeridianTracks() {
+        rule.setContent {
+            OfflineMapCanvas(
+                tileSource = null,
+                tracks = listOf(
+                    emptyList(),
+                    listOf(LatLon(10.0, 10.0)),
+                    listOf(LatLon(-17.0, 179.9), LatLon(-17.0, -179.9), LatLon(-17.1, 179.95)),
+                ),
+                routes = listOf(emptyList(), listOf(Stop("a", "A", StopKind.Start, LatLon(-17.0, 179.9)), Stop("b", "B", StopKind.End, LatLon(-17.0, -179.9)))),
+                waypoints = listOf(Waypoint("w", "Pole", LatLon(90.0, 0.0), 0.0, 1L, null)),
+                currentLocation = LatLon(-85.0, 180.0),
+                accuracyM = 1e9,
+            )
+        }
+        rule.waitForIdle()
+        rule.onNodeWithContentDescription("Offline topographical map canvas").assertIsDisplayed()
+        rule.onNodeWithText("Tracks").assertIsDisplayed()
     }
 }
