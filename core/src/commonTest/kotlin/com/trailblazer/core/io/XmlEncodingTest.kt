@@ -53,12 +53,36 @@ class XmlEncodingTest {
     }
 
     @Test
-    fun unsupportedEncodingsAreRefusedWithAClearMessage() {
-        for (name in listOf("EBCDIC", "KOI8-R", "Shift_JIS", "x-unknown", "")) {
-            val e = assertFailsWith<XmlFormatException>(name) { XmlEncoding.detect(decl(name)) }
-            assertTrue(e.message!!.contains("unsupported encoding"), e.message)
+    fun otherEncodingsArePassedThroughForThePlatformToDecodeOrRefuse() {
+        // Not on the canonical list, so the declared name goes through unchanged (Shift_JIS, KOI8-R and the like
+        // imported before the detector existed and must keep doing so).
+        for (name in listOf("KOI8-R", "Shift_JIS", "EUC-JP", "GB18030", "Big5", "windows-1251", "x-unknown")) {
+            assertEquals(XmlEncoding(name), XmlEncoding.detect(decl(name)), name)
         }
-        assertTrue(assertFailsWith<XmlFormatException> { XmlEncoding.detect(decl("A".repeat(3_000))) }.message!!.length < 200)
+    }
+
+    @Test
+    fun malformedEncodingNamesAreRefused() {
+        for (name in listOf("", "a b", "9lives", "x;y", "A".repeat(100))) {
+            val e = assertFailsWith<XmlFormatException>(name) { XmlEncoding.detect(decl(name)) }
+            assertTrue(e.message!!.contains("invalid encoding name"), e.message)
+        }
+        assertTrue(assertFailsWith<XmlFormatException> { XmlEncoding.detect(decl("9" + "A".repeat(3_000))) }.message!!.length < 200)
+    }
+
+    @Test
+    fun onlyARealEncodingAttributeIsRead() {
+        assertEquals(XmlEncoding("UTF-8"), XmlEncoding.detect(ascii("<?xml version=\"1.0\" foo-encoding=\"KOI8-R\"?><gpx/>")))
+        assertEquals(XmlEncoding("UTF-8"), XmlEncoding.detect(ascii("<?xml version=\"1.0\" xencoding=\"KOI8-R\"?><gpx/>")))
+        assertEquals(XmlEncoding("KOI8-R"), XmlEncoding.detect(ascii("<?xml foo-encoding=\"x\" encoding=\"KOI8-R\"?><gpx/>")))
+        assertEquals(XmlEncoding("KOI8-R"), XmlEncoding.detect(ascii("<?xml encoding=\"KOI8-R\"?><gpx/>")))
+    }
+
+    @Test
+    fun anOutOfRangeLengthIsClamped() {
+        assertEquals(XmlEncoding("UTF-8"), XmlEncoding.detect(decl("KOI8-R"), length = -1))
+        assertEquals(XmlEncoding("UTF-8"), XmlEncoding.detect(decl("KOI8-R"), length = 0))
+        assertEquals(XmlEncoding("KOI8-R"), XmlEncoding.detect(decl("KOI8-R"), length = Int.MAX_VALUE))
     }
 
     @Test

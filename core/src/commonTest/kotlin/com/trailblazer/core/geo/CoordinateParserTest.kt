@@ -66,6 +66,14 @@ class CoordinateParserTest {
         assertAt("33.5S 151.2E", -33.5, 151.2)
         assertAt("33d52mS 151d12mE", -33.866667, 151.2)
         assertAt("33 52 S 151 12 E", -33.866667, 151.2)
+        // 'S' after degrees only (no minutes marker before it) is south, never seconds.
+        assertAt("33d52S, 151d12E", -33.866667, 151.2)
+        assertAt("33d 52S, 151d 12E", -33.866667, 151.2)
+        assertAt("33d52S 151d12E", -33.866667, 151.2)
+        assertAt("33d52.5S 151d12E", -33.875, 151.2)
+        // After both degrees and minutes are marked, a trailing S is the seconds marker (the documented reading).
+        assertAt("33d52m10S, 151d12m30E", 33.869444, 151.208333)
+        assertAt("40d26m46s, -74.0", 40.446111, -74.0)
         // A single axis is not a position, whichever way 'S' would be read.
         assertEquals(CoordinateParse.NotRecognized, CoordinateParser.parse("46S"))
         assertEquals(CoordinateParse.NotRecognized, CoordinateParser.parse("40d26m46s"))

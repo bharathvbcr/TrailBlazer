@@ -7,12 +7,16 @@ class XmlFormatException(message: String) : Exception(message)
  * (so XXE and billion-laughs payloads are inert), and it bounds name and total-event sizes.
  * Only the five predefined entities and numeric character references are decoded.
  *
- * Character data arrives as a run of [Event.Text] events of at most about [TEXT_CHUNK] chars each (entities and
- * surrogate pairs are never split), so a consumer that streams a very long value, such as a KML `<coordinates>`
- * list, needs no memory proportional to its length. A consumer that buffers a value bounds the buffer with
- * [appendBounded].
+ * Character data arrives as a run of [Event.Text] events of about [TEXT_CHUNK] chars each (an entity or surrogate
+ * pair is never split), so a consumer that streams a very long value, such as a KML `<coordinates>` list, needs no
+ * memory proportional to its length. A consumer that buffers a value bounds the buffer with [appendBounded]. The
+ * whole document is bounded too: reading more than [maxChars] characters fails with an [XmlFormatException].
  */
-class XmlPull(private val reader: Reader, private val maxEvents: Long = 5_000_000L) {
+class XmlPull(
+    private val reader: Reader,
+    private val maxEvents: Long = 5_000_000L,
+    private val maxChars: Long = DEFAULT_MAX_CHARS,
+) {
     sealed interface Event {
         data class Start(val name: String, val attrs: Map<String, String>, val selfClosing: Boolean) : Event
         data class End(val name: String) : Event
@@ -27,16 +31,15 @@ class XmlPull(private val reader: Reader, private val maxEvents: Long = 5_000_00
     private var pendingEnd: String? = null
     private var inCdata = false
     private var cdataCarry = ""
-    var encoding: String? = null
-        private set
-    var version: String? = null
-        private set
+    private var charsRead = 0L
 
     private fun peek(): Int {
         if (pos >= len) {
             len = reader.read(buf)
             pos = 0
             if (len <= 0) { len = 0; return -1 }
+            charsRead += len
+            if (charsRead > maxChars) throw XmlFormatException("document larger than $maxChars characters")
         }
         return buf[pos].code
     }
@@ -105,9 +108,9 @@ class XmlPull(private val reader: Reader, private val maxEvents: Long = 5_000_00
                     read()
                     val target = readName()
                     if (target.equals("xml", ignoreCase = true)) {
-                        val attrs = readProcessingInstructionAttrs()
-                        encoding = attrs["encoding"]
-                        version = attrs["version"]
+                        // Read only to check the declaration is well formed: the bytes are decoded before they get
+                        // here, so its encoding is XmlEncoding's business, not ours.
+                        readProcessingInstructionAttrs()
                     } else {
                         skipUntil("?>")
                     }
@@ -160,10 +163,12 @@ class XmlPull(private val reader: Reader, private val maxEvents: Long = 5_000_00
                 inCdata = false
                 return sb.substring(0, sb.length - 3)
             }
-            // Hold back the last two chars: they may be the start of the terminator.
+            // Hold back the last two chars, which may be the start of the terminator; and one more when the cut
+            // would fall between the halves of a surrogate pair.
             if (sb.length >= TEXT_CHUNK + 2) {
-                cdataCarry = sb.substring(sb.length - 2)
-                return sb.substring(0, sb.length - 2)
+                val keep = if (sb[sb.length - 3].isHighSurrogate()) 3 else 2
+                cdataCarry = sb.substring(sb.length - keep)
+                return sb.substring(0, sb.length - keep)
             }
         }
     }
@@ -248,16 +253,31 @@ class XmlPull(private val reader: Reader, private val maxEvents: Long = 5_000_00
         /** Characters per [Event.Text]; longer character data is delivered as several events. */
         const val TEXT_CHUNK = 32_768
 
-        /** Longest value a consumer buffers (a name, description, number or timestamp); longer text is cut here. */
+        /** Longest free text (a name or description) a consumer buffers; longer text is cut here. */
         const val MAX_TEXT = 1_000_000
+
+        /** Longest value (a number, timestamp or coordinate tuple) a consumer accepts; longer is an error. */
+        const val MAX_VALUE = 256
+
+        /** Characters one document may contain before it is refused, whatever its structure. */
+        const val DEFAULT_MAX_CHARS = 400_000_000L
 
         private const val MAX_ENTITY = 12
 
-        /** Appends [chunk] to [sb] without letting it grow past [MAX_TEXT]. */
-        fun appendBounded(sb: StringBuilder, chunk: String) {
-            val room = MAX_TEXT - sb.length
-            if (room <= 0) return
-            sb.append(if (chunk.length <= room) chunk else chunk.substring(0, room))
+        /**
+         * Appends [chunk] to [sb] without letting it grow past [limit] chars, never ending on the first half of a
+         * surrogate pair. Returns true when the whole chunk fit, false when some of it was cut.
+         */
+        fun appendBounded(sb: StringBuilder, chunk: String, limit: Int = MAX_TEXT): Boolean {
+            val room = limit - sb.length
+            if (chunk.length <= room) {
+                sb.append(chunk)
+                return true
+            }
+            var take = room.coerceAtLeast(0)
+            if (take > 0 && chunk[take - 1].isHighSurrogate()) take--
+            sb.append(chunk.substring(0, take))
+            return false
         }
 
         fun decodeEntities(s: String): String {

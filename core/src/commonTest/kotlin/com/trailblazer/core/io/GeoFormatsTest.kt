@@ -212,8 +212,9 @@ class GeoFormatsTest {
 
     @Test
     fun kmlCoordinateListLongerThanTheOldTextCapIsStreamed() {
-        // 1_000 points, each followed by 5_000 spaces: five million characters in one <coordinates> element, which
-        // the old single-event reader refused beyond one million. (GeoFormatsStreamingJvmTest goes past 40 million.)
+        // 1_000 points, each followed by 5_000 spaces: five million characters in one <coordinates> element, read
+        // as a stream. (GeoFormatsStreamingJvmTest goes past 60 million, beyond the 40-million cap the reader had
+        // before it streamed coordinates.)
         val padding = " ".repeat(5_000)
         val doc = KmlReader.read(StringReader(lineStringKml(1_000) { "7.0,46.0,1.0$padding" }))
         assertEquals(1_000, doc.routes.single().points.size)
@@ -306,6 +307,69 @@ class GeoFormatsTest {
         val wp = KmlReader.read(StringReader(kml)).waypoints.single()
         assertEquals(XmlPull.MAX_TEXT, wp.description!!.length)
         assertEquals("D", wp.name)
+    }
+
+    @Test
+    fun anOverlongValueIsAnErrorNotADroppedField() {
+        val pad = " ".repeat(XmlPull.MAX_VALUE + 10)
+        // A <time> that is cut would be read as missing and silently turn a track into a route.
+        for (field in listOf("ele", "time", "speed")) {
+            val gpx = "<gpx><wpt lat=\"1\" lon=\"2\"><$field>${pad}5</$field></wpt></gpx>"
+            val e = assertFailsWith<XmlFormatException>(field) { GpxReader.read(StringReader(gpx)) }
+            assertTrue(e.message!!.contains("<$field>"), e.message)
+        }
+        val whenKml = "<kml xmlns:gx=\"g\"><Placemark><gx:Track><when>${pad}2026-01-01T00:00:00Z</when></gx:Track></Placemark></kml>"
+        assertTrue(assertFailsWith<XmlFormatException> { KmlReader.read(StringReader(whenKml)) }.message!!.contains("<when>"))
+        val coordKml = "<kml xmlns:gx=\"g\"><Placemark><gx:Track><gx:coord>${pad}7 46</gx:coord></gx:Track></Placemark></kml>"
+        assertTrue(assertFailsWith<XmlFormatException> { KmlReader.read(StringReader(coordKml)) }.message!!.contains("<coord>"))
+        // At the limit it still reads.
+        val ok = "<gpx><wpt lat=\"1\" lon=\"2\"><ele>${" ".repeat(XmlPull.MAX_VALUE - 1)}5</ele></wpt></gpx>"
+        assertEquals(5.0, GpxReader.read(StringReader(ok)).waypoints.single().elevationM!!, 1e-9)
+    }
+
+    @Test
+    fun cuttingFreeTextNeverLeavesHalfASurrogatePair() {
+        for (before in XmlPull.MAX_TEXT - 3..XmlPull.MAX_TEXT + 1) {
+            val kml = "<kml><Placemark><name>${"n".repeat(before)}😀tail</name><Point><coordinates>7,46</coordinates></Point></Placemark></kml>"
+            val name = KmlReader.read(StringReader(kml)).waypoints.single().name!!
+            assertTrue(name.length <= XmlPull.MAX_TEXT, "length ${name.length}")
+            assertFalse(name.last().isHighSurrogate(), "ends on half a pair after $before chars")
+        }
+    }
+
+    @Test
+    fun aDocumentPastTheCharacterBudgetIsRefused() {
+        val xml = "<a>" + "x".repeat(50_000) + "</a>"
+        val e = assertFailsWith<XmlFormatException> {
+            val pull = XmlPull(StringReader(xml), maxChars = 10_000)
+            while (pull.next() !is XmlPull.Event.EndDocument) Unit
+        }
+        assertTrue(e.message!!.contains("larger than 10000 characters"), e.message)
+        // Exactly the budget is fine.
+        val pull = XmlPull(StringReader("<a>xy</a>"), maxChars = 9)
+        while (pull.next() !is XmlPull.Event.EndDocument) Unit
+    }
+
+    @Test
+    fun textEventsNeverSplitASurrogatePairInPlainTextOrCdata() {
+        for (pad in XmlPull.TEXT_CHUNK - 4..XmlPull.TEXT_CHUNK + 4) {
+            for (wrap in listOf("%s", "<![CDATA[%s]]>")) {
+                val pull = XmlPull(StringReader("<a>" + wrap.replace("%s", "x".repeat(pad) + "😀😀y") + "</a>"))
+                val texts = ArrayList<String>()
+                while (true) {
+                    when (val e = pull.next()) {
+                        is XmlPull.Event.Text -> texts += e.text
+                        is XmlPull.Event.EndDocument -> break
+                        else -> Unit
+                    }
+                }
+                for (t in texts) {
+                    assertFalse(t.isNotEmpty() && t.last().isHighSurrogate(), "chunk ends on half a pair (pad $pad, $wrap)")
+                    assertFalse(t.isNotEmpty() && t.first().isLowSurrogate(), "chunk starts on half a pair (pad $pad, $wrap)")
+                }
+                assertEquals("x".repeat(pad) + "😀😀y", texts.joinToString(""))
+            }
+        }
     }
 
     @Test

@@ -33,6 +33,25 @@ private val WHITESPACE_REGEX = Regex("\\s+")
 /** GPX elements whose text is read; the text of every other element is skipped, not buffered. */
 private val GPX_TEXT = setOf("name", "desc", "cmt", "ele", "time", "speed")
 
+/** The GPX elements in [GPX_TEXT] that hold a number or timestamp rather than free text. */
+private val GPX_VALUES = setOf("ele", "time", "speed")
+
+/** The KML elements in [KML_TEXT] that hold a timestamp or coordinate tuple rather than free text. */
+private val KML_VALUES = setOf("when", "coord")
+
+/**
+ * Buffers [chunk] of the [element] being read. Free text (a name or description) is cut at [XmlPull.MAX_TEXT]; a value
+ * (number, timestamp, tuple) cannot be cut and still mean anything, so one past [XmlPull.MAX_VALUE] is an error, not a
+ * silently dropped field.
+ */
+private fun bufferText(sb: StringBuilder, chunk: String, element: String, values: Set<String>) {
+    if (element !in values) {
+        XmlPull.appendBounded(sb, chunk)
+    } else if (!XmlPull.appendBounded(sb, chunk, XmlPull.MAX_VALUE)) {
+        throw XmlFormatException("<$element> value longer than ${XmlPull.MAX_VALUE} characters")
+    }
+}
+
 /** KML elements whose text is read as a buffered value. `coordinates` is not here: it is streamed token by token. */
 private val KML_TEXT = setOf("name", "description", "when", "coord")
 
@@ -123,7 +142,7 @@ object GpxReader {
         while (true) {
             when (val e = xml.next()) {
                 is XmlPull.Event.EndDocument -> break
-                is XmlPull.Event.Text -> if (stack.lastOrNull() in GPX_TEXT) XmlPull.appendBounded(text, e.text)
+                is XmlPull.Event.Text -> stack.lastOrNull()?.let { if (it in GPX_TEXT) bufferText(text, e.text, it, GPX_VALUES) }
                 is XmlPull.Event.Start -> {
                     val n = local(e.name)
                     stack += n
@@ -275,7 +294,7 @@ object KmlReader {
                 is XmlPull.Event.EndDocument -> break
                 is XmlPull.Event.Text -> {
                     val top = stack.lastOrNull()
-                    if (top == "coordinates") stream?.feed(e.text) else if (top in KML_TEXT) XmlPull.appendBounded(text, e.text)
+                    if (top == "coordinates") stream?.feed(e.text) else if (top != null && top in KML_TEXT) bufferText(text, e.text, top, KML_VALUES)
                 }
                 is XmlPull.Event.Start -> {
                     val n = local(e.name)

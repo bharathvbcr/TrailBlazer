@@ -63,8 +63,17 @@ internal fun openXmlReader(input: InputStream): PushbackReader {
     bis.reset()
 
     val encoding = XmlEncoding.detect(head, filled)
+    val supported = try {
+        Charset.isSupported(encoding.charset)
+    } catch (_: IllegalArgumentException) {
+        false
+    }
+    if (!supported) throw XmlFormatException("unsupported encoding '${encoding.charset.take(40)}': this device cannot decode it")
+    val charset = Charset.forName(encoding.charset)
     bis.skipExactly(encoding.bomBytes)
-    return PushbackReader(BufferedReader(InputStreamReader(bis, Charset.forName(encoding.charset))), 8192)
+    // Bytes that are invalid in the declared encoding decode to U+FFFD: a stray bad byte in a name is better than
+    // losing the whole file.
+    return PushbackReader(BufferedReader(InputStreamReader(bis, charset)), 8192)
 }
 
 private fun InputStream.skipExactly(count: Int) {

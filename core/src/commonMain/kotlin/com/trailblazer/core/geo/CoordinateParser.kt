@@ -213,18 +213,20 @@ object CoordinateParser {
         var i = 0
         val t = s.uppercase()
             .replace("''", "\"").replace('′', '\'').replace('’', '\'').replace('″', '"').replace('”', '"')
-        var seenUnitLetter = false
+        // The unit letter ('D' degrees, 'M' minutes) most recently seen on the current axis, or none.
+        var lastUnit = ' '
         while (i < t.length) {
             val c = t[i]
             when {
                 c.isWhitespace() || c == '°' || c == 'º' || c == '˚' || c == '\'' || c == '"' || c == ':' -> i++
-                c == ',' || c == ';' -> { out += Tok.Sep; seenUnitLetter = false; i++ }
-                // Treat a trailing 'S' directly after a number plus M/D as seconds unit marker.
-                c == 'S' && seenUnitLetter && i > 0 && (t[i - 1].isDigit() || t[i - 1] == '.') -> {
-                    seenUnitLetter = false
+                c == ',' || c == ';' -> { out += Tok.Sep; lastUnit = ' '; i++ }
+                // 'S' directly after a number is the seconds marker only once minutes have been marked ("46s" in
+                // "40d26m46s"). After degrees alone ("33d52S") or with no unit at all ("46S") it is south.
+                c == 'S' && lastUnit == 'M' && i > 0 && (t[i - 1].isDigit() || t[i - 1] == '.') -> {
+                    lastUnit = ' '
                     i++
                 }
-                c in "NSEW" -> { out += Tok.Hemi(c); seenUnitLetter = false; i++ }
+                c in "NSEW" -> { out += Tok.Hemi(c); lastUnit = ' '; i++ }
                 c == '-' || c == '+' || c.isDigit() || c == '.' -> {
                     val start = i
                     if (c == '-' || c == '+') i++
@@ -234,7 +236,7 @@ object CoordinateParser {
                     out += Tok.Num(abs(v), txt.startsWith("-"))
                 }
                 // Letters used as unit markers, e.g. 40d26m46s.
-                c == 'D' || c == 'M' -> { seenUnitLetter = true; i++ }
+                c == 'D' || c == 'M' -> { lastUnit = c; i++ }
                 else -> return null
             }
         }

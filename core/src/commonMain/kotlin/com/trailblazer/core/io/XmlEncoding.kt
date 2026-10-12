@@ -3,10 +3,11 @@ package com.trailblazer.core.io
 /**
  * How to turn an XML document's bytes into characters: the [charset] name and how many leading [bomBytes] to skip.
  *
- * Detection lives here, in common code, so every platform agrees on which encodings are accepted; the platform only
- * maps [charset] to its own decoder (on Android, `Charset.forName`). It follows the XML spec's order: a byte-order
- * mark decides first, then the `encoding` of the `<?xml ?>` declaration, then UTF-8. An encoding outside the
- * supported set is refused with an [XmlFormatException] rather than decoded into garbage.
+ * Detection lives here, in common code, so every platform reads the same encoding from the same bytes; the platform
+ * maps [charset] to its own decoder (on Android, `Charset.forName`) and refuses a name it cannot decode. It follows the
+ * XML spec's order: a byte-order mark decides first, then the `encoding` of the `<?xml ?>` declaration, then UTF-8.
+ * The common encodings get one canonical name; any other declared name is passed through unchanged. A 16/32-bit
+ * declaration that the bytes contradict is refused with an [XmlFormatException] rather than decoded into garbage.
  */
 data class XmlEncoding(val charset: String, val bomBytes: Int = 0) {
     companion object {
@@ -23,7 +24,11 @@ data class XmlEncoding(val charset: String, val bomBytes: Int = 0) {
         /** How many leading bytes [detect] needs to see the byte-order mark and the XML declaration. */
         const val SNIFF_BYTES = 4096
 
-        private val DECLARATION = Regex("""^\s*<\?xml\s[^>]*?\bencoding\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+        // `encoding` must start an attribute (after whitespace), so `foo-encoding="x"` is not it.
+        private val DECLARATION = Regex("""^\s*<\?xml(?:\s[^>]*?)?\sencoding\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+
+        /** An XML `EncName`, which is also what every platform's charset registry accepts. */
+        private val NAME = Regex("""[A-Za-z][A-Za-z0-9._-]{0,63}""")
 
         private val SINGLE_BYTE = mapOf(
             "utf-8" to UTF_8, "utf8" to UTF_8,
@@ -39,11 +44,11 @@ data class XmlEncoding(val charset: String, val bomBytes: Int = 0) {
         /**
          * The encoding of a document that starts with the first [length] bytes of [head].
          *
-         * @throws XmlFormatException when the declared encoding is unsupported, or is a 16/32-bit one that the bytes
-         * (plain ASCII markup, no byte-order mark) contradict.
+         * @throws XmlFormatException when the declared encoding is a 16/32-bit one that the bytes (plain ASCII markup,
+         * no byte-order mark) contradict, or its name is not a valid encoding name.
          */
         fun detect(head: ByteArray, length: Int = head.size): XmlEncoding {
-            val n = minOf(length, head.size)
+            val n = minOf(length, head.size).coerceAtLeast(0)
             fun b(i: Int) = if (i < n) head[i].toInt() and 0xFF else -1
 
             if (b(0) == 0x00 && b(1) == 0x00 && b(2) == 0xFE && b(3) == 0xFF) return XmlEncoding(UTF_32BE, 4)
@@ -61,7 +66,10 @@ data class XmlEncoding(val charset: String, val bomBytes: Int = 0) {
             val key = declared.lowercase()
             SINGLE_BYTE[key]?.let { return XmlEncoding(it) }
             if (key in WIDE) throw XmlFormatException("the file declares encoding '$declared' but is not stored in it")
-            throw XmlFormatException("unsupported encoding '${declared.take(40)}'; use UTF-8, UTF-16, ISO-8859-1 or windows-1252")
+            if (!NAME.matches(declared)) throw XmlFormatException("invalid encoding name '${declared.take(40)}'")
+            // Any other single-byte or multi-byte encoding (Shift_JIS, KOI8-R, windows-1251, GB18030...) is the
+            // platform's to decode; it refuses a name it does not know.
+            return XmlEncoding(declared)
         }
     }
 }

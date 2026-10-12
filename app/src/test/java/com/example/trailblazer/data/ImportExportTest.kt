@@ -253,11 +253,31 @@ class ImportExportTest {
 
     @Test
     fun testUnsupportedDeclaredEncodingIsRefusedNotGarbled() = runBlocking {
-        val gpx = """<?xml version="1.0" encoding="KOI8-R"?><gpx><wpt lat="46.0" lon="7.0"><name>x</name></wpt></gpx>"""
-        val result = importExport.import(writeTempFile("koi8.gpx", gpx.toByteArray()))
+        val gpx = """<?xml version="1.0" encoding="x-unknown"?><gpx><wpt lat="46.0" lon="7.0"><name>x</name></wpt></gpx>"""
+        val result = importExport.import(writeTempFile("unknown.gpx", gpx.toByteArray()))
         assertTrue(result is IoResult.Failed)
-        check((result as IoResult.Failed).message.contains("unsupported encoding 'KOI8-R'"), result.message)
+        check((result as IoResult.Failed).message.contains("unsupported encoding 'x-unknown'"), result.message)
         assertNothingStored()
+    }
+
+    @Test
+    fun testOtherDeclaredEncodingsThePlatformKnowsStillImport() = runBlocking {
+        // These imported before encoding detection existed; an allowlist must not take them away.
+        val cases = listOf(
+            "KOI8-R" to "Москва",
+            "Shift_JIS" to "富士山",
+            "windows-1251" to "Київ",
+            "GB18030" to "泰山",
+            "Big5" to "玉山",
+            "EUC-JP" to "筑波山",
+        )
+        for ((i, case) in cases.withIndex()) {
+            val (encoding, name) = case
+            val gpx = """<?xml version="1.0" encoding="$encoding"?><gpx><wpt lat="${40 + i}.0" lon="7.0"><name>$name</name></wpt></gpx>"""
+            val result = importExport.import(writeTempFile("enc_$i.gpx", gpx.toByteArray(Charset.forName(encoding))))
+            check(result is IoResult.Ok, "$encoding gave $result")
+        }
+        assertEquals(cases.map { it.second }.toSet(), waypointsRepo.snapshot().map { it.name }.toSet())
     }
 
     @Test
@@ -294,18 +314,23 @@ class ImportExportTest {
     }
 
     @Test
-    fun testRoutesAreSimplifiedAcrossTheAntimeridian() = runBlocking {
-        // 200 points due east along the equator from 179.0 to -179.0 with one 3 km bump: reduced to the stop limit, the bump stays.
-        val pts = (0..200).joinToString("") { i ->
-            val lon = (179.0 + i * 0.01).let { if (it > 180.0) it - 360.0 else it }
-            """<rtept lat="${if (i == 150) 0.03 else 0.0}" lon="$lon"/>"""
-        }
-        val result = importExport.import(writeTempFile("dateline.gpx", """<gpx><rte><name>Dateline</name>$pts</rte></gpx>""".toByteArray()))
-        assertTrue(result is IoResult.Ok)
-        assertEquals(1, (result as IoResult.Ok).value.simplifiedRoutes)
-        val stops = tripsRepo.all.first().single().stops
-        check(stops.size in 3..com.trailblazer.core.trip.TripRules.MAX_STOPS, "kept ${stops.size} stops")
-        check(stops.any { it.position.lat == 0.03 }, "the bump was dropped")
+    fun testRouteReductionDoesNotCareWhereOnTheGlobeTheRouteIs() = runBlocking {
+        // The same 301-point wiggle, once crossing the antimeridian and once far from it. Reducing a route to the stop
+        // limit must keep the same points either way; without longitude wrap the dateline route loses different ones.
+        val rnd = kotlin.random.Random(5)
+        val lats = List(301) { rnd.nextDouble(-0.02, 0.02) }
+        fun route(name: String, startLon: Double) = lats.withIndex().joinToString("") { (i, lat) ->
+            val lon = (startLon + i * 0.01).let { if (it > 180.0) it - 360.0 else it }
+            """<rtept lat="$lat" lon="$lon"/>"""
+        }.let { """<gpx><rte><name>$name</name>$it</rte></gpx>""" }
+
+        assertTrue(importExport.import(writeTempFile("dateline.gpx", route("Dateline", 178.5).toByteArray())) is IoResult.Ok)
+        assertTrue(importExport.import(writeTempFile("plain.gpx", route("Plain", 100.0).toByteArray())) is IoResult.Ok)
+        val trips = tripsRepo.all.first().associateBy { it.name }
+        val dateline = trips.getValue("Dateline").stops.map { it.position.lat }
+        val plain = trips.getValue("Plain").stops.map { it.position.lat }
+        check(dateline.size == com.trailblazer.core.trip.TripRules.MAX_STOPS, "kept ${dateline.size} stops")
+        assertEquals(plain, dateline)
     }
 
     @Test
