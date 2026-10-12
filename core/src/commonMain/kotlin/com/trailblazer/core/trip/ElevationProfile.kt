@@ -192,13 +192,19 @@ class ElevationProfile(
 }
 
 object ElevationProfiler {
-    /** Hard cap on samples per route, whatever its length: a 50-stop trip across a continent must stay cheap to plot. */
+    /**
+     * Default bound on samples per route, whatever its length: a 50-stop trip across a continent must stay cheap to
+     * plot. The bound is `max(maxSamples, 2 x stops)`, because every stop is always a sample and each leg needs at
+     * least one more. A trip (at most 50 stops, see `TripRules`) therefore never exceeds this; a caller passing more
+     * stops than half the bound gets two samples per stop at most.
+     */
     const val MAX_SAMPLES = 2_000
 
     /**
      * Samples [source] along the great-circle legs between [stops], every [spacingM] metres (30 m for 1 arc-second data,
-     * 90 m for 3), with each stop included exactly. If that would take more than [maxSamples] the spacing is widened
-     * until it fits, and the result says so ([ElevationProfile.spacingWidened]); the cap never silently cuts the route.
+     * 90 m for 3), with each stop included exactly. If that would take more than `max(maxSamples, 2 x stops)` samples
+     * the spacing is widened until it fits, and the result says so ([ElevationProfile.spacingWidened]); the bound never
+     * silently cuts the route.
      * Returns null for fewer than two stops or a non-positive spacing. [checkCancelled] is called about every hundred
      * samples and may throw to stop the work.
      */

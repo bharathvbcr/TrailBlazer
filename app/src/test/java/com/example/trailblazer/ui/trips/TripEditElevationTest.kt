@@ -13,6 +13,9 @@ import com.example.trailblazer.sensors.FakeSensorSource
 import com.example.trailblazer.testing.awaitMainLooper
 import com.trailblazer.core.geo.LatLon
 import com.trailblazer.core.geo.ParsedPlace
+import com.trailblazer.core.trip.ElevationProfile
+import com.trailblazer.core.trip.ProfileSample
+import android.os.Looper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
@@ -74,7 +77,7 @@ class TripEditElevationTest {
     }
 
     @Test
-    fun theProfileFollowsTheStopsAndNewTilesAndNeverBlocksTheMainThread() {
+    fun theProfileFollowsTheStopsAndNewTiles() {
         val vm = TripEditViewModel(container, null)
         collector.launch { vm.elevation.collect { } }
         assertTrue(vm.elevation.value is TripElevation.NotEnoughStops)
@@ -100,6 +103,64 @@ class TripEditElevationTest {
         awaitMainLooper(10_000) { (vm.elevation.value as? TripElevation.Ready)?.profile?.totalDistanceM?.let { it > before + 1000.0 } == true }
         assertTrue((vm.elevation.value as TripElevation.Ready).profile.totalDistanceM > before + 1000.0)
         assertEquals(3, (vm.elevation.value as TripElevation.Ready).profile.stopDistancesM.size)
+    }
+
+    private fun flatProfile(positions: List<LatLon>) = ElevationProfile(
+        positions.mapIndexed { i, p -> ProfileSample(i * 100.0, p, 1000.0) },
+        positions.indices.map { it * 100.0 },
+        90.0,
+        90.0,
+    )
+
+    @Test
+    fun theProfileIsBuiltOffTheMainThread() {
+        val threads = java.util.concurrent.CopyOnWriteArrayList<Boolean>()
+        val vm = TripEditViewModel(container, null) { positions ->
+            threads += (Thread.currentThread() === Looper.getMainLooper().thread)
+            flatProfile(positions)
+        }
+        collector.launch { vm.elevation.collect { } }
+        vm.addPlaces(listOf(ParsedPlace(LatLon(36.5, -118.5), "A"), ParsedPlace(LatLon(36.6, -118.5), "B")))
+        awaitMainLooper(10_000) { vm.elevation.value is TripElevation.Ready }
+        assertTrue(threads.isNotEmpty())
+        assertTrue("built on the main thread: $threads", threads.none { it })
+    }
+
+    @Test
+    fun aNewerStopEditCancelsASlowProfileStillBeingBuilt() {
+        val started = java.util.concurrent.CountDownLatch(1)
+        val firstCancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val calls = java.util.concurrent.atomic.AtomicInteger(0)
+        val vm = TripEditViewModel(container, null) { positions ->
+            if (calls.incrementAndGet() == 1) {
+                try {
+                    started.countDown()
+                    kotlinx.coroutines.delay(60_000) // a slow build
+                    flatProfile(positions)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    firstCancelled.set(true)
+                    throw e
+                }
+            } else {
+                flatProfile(positions)
+            }
+        }
+        val seen = java.util.concurrent.CopyOnWriteArrayList<TripElevation>()
+        collector.launch { vm.elevation.collect { seen += it } }
+        vm.addPlaces(listOf(ParsedPlace(LatLon(36.5, -118.5), "A"), ParsedPlace(LatLon(36.6, -118.5), "B")))
+        awaitMainLooper(10_000) { started.count == 0L }
+        assertTrue("the slow build started", started.count == 0L)
+        awaitMainLooper(10_000) { vm.elevation.value is TripElevation.Loading }
+        assertTrue("still loading", vm.elevation.value is TripElevation.Loading)
+
+        vm.addPlaces(listOf(ParsedPlace(LatLon(36.7, -118.5), "C")))
+        awaitMainLooper(10_000) { vm.elevation.value is TripElevation.Ready }
+        awaitMainLooper(10_000) { firstCancelled.get() }
+        assertTrue("the first build was cancelled by the newer edit", firstCancelled.get())
+        val ready = vm.elevation.value as TripElevation.Ready
+        assertEquals("the profile is for the newer, three-stop route", 3, ready.profile.stopDistancesM.size)
+        assertEquals(2, calls.get())
+        assertTrue("no profile of the stale route was ever shown", seen.filterIsInstance<TripElevation.Ready>().all { it.profile.stopDistancesM.size == 3 })
     }
 
     @Test

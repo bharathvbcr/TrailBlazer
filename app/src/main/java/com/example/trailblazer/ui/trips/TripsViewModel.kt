@@ -54,17 +54,20 @@ class TripsViewModel(private val c: AppContainer) : ViewModel() {
 
     fun importDemTiles(uris: List<Uri>) = viewModelScope.launch {
         message.value = c.demTiles.importAll(uris)
-        refreshDemTiles()
     }
 
     fun deleteDemTile(id: com.trailblazer.core.geo.DemTileId) = viewModelScope.launch {
-        c.demTiles.deleteTile(id)
-        message.value = "Deleted elevation tile ${id.fileName}"
-        refreshDemTiles()
+        message.value = if (c.demTiles.deleteTile(id)) {
+            "Deleted elevation tile ${id.fileName}"
+        } else {
+            "Could not delete elevation tile ${id.fileName}: it is not installed or could not be removed."
+        }
     }
 
     init {
-        viewModelScope.launch { refreshDemTiles() }
+        // Tiles also arrive from the trip editor, so the list follows the manager's revision (which it bumps on every
+        // import and delete, and which emits once on subscription) instead of refreshing after its own actions.
+        viewModelScope.launch { c.demTiles.revision.collect { refreshDemTiles() } }
         viewModelScope.launch { refreshMaps() }
         viewModelScope.launch {
             tracks.collect { summaries ->

@@ -11,7 +11,9 @@ import com.example.trailblazer.data.newId
 import com.example.trailblazer.location.Fix
 import com.trailblazer.core.sensors.Reading
 import com.trailblazer.core.time.LocalDays
+import com.trailblazer.core.geo.LatLon
 import com.trailblazer.core.geo.ParsedPlace
+import com.trailblazer.core.trip.ElevationProfile
 import com.trailblazer.core.trip.DaylightPlanner
 import com.trailblazer.core.trip.Stop
 import com.trailblazer.core.trip.StopKind
@@ -37,7 +39,13 @@ import kotlinx.coroutines.launch
 /** A removal that can still be undone: the list before it, and the list it produced. */
 data class RemovedStop(val stop: Stop, val before: List<Stop>, val after: List<Stop>)
 
-class TripEditViewModel(private val c: AppContainer, tripId: String?, seed: List<ParsedPlace> = emptyList()) : ViewModel() {
+class TripEditViewModel(
+    private val c: AppContainer,
+    tripId: String?,
+    seed: List<ParsedPlace> = emptyList(),
+    /** How a route's elevation profile is built; tests replace it with a slow or observable one. */
+    private val buildProfile: suspend (List<LatLon>) -> ElevationProfile? = { c.demTiles.profile(it) },
+) : ViewModel() {
     private val started = SharingStarted.WhileSubscribed(5_000)
     val id: String = tripId ?: newId()
     val isNew = tripId == null
@@ -76,7 +84,7 @@ class TripEditViewModel(private val c: AppContainer, tripId: String?, seed: List
                 emit(TripElevation.NotEnoughStops)
             } else {
                 emit(TripElevation.Loading)
-                val profile = c.demTiles.profile(positions)
+                val profile = buildProfile(positions)
                 emit(
                     if (profile == null) TripElevation.NotEnoughStops
                     else TripElevation.Ready(profile, profile.stats(), profile.extrema(), profile.steepSections(STEEP_WARNING_PERCENT)),

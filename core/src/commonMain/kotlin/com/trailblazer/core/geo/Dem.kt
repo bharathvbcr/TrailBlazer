@@ -264,18 +264,36 @@ class DemTileSet(
     }
 
     /**
-     * The finest post spacing among the installed tiles that hold [positions], or [fallbackM] when none does. A route
-     * is sampled this densely: 30 m where 1 arc-second tiles exist, else 90 m.
+     * The finest post spacing among the installed tiles under the route through [positions] (the stops, and the legs
+     * between them checked every [LEG_PROBE_M] or less, so a 1 arc-second tile between 3 arc-second stops counts), or
+     * [fallbackM] when none does. A route is sampled this densely: 30 m where 1 arc-second tiles exist, else 90 m.
      */
     fun finestSpacingM(positions: List<LatLon>, fallbackM: Double = DemResolution.ThreeArcSecond.spacingM): Double {
         var best = Double.POSITIVE_INFINITY
-        for (p in positions) {
+        val finest = DemResolution.OneArcSecond.spacingM
+        fun probe(p: LatLon) {
             for (id in DemTileId.candidates(p)) {
                 val tile = tile(id) ?: continue
                 if (tile.resolution.spacingM < best) best = tile.resolution.spacingM
             }
         }
+        for ((i, p) in positions.withIndex()) {
+            probe(p)
+            if (best <= finest) break
+            val next = positions.getOrNull(i + 1) ?: continue
+            val steps = kotlin.math.ceil(Geo.distanceM(p, next) / LEG_PROBE_M).toInt().coerceIn(1, MAX_LEG_PROBES)
+            for (k in 1 until steps) {
+                probe(Geo.intermediate(p, next, k.toDouble() / steps))
+                if (best <= finest) break
+            }
+        }
         return if (best.isFinite()) best else fallbackM
+    }
+
+    private companion object {
+        /** Legs are probed for tiles at least this often: finer than a tile's width, so a crossed tile is not stepped over. */
+        const val LEG_PROBE_M = 20_000.0
+        const val MAX_LEG_PROBES = 500
     }
 
     fun close() {
@@ -283,8 +301,12 @@ class DemTileSet(
         open.clear()
     }
 
+    /** Least recently used tiles are closed first: a hit moves the tile to the back of the insertion order. */
     private fun tile(id: DemTileId): DemTile? {
-        open[id]?.let { return it }
+        open.remove(id)?.let {
+            open[id] = it
+            return it
+        }
         if (id in absent) return null
         val tile = opener(id)
         if (tile == null) {

@@ -91,6 +91,21 @@ class ElevationProfileTest {
     }
 
     @Test
+    fun theSampleBoundIsTheCapOrTwoPerStopWhicheverIsLarger() {
+        // A 50-stop trip (the most a trip holds) never passes the 2,000 cap.
+        val fifty = (0 until 50).map { at(if (it % 2 == 0) 10.0 else 10.5, it * 0.7) }
+        val a = ElevationProfiler.sample(fifty, ramp, 30.0)!!
+        assertTrue(a.samples.size <= ElevationProfiler.MAX_SAMPLES, "${a.samples.size}")
+        // 1,500 stops cannot fit in 2,000 samples with one more per leg, so the bound is two per stop: 3,000.
+        val many = (0 until 1500).map { at(if (it % 2 == 0) 10.0 else 10.5, it * 0.1) }
+        val b = ElevationProfiler.sample(many, ramp, 30.0)!!
+        assertTrue(b.samples.size <= 3000, "${b.samples.size}")
+        assertTrue(b.spacingWidened)
+        assertEquals(many.last(), b.samples.last().position)
+        assertEquals(1500, b.stopDistancesM.size)
+    }
+
+    @Test
     fun degenerateRoutesAreRefusedOrHandled() {
         assertNull(ElevationProfiler.sample(emptyList(), ramp, 30.0))
         assertNull(ElevationProfiler.sample(listOf(at(1.0, 1.0)), ramp, 30.0))

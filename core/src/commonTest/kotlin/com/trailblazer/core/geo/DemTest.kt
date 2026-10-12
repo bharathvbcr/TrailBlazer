@@ -329,6 +329,37 @@ class DemTest {
     }
 
     @Test
+    fun evictionClosesTheLeastRecentlyUsedTileNotTheFirstOpened() {
+        val made = HashMap<DemTileId, FakeHgt>()
+        val set = DemTileSet({ id -> FakeHgt(DemResolution.ThreeArcSecond, ::scrambled).also { made[id] = it }.tile(id) }, maxOpen = 2)
+        assertNotNull(set.elevationM(at(5.5, 10.5))) // A
+        assertNotNull(set.elevationM(at(5.5, 11.5))) // B
+        assertNotNull(set.elevationM(at(5.5, 10.6))) // A again: now B is the least recently used
+        assertNotNull(set.elevationM(at(5.5, 12.5))) // C evicts B, not A
+        assertTrue(made.getValue(DemTileId(5, 11)).closed, "B was least recently used")
+        assertFalse(made.getValue(DemTileId(5, 10)).closed, "A was just used")
+        set.close()
+    }
+
+    @Test
+    fun aOneArcSecondTileBetweenThreeArcSecondStopsSetsTheSpacing() {
+        val oneSecond = FakeHgt(DemResolution.OneArcSecond, ::scrambled)
+        val threeSecond = FakeHgt(DemResolution.ThreeArcSecond, ::scrambled)
+        val set = DemTileSet({ id ->
+            when (id) {
+                DemTileId(10, 21) -> oneSecond.tile(id)
+                DemTileId(10, 20), DemTileId(10, 22) -> threeSecond.tile(id)
+                else -> null
+            }
+        })
+        val a = at(10.5, 20.5)
+        val b = at(10.5, 22.5)
+        // The 1 arc-second tile is under neither stop, only under the leg between them.
+        assertEquals(30.0, set.finestSpacingM(listOf(a, b)))
+        assertEquals(90.0, set.finestSpacingM(listOf(a, at(10.5, 20.9))), "a route that stays on the 3 arc-second tile")
+    }
+
+    @Test
     fun aVoidOnOneTilesEdgeFallsBackToTheNeighbourThatHasTheSamePost() {
         val voidTile = FakeHgt(DemResolution.ThreeArcSecond) { _, _ -> Hgt.VOID }
         val good = FakeHgt(DemResolution.ThreeArcSecond) { _, _ -> 700 }
