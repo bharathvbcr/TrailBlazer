@@ -53,6 +53,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.trailblazer.container
 import com.example.trailblazer.data.GeoFormat
+import com.example.trailblazer.data.closeInBackground
 import com.example.trailblazer.ui.Fmt
 import com.example.trailblazer.ui.LocalDays
 import com.example.trailblazer.ui.components.GlassCard
@@ -145,14 +146,15 @@ fun TripEditScreen(nav: Navigator, tripId: String?, seed: List<SeedPlace> = empt
             }
             if (showMap) {
                 item {
-                    val tileSource = remember { ctx.container.offlineMaps.openActiveSource() }
-                    androidx.compose.runtime.DisposableEffect(tileSource) {
-                        onDispose { tileSource?.close() }
+                    // Opened off the main thread; closed when this card leaves the screen.
+                    val tileSource by androidx.compose.runtime.produceState<com.example.trailblazer.data.OfflineTileSource?>(null) {
+                        value = ctx.container.offlineMaps.openActiveSource()
+                        awaitDispose { value?.closeInBackground() }
                     }
                     Box(modifier = Modifier.fillMaxWidth().height(320.dp).clip(RoundedCornerShape(16.dp))) {
                         OfflineMapCanvas(
                             tileSource = tileSource,
-                            stops = stops,
+                            routes = listOf(stops),
                             distanceFormatter = { fmt.distance(it) },
                         )
                     }

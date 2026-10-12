@@ -4,10 +4,19 @@ class XmlFormatException(message: String) : Exception(message)
 
 /**
  * A small streaming XML tokenizer for GPX/KML. It never resolves DTDs or external entities
- * (so XXE and billion-laughs payloads are inert), and it bounds name, text and total-event sizes.
+ * (so XXE and billion-laughs payloads are inert), and it bounds name and total-event sizes.
  * Only the five predefined entities and numeric character references are decoded.
+ *
+ * Character data arrives as a run of [Event.Text] events of about [TEXT_CHUNK] chars each (an entity or surrogate
+ * pair is never split), so a consumer that streams a very long value, such as a KML `<coordinates>` list, needs no
+ * memory proportional to its length. A consumer that buffers a value bounds the buffer with [appendBounded]. The
+ * whole document is bounded too: reading more than [maxChars] characters fails with an [XmlFormatException].
  */
-class XmlPull(private val reader: Reader, private val maxEvents: Long = 5_000_000L) {
+class XmlPull(
+    private val reader: Reader,
+    private val maxEvents: Long = 5_000_000L,
+    private val maxChars: Long = DEFAULT_MAX_CHARS,
+) {
     sealed interface Event {
         data class Start(val name: String, val attrs: Map<String, String>, val selfClosing: Boolean) : Event
         data class End(val name: String) : Event
@@ -20,16 +29,17 @@ class XmlPull(private val reader: Reader, private val maxEvents: Long = 5_000_00
     private var pos = 0
     private var events = 0L
     private var pendingEnd: String? = null
-    var encoding: String? = null
-        private set
-    var version: String? = null
-        private set
+    private var inCdata = false
+    private var cdataCarry = ""
+    private var charsRead = 0L
 
     private fun peek(): Int {
         if (pos >= len) {
             len = reader.read(buf)
             pos = 0
             if (len <= 0) { len = 0; return -1 }
+            charsRead += len
+            if (charsRead > maxChars) throw XmlFormatException("document larger than $maxChars characters")
         }
         return buf[pos].code
     }
@@ -86,6 +96,7 @@ class XmlPull(private val reader: Reader, private val maxEvents: Long = 5_000_00
     fun next(): Event {
         if (++events > maxEvents) throw XmlFormatException("document too large")
         pendingEnd?.let { pendingEnd = null; return Event.End(it) }
+        if (inCdata) return Event.Text(readCdataChunk())
         while (true) {
             val c = peek()
             if (c < 0) return Event.EndDocument
@@ -97,9 +108,9 @@ class XmlPull(private val reader: Reader, private val maxEvents: Long = 5_000_00
                     read()
                     val target = readName()
                     if (target.equals("xml", ignoreCase = true)) {
-                        val attrs = readProcessingInstructionAttrs()
-                        encoding = attrs["encoding"]
-                        version = attrs["version"]
+                        // Read only to check the declaration is well formed: the bytes are decoded before they get
+                        // here, so its encoding is XmlEncoding's business, not ours.
+                        readProcessingInstructionAttrs()
                     } else {
                         skipUntil("?>")
                     }
@@ -108,7 +119,7 @@ class XmlPull(private val reader: Reader, private val maxEvents: Long = 5_000_00
                     read()
                     when (peek()) {
                         '-'.code -> { expect("--"); skipUntil("-->") }
-                        '['.code -> { expect("[CDATA["); return Event.Text(readCdata()) }
+                        '['.code -> { expect("[CDATA["); inCdata = true; return Event.Text(readCdataChunk()) }
                         // DOCTYPE and any internal subset are skipped, never interpreted.
                         else -> skipDoctype()
                     }
@@ -140,14 +151,25 @@ class XmlPull(private val reader: Reader, private val maxEvents: Long = 5_000_00
         }
     }
 
-    private fun readCdata(): String {
-        val sb = StringBuilder()
+    /** The next piece of the open CDATA section; closes the section when it reaches `]]>`. */
+    private fun readCdataChunk(): String {
+        val sb = StringBuilder(cdataCarry)
+        cdataCarry = ""
         while (true) {
             val c = read()
             if (c < 0) throw XmlFormatException("unterminated CDATA")
             sb.append(c.toChar())
-            if (sb.length > MAX_TEXT) throw XmlFormatException("text too long")
-            if (sb.endsWith("]]>")) return sb.substring(0, sb.length - 3)
+            if (sb.endsWith("]]>")) {
+                inCdata = false
+                return sb.substring(0, sb.length - 3)
+            }
+            // Hold back the last two chars, which may be the start of the terminator; and one more when the cut
+            // would fall between the halves of a surrogate pair.
+            if (sb.length >= TEXT_CHUNK + 2) {
+                val keep = if (sb[sb.length - 3].isHighSurrogate()) 3 else 2
+                cdataCarry = sb.substring(sb.length - keep)
+                return sb.substring(0, sb.length - keep)
+            }
         }
     }
 
@@ -206,20 +228,57 @@ class XmlPull(private val reader: Reader, private val maxEvents: Long = 5_000_00
         }
     }
 
+    /** Character data up to the next tag, or [TEXT_CHUNK] chars of it, whichever comes first. */
     private fun readText(): String {
         val sb = StringBuilder()
+        var amp = -1
         while (true) {
             val c = peek()
             if (c < 0 || c == '<'.code) break
-            sb.append(read().toChar())
-            if (sb.length > MAX_TEXT) throw XmlFormatException("text too long")
+            if (sb.length >= TEXT_CHUNK) {
+                // Never cut inside an entity (unless it is already too long to be one) or a surrogate pair.
+                val openEntity = amp >= 0 && sb.length - amp <= MAX_ENTITY
+                if (!openEntity && !sb.last().isHighSurrogate()) break
+            }
+            val ch = read().toChar()
+            if (ch == '&') amp = sb.length else if (ch == ';') amp = -1
+            sb.append(ch)
         }
         return decodeEntities(sb.toString())
     }
 
     companion object {
         const val MAX_NAME = 256
-        const val MAX_TEXT = 40_000_000
+
+        /** Characters per [Event.Text]; longer character data is delivered as several events. */
+        const val TEXT_CHUNK = 32_768
+
+        /** Longest free text (a name or description) a consumer buffers; longer text is cut here. */
+        const val MAX_TEXT = 1_000_000
+
+        /** Longest value (a number, timestamp or coordinate tuple) a consumer accepts; longer is an error. */
+        const val MAX_VALUE = 256
+
+        /** Characters one document may contain before it is refused, whatever its structure. */
+        const val DEFAULT_MAX_CHARS = 400_000_000L
+
+        private const val MAX_ENTITY = 12
+
+        /**
+         * Appends [chunk] to [sb] without letting it grow past [limit] chars, never ending on the first half of a
+         * surrogate pair. Returns true when the whole chunk fit, false when some of it was cut.
+         */
+        fun appendBounded(sb: StringBuilder, chunk: String, limit: Int = MAX_TEXT): Boolean {
+            val room = limit - sb.length
+            if (chunk.length <= room) {
+                sb.append(chunk)
+                return true
+            }
+            var take = room.coerceAtLeast(0)
+            if (take > 0 && chunk[take - 1].isHighSurrogate()) take--
+            sb.append(chunk.substring(0, take))
+            return false
+        }
 
         fun decodeEntities(s: String): String {
             if (s.indexOf('&') < 0) return s
@@ -229,7 +288,7 @@ class XmlPull(private val reader: Reader, private val maxEvents: Long = 5_000_00
                 val c = s[i]
                 if (c != '&') { out.append(c); i++; continue }
                 val semi = s.indexOf(';', i)
-                if (semi < 0 || semi - i > 12) throw XmlFormatException("bad entity")
+                if (semi < 0 || semi - i > MAX_ENTITY) throw XmlFormatException("bad entity")
                 val ent = s.substring(i + 1, semi)
                 when {
                     ent == "lt" -> out.append('<')
