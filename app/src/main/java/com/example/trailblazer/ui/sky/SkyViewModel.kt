@@ -1,5 +1,6 @@
 package com.example.trailblazer.ui.sky
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.trailblazer.AppContainer
@@ -31,9 +32,13 @@ import com.trailblazer.core.weather.StormAlert
 import com.trailblazer.core.weather.TrendResult
 import com.trailblazer.core.weather.Zambretti
 import com.trailblazer.core.weather.ZambrettiForecast
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -90,12 +95,48 @@ data class WeatherState(
 /** Sampling step of [SkyState.sunPath] and [SkyState.moonPath]: 15 minutes, 97 points a day. */
 const val PATH_STEP_MS = 15 * 60_000L
 
-class SkyViewModel(private val c: AppContainer) : ViewModel() {
+/** How many days either side of today the Sky screen can step. */
+internal const val MAX_DAY_OFFSET = 366
+
+/**
+ * A manually chosen place as one saved-state string, "lat,lon,label": one value, so a restore can never see a new
+ * latitude with the old longitude. The label is last because it may itself contain commas.
+ */
+internal fun encodeManualPlace(p: SkyPlace): String = "${p.position.lat},${p.position.lon},${p.label.orEmpty().take(200)}"
+
+/** The place [encodeManualPlace] wrote, or null when [s] is missing or not a real position (it outlived its process). */
+internal fun decodeManualPlace(s: String?): SkyPlace? {
+    val parts = s?.split(',', limit = 3) ?: return null
+    if (parts.size < 3) return null
+    val pos = LatLon.of(parts[0].toDoubleOrNull() ?: return null, parts[1].toDoubleOrNull() ?: return null) ?: return null
+    return SkyPlace(pos, parts[2].ifEmpty { null }, manual = true)
+}
+
+/**
+ * The day shown and a chosen place live in [saved], so they survive the process being killed. Neither is lost when
+ * the user visits another tab: the tab's entry (and this ViewModel) is kept while it is not showing.
+ */
+class SkyViewModel(private val c: AppContainer, private val saved: SavedStateHandle = SavedStateHandle()) : ViewModel() {
     private val started = SharingStarted.WhileSubscribed(5_000)
     val settings: StateFlow<Settings?> = c.prefs.settings.stateIn(viewModelScope, started, null)
 
-    val dayOffset = MutableStateFlow(0)
-    val manualPlace = MutableStateFlow<SkyPlace?>(null)
+    private val _dayOffset = MutableStateFlow((saved.get<Int>(KEY_DAY) ?: 0).coerceIn(-MAX_DAY_OFFSET, MAX_DAY_OFFSET))
+    val dayOffset: StateFlow<Int> = _dayOffset.asStateFlow()
+
+    private val _manualPlace = MutableStateFlow(decodeManualPlace(saved.get<String>(KEY_PLACE)))
+    val manualPlace: StateFlow<SkyPlace?> = _manualPlace.asStateFlow()
+
+    fun setDayOffset(days: Int) {
+        val d = days.coerceIn(-MAX_DAY_OFFSET, MAX_DAY_OFFSET)
+        _dayOffset.value = d
+        saved[KEY_DAY] = d
+    }
+
+    /** Pins the screen to [place], or back to the live position when null. */
+    fun setManualPlace(place: SkyPlace?) {
+        _manualPlace.value = place
+        saved[KEY_PLACE] = place?.let(::encodeManualPlace)
+    }
 
     val fix: StateFlow<Reading<Fix>> = c.location.fix
 
@@ -218,28 +259,58 @@ class SkyViewModel(private val c: AppContainer) : ViewModel() {
 
     val environment = c.environment
 
-    val forecast = MutableStateFlow<ForecastResult?>(null)
-    val forecastLoading = MutableStateFlow(false)
+    private val _forecast = MutableStateFlow<ForecastResult?>(null)
+    val forecast: StateFlow<ForecastResult?> = _forecast.asStateFlow()
+    private val _forecastLoading = MutableStateFlow(false)
+    val forecastLoading: StateFlow<Boolean> = _forecastLoading.asStateFlow()
+
+    /** The one load in flight. A newer load or a consent revoke cancels it, so a stale one can never write. */
+    private var forecastJob: Job? = null
 
     fun loadForecast(force: Boolean) {
         val p = place.value?.position ?: return
         val consent = settings.value?.forecastConsent == true
-        viewModelScope.launch {
-            forecastLoading.value = true
-            forecast.value = c.weather.forecast(p, consent, force)
-            forecastLoading.value = false
+        forecastJob?.cancel()
+        // Started lazily, after it is recorded as current: a load that finishes without suspending (a cache hit)
+        // would otherwise reach its `finally` before `forecastJob` named it.
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            _forecastLoading.value = true
+            try {
+                val result = c.weather.forecast(p, consent, force)
+                ensureActive()
+                _forecast.value = result
+            } finally {
+                // Only the load that is still current may clear the spinner: a cancelled one finishing late must not
+                // switch it off under the load that replaced it.
+                if (forecastJob === coroutineContext[Job]) _forecastLoading.value = false
+            }
         }
+        forecastJob = job
+        job.start()
     }
 
     fun setConsent(on: Boolean) = viewModelScope.launch {
+        // Withdrawing consent first stops the load in flight and clears what the screen shows, at once: a load stuck
+        // in a blocking read must not make the toggle wait. Only the cache is cleared after that load has ended, so
+        // it cannot repopulate the cache once consent has been withdrawn.
+        val inFlight = if (on) null else forecastJob
+        if (!on) {
+            inFlight?.cancel()
+            _forecast.value = null
+            _forecastLoading.value = false
+        }
         c.prefs.update { it.copy(forecastConsent = on) }
         if (!on) {
+            inFlight?.join()
             c.weather.clearCache()
-            forecast.value = null
+            _forecast.value = null
         }
     }
 
-    fun step(days: Int) {
-        dayOffset.value = (dayOffset.value + days).coerceIn(-366, 366)
+    fun step(days: Int) = setDayOffset(dayOffset.value + days)
+
+    private companion object {
+        const val KEY_DAY = "dayOffset"
+        const val KEY_PLACE = "manualPlace"
     }
 }

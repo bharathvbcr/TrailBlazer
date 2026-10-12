@@ -30,7 +30,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -51,8 +50,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.trailblazer.container
-import com.example.trailblazer.data.AltimeterCalibration
 import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.sos.TorchController
 import com.example.trailblazer.sos.WhistlePlayer
@@ -76,7 +75,6 @@ import com.trailblazer.core.motion.SteepLimit
 import com.trailblazer.core.sos.Morse
 import com.trailblazer.core.units.Length
 import com.trailblazer.core.units.UnitSystem
-import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.min
 
@@ -85,7 +83,7 @@ import kotlin.math.min
 @Composable
 fun LevelScreen(nav: Navigator) {
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
+    val vm: LevelViewModel = viewModel { LevelViewModel(ctx.container) }
     val settings = ctx.container.prefs.settings.collectAsStateWithLifecycle(null).value ?: return
     val fmt = remember(settings) { Fmt(ctx, settings) }
     val gravityFlow = remember { ctx.container.motion.gravity }
@@ -173,11 +171,7 @@ fun LevelScreen(nav: Navigator) {
                                     vehicleZeroPitch = it.pitchDeg
                                     vehicleZeroRoll = it.rollDeg
                                 } else {
-                                    scope.launch {
-                                        ctx.container.prefs.update { s ->
-                                            s.copy(levelPitchOffsetDeg = it.pitchDeg, levelRollOffsetDeg = it.rollDeg)
-                                        }
-                                    }
+                                    vm.setZero(it.pitchDeg, it.rollDeg)
                                 }
                             }
                         },
@@ -190,11 +184,7 @@ fun LevelScreen(nav: Navigator) {
                                 vehicleZeroPitch = 0.0
                                 vehicleZeroRoll = 0.0
                             } else {
-                                scope.launch {
-                                    ctx.container.prefs.update { s ->
-                                        s.copy(levelPitchOffsetDeg = 0.0, levelRollOffsetDeg = 0.0)
-                                    }
-                                }
+                                vm.resetZero()
                             }
                         },
                         enabled = isCalibrated,
@@ -205,7 +195,7 @@ fun LevelScreen(nav: Navigator) {
                     Text("Haptics", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 8.dp))
                     Switch(
                         checked = settings.levelHaptics,
-                        onCheckedChange = { on -> scope.launch { ctx.container.prefs.update { it.copy(levelHaptics = on) } } },
+                        onCheckedChange = { on -> vm.setHaptics(on) },
                         modifier = Modifier.semantics { contentDescription = "Level haptics" },
                     )
                 }
@@ -280,7 +270,7 @@ fun AltimeterScreen(nav: Navigator) {
     val fmt = remember(settings) { Fmt(ctx, settings) }
     val pressure by c.barometer.pressureHpa.collectAsStateWithLifecycle()
     val ambient by c.environment.temperatureC.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
+    val vm: AltimeterViewModel = viewModel { AltimeterViewModel(c) }
     var elevationText by rememberSaveable { mutableStateOf("") }
     var qnhText by rememberSaveable { mutableStateOf("") }
     var oatText by rememberSaveable { mutableStateOf("") }
@@ -314,7 +304,7 @@ fun AltimeterScreen(nav: Navigator) {
                     enabled = p != null && elevationText.replace(',', '.').toDoubleOrNull() != null,
                     onClick = {
                         val e = elevationText.replace(',', '.').toDouble().let { if (metric) it else it * Length.M_PER_FT }
-                        Isa.qnhHpa(p!!, e)?.let { q -> scope.launch { c.prefs.update { it.copy(calibration = AltimeterCalibration(q, c.clock.nowMs())) } } }
+                        Isa.qnhHpa(p!!, e)?.let { q -> vm.calibrate(q) }
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Set from elevation") }
@@ -331,12 +321,12 @@ fun AltimeterScreen(nav: Navigator) {
                         enabled = qnhText.replace(',', '.').toDoubleOrNull()?.let { settings.pressureUnit.toHpa(it) in 900.0..1100.0 } == true,
                         onClick = {
                             val q = settings.pressureUnit.toHpa(qnhText.replace(',', '.').toDouble())
-                            scope.launch { c.prefs.update { it.copy(calibration = AltimeterCalibration(q, c.clock.nowMs())) } }
+                            vm.calibrate(q)
                         },
                         modifier = Modifier.weight(1f),
                     ) { Text("Set QNH") }
                     TextButton(
-                        onClick = { scope.launch { c.prefs.update { it.copy(calibration = null) } } },
+                        onClick = { vm.clearCalibration() },
                         enabled = calib != null,
                         modifier = Modifier.weight(1f),
                     ) { Text("Reset") }

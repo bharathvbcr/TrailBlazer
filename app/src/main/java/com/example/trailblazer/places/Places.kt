@@ -8,12 +8,16 @@ import com.example.trailblazer.data.Waypoint
 import com.trailblazer.core.geo.Geo
 import com.trailblazer.core.geo.LatLon
 import com.trailblazer.core.trip.Trip
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 
 /** A place to offer in the picker: a search result, a waypoint or a stop from another trip. */
@@ -64,8 +68,44 @@ class PlaceSearch(private val backend: PlaceSearchBackend, private val available
     }
 }
 
+/**
+ * Runs calls that block and cannot be interrupted (the geocoder below API 33) without letting them hold the caller.
+ *
+ * Each call runs on a few threads of its own, detached from the caller: the caller can time out or be cancelled and
+ * get control back at once, while the call finishes (or fails) in the background and its result is dropped. At most
+ * [maxCalls] calls may be unfinished at a time; one more is refused with an [IOException] rather than queued, so
+ * repeated searches against a stuck service cannot pile up threads or a backlog.
+ */
+internal class DetachedBlocking(private val maxCalls: Int) {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(maxCalls))
+    private val unfinished = AtomicInteger(0)
+
+    suspend fun <T> call(block: () -> T): T {
+        if (unfinished.incrementAndGet() > maxCalls) {
+            unfinished.decrementAndGet()
+            throw IOException("Place search is still busy with earlier searches. Try again in a moment.")
+        }
+        val answer = CompletableDeferred<T>()
+        scope.launch {
+            try {
+                answer.complete(block())
+            } catch (e: IOException) {
+                answer.completeExceptionally(e)
+            } catch (e: RuntimeException) {
+                answer.completeExceptionally(IOException(e.message ?: "place search failed", e))
+            } finally {
+                unfinished.decrementAndGet()
+            }
+        }
+        return answer.await()
+    }
+}
+
 /** Android's Geocoder. It is the platform's own service (on phones with Google Play, Google's). */
 class GeocoderBackend(private val context: Context, private val make: () -> Geocoder = { Geocoder(context, Locale.getDefault()) }) : PlaceSearchBackend {
+    // Below API 33 the only call blocks and cannot be interrupted, so it runs detached (see DetachedBlocking).
+    private val legacy = DetachedBlocking(MAX_LEGACY_CALLS)
+
     override suspend fun lookup(query: String, max: Int): List<FoundPlace> {
         val geocoder = make()
         val addresses: List<Address> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -81,7 +121,7 @@ class GeocoderBackend(private val context: Context, private val make: () -> Geoc
                 })
             }
         } else {
-            withContext(Dispatchers.IO) {
+            legacy.call {
                 @Suppress("DEPRECATION")
                 geocoder.getFromLocationName(query, max).orEmpty()
             }
@@ -90,6 +130,9 @@ class GeocoderBackend(private val context: Context, private val make: () -> Geoc
     }
 
     companion object {
+        /** Blocking geocoder calls (API < 33) that may be running or waiting at once. */
+        const val MAX_LEGACY_CALLS = 2
+
         fun isPresent(): Boolean = Geocoder.isPresent()
 
         /** A readable name and a short "where" line; null when the address has no real position. */

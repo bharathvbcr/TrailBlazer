@@ -43,6 +43,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -59,6 +60,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.flow.Flow
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.StateFlow
 import com.example.trailblazer.container
@@ -120,14 +122,9 @@ fun NowScreen(nav: Navigator) {
     var lastMessage by remember { mutableStateOf<String?>(null) }
 
     // Only while the screen is started: the alert must never hold GPS on in the background (see NowViewModelTest).
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(vm, lifecycle) {
-        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            vm.speedAlerts.collect { v ->
-                vibrate(ctx)
-                lastMessage = "Over speed limit: ${fmt.speed(v)}"
-            }
-        }
+    SpeedAlertEffect(vm.speedAlerts, format = fmt::speed) { text ->
+        vibrate(ctx)
+        lastMessage = "Over speed limit: $text"
     }
 
     ScreenScaffold(
@@ -706,6 +703,25 @@ internal fun BleSensorDialog(
             TextButton(onClick = onDismiss) { Text("Close") }
         },
     )
+}
+
+/**
+ * Runs [onAlert] with the speed, as [format] writes it, each time [alerts] fires while the screen is started.
+ *
+ * The collection is keyed on the flow and the lifecycle only, so it is not restarted when the user changes units. The
+ * formatter and callback therefore go through [rememberUpdatedState]: without it the collection would keep the
+ * formatter it started with and write the speed in the old unit.
+ */
+@Composable
+internal fun SpeedAlertEffect(alerts: Flow<Double>, format: (Double) -> String, onAlert: (String) -> Unit) {
+    val currentFormat by rememberUpdatedState(format)
+    val currentOnAlert by rememberUpdatedState(onAlert)
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(alerts, lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            alerts.collect { v -> currentOnAlert(currentFormat(v)) }
+        }
+    }
 }
 
 /**

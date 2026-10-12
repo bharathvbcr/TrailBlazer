@@ -87,7 +87,7 @@ class StargazeViewModelTest {
         scope.launch { vm.chart.collect {} }
         awaitMainLooper { vm.chart.value != null }
         val now = vm.chart.value!!.timeMs
-        vm.chartOffsetMin.value = 180
+        vm.setChartOffsetMin(180)
         awaitMainLooper { vm.chart.value!!.timeMs != now }
         assertEquals(180 * 60_000.0, (vm.chart.value!!.timeMs - now).toDouble(), 60_000.0)
     }
@@ -145,7 +145,7 @@ class StargazeViewModelTest {
     fun followCompassWithoutACompassNeverInventsAHeading() {
         val vm = StargazeViewModel(container, StarPlace(LatLon(46.5, 7.8), null, true))
         assertFalse(vm.compassAvailable)
-        vm.followCompass.value = true
+        vm.setFollowCompass(true)
         scope.launch { vm.chart.collect {} }
         awaitMainLooper(3_000) { vm.chart.value != null }
         assertNotNull(vm.chart.value)
