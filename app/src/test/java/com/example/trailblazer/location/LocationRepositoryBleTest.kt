@@ -42,7 +42,7 @@ class LocationRepositoryBleTest {
         shadowOf(app).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
         shadowOf(manager).setLocationEnabled(true)
         transport = FakeBleTransport()
-        bleSensors = BleSensorManager(app, transport, scope, clock)
+        bleSensors = BleSensorManager(transport, scope, clock)
     }
 
     @After
@@ -60,17 +60,21 @@ class LocationRepositoryBleTest {
         }
     }
 
+    private val gga = "\$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47"
+    private val rmc = "\$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A"
+
     @Test
-    fun parseNmeaDeliversExternalFixIntoRepository() {
+    fun nmeaFromTheBleReceiverDeliversAFixIntoRepository() {
         val perms = Permissions(app).also { it.refresh() }
         val repo = LocationRepository(app, manager, perms, scope, bleSensors, clock)
         val seen = mutableListOf<Reading<Fix>>()
         scope.launch { repo.live(1_000L).collect { seen.add(it) } }
         idle()
 
-        val nmea = "\$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47"
-        val parsed = repo.parseNmea(nmea)
-        assertNotNull(parsed)
+        bleSensors.connect("00:11:22:33:44:55", "Garmin GLO 2")
+        transport.emitConnected(setOf(BleServiceType.Nmea))
+        idle()
+        transport.emitNmea("$gga\r\n$rmc\r\n")
 
         awaitUntil { seen.any { it is Reading.Value } }
         val latest = seen.filterIsInstance<Reading.Value<Fix>>().lastOrNull()
@@ -79,6 +83,28 @@ class LocationRepositoryBleTest {
         assertEquals(11.516667, latest.value.position.lon, 1e-4)
         assertEquals(545.4, latest.value.altitudeM!!, 0.1)
         assertEquals("ble_nmea", latest.value.provider)
+    }
+
+    @Test
+    fun barometerOnlyBlePeripheralDoesNotReplacePhoneGps() {
+        val perms = Permissions(app).also { it.refresh() }
+        val repo = LocationRepository(app, manager, perms, scope, bleSensors, clock)
+        val seen = mutableListOf<Reading<Fix>>()
+        scope.launch { repo.live(1_000L).collect { seen.add(it) } }
+        idle()
+
+        bleSensors.connect("11:22:33:44:55:66", "Nordic Barometer")
+        transport.emitConnected(setOf(BleServiceType.Environmental, BleServiceType.Pressure))
+        idle()
+
+        shadowOf(manager).simulateLocation(Location(LocationManager.GPS_PROVIDER).apply {
+            latitude = 37.7749; longitude = -122.4194; accuracy = 8f; altitude = 15.0; time = System.currentTimeMillis()
+        })
+        awaitUntil { seen.any { it is Reading.Value && it.value.provider == LocationManager.GPS_PROVIDER } }
+
+        val phoneFix = seen.filterIsInstance<Reading.Value<Fix>>().lastOrNull()
+        assertNotNull("phone GPS must keep working next to a barometer-only sensor", phoneFix)
+        assertEquals(LocationManager.GPS_PROVIDER, phoneFix!!.value.provider)
     }
 
     @Test
@@ -95,7 +121,7 @@ class LocationRepositoryBleTest {
         idle()
 
         // 2. Stream NMEA from BLE peripheral
-        transport.emitNmea("\$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n")
+        transport.emitNmea("$gga\r\n$rmc\r\n")
         awaitUntil { seen.any { it is Reading.Value && it.value.provider == "ble_nmea" } }
 
         val bleFix = seen.filterIsInstance<Reading.Value<Fix>>().last()

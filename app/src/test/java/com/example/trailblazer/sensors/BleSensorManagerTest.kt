@@ -1,7 +1,5 @@
 package com.example.trailblazer.sensors
 
-import android.app.Application
-import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.trailblazer.location.AltitudeDatum
 import com.example.trailblazer.location.Fix
@@ -22,7 +20,6 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class BleSensorManagerTest {
-    private val app: Application = ApplicationProvider.getApplicationContext()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
     private lateinit var transport: FakeBleTransport
     private lateinit var manager: BleSensorManager
@@ -31,7 +28,7 @@ class BleSensorManagerTest {
     @Before
     fun setUp() {
         transport = FakeBleTransport()
-        manager = BleSensorManager(app, transport, scope, clock)
+        manager = BleSensorManager(transport, scope, clock)
     }
 
     @After
@@ -91,7 +88,7 @@ class BleSensorManagerTest {
         val job = scope.launch { manager.locationStream.collect { fixes.add(it) } }
 
         // Build a sample LNS Location and Speed (0x2A67) packet
-        // Flags: 0x1F = speed(bit0) | dist(bit1) | loc(bit2) | elev(bit3) | heading(bit4)
+        // Flags: 0x1F = speed(bit0) | dist(bit1) | loc(bit2) | elev(bit3) | heading(bit4) | Position Status Ok (bits 7-8 = 1)
         // flags: 2 bytes (0x1F, 0x00)
         // speed: 2 bytes uint16 in 0.01 m/s -> 15.5 m/s = 1550 = 0x060E -> (0x0E, 0x06)
         // distance: 3 bytes (ignored) -> (0x00, 0x00, 0x00)
@@ -100,7 +97,7 @@ class BleSensorManagerTest {
         // elev: 3 bytes sint24 in 0.01 m -> 2100.5 m = 210050 = 0x033482 -> (0x82, 0x34, 0x03)
         // heading: 2 bytes uint16 in 0.01 deg -> 180.25 deg = 18025 = 0x4669 -> (0x69, 0x46)
         val data = byteArrayOf(
-            0x1F.toByte(), 0x00.toByte(),
+            0x9F.toByte(), 0x00.toByte(), // 0x1F | Position Status "Position Ok" (1 shl 7)
             0x0E.toByte(), 0x06.toByte(),
             0x00.toByte(), 0x00.toByte(), 0x00.toByte(),
             0xB0.toByte(), 0x37.toByte(), 0xC0.toByte(), 0x1B.toByte(),
@@ -208,10 +205,12 @@ class BleSensorManagerTest {
         // Packet 2: second half of GGA plus full RMC
         transport.emitNmea("8,0.9,545.4,M,46.9,M,,*47\r\n\$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A\r\n")
 
-        assertEquals(2, fixes.size)
+        // GGA and RMC carry the same UTC second (123519): one receiver epoch is one fix, holding both sentences' data.
+        assertEquals(1, fixes.size)
         assertEquals(48.1173, fixes[0].position.lat, 1e-4)
         assertEquals(545.4, fixes[0].altitudeM!!, 0.1)
-        assertEquals(84.4, fixes[1].bearingDeg!!, 0.1)
+        assertEquals(84.4, fixes[0].bearingDeg!!, 0.1)
+        assertEquals(22.4 * 0.5144444444444445, fixes[0].speedMps!!, 0.01)
 
         job.cancel()
     }
