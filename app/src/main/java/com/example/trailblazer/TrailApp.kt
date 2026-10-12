@@ -5,6 +5,7 @@ import android.content.Context
 import android.hardware.SensorManager
 import android.hardware.display.DisplayManager
 import android.location.LocationManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.Display
@@ -25,8 +26,14 @@ import com.example.trailblazer.sensors.AndroidSensorSource
 import com.example.trailblazer.sensors.BarometerRepository
 import com.example.trailblazer.sensors.BleSensorManager
 import com.example.trailblazer.sensors.BleTransport
+import com.example.trailblazer.sensors.AndroidGnssMeasurementSource
 import com.example.trailblazer.sensors.Clock
 import com.example.trailblazer.sensors.EnvironmentRepository
+import com.example.trailblazer.sensors.ForegroundTracker
+import com.example.trailblazer.sensors.LogLimits
+import com.example.trailblazer.sensors.SensorLogExporter
+import com.example.trailblazer.sensors.SensorLogFiles
+import com.example.trailblazer.sensors.SensorLogger
 import com.example.trailblazer.sensors.MagneticRepository
 import com.example.trailblazer.sensors.MotionRepository
 import com.example.trailblazer.sensors.OrientationRepository
@@ -46,6 +53,7 @@ import com.example.trailblazer.weather.UrlConnectionTransport
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
+import java.io.File
 
 /**
  * Manual dependency graph. Everything is created lazily, so a screen only starts the sensors it uses,
@@ -101,6 +109,25 @@ class AppContainer(
     val location by lazy { LocationRepository(context, locationManager, permissions, scope, bleSensorManager, clock) }
     val gnss by lazy { GnssRepository(context, locationManager, permissions, scope) }
 
+    /** Visible/background state of the app, for the sensor logger's gap markers. Eager: it must see every activity start. */
+    val foreground = ForegroundTracker().also { tracker -> (context.applicationContext as? Application)?.let(tracker::install) }
+
+    /** One recorder for the process, so leaving the Diagnostics screen neither stops it nor leaks a listener. */
+    val sensorLogger by lazy {
+        val files = SensorLogFiles(File(context.noBackupFilesDir, "sensorlogs"))
+        val limits = LogLimits()
+        SensorLogger(
+            sensors = sensorSource,
+            gnss = AndroidGnssMeasurementSource(locationManager, permissions),
+            files = files,
+            exporter = SensorLogExporter.forResolver(context.contentResolver, limits.maxBytes + EXPORT_SLACK_BYTES),
+            scope = scope,
+            foreground = foreground.isForeground,
+            device = "${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE}, API ${Build.VERSION.SDK_INT})",
+            limits = limits,
+        )
+    }
+
     val waypoints by lazy { WaypointRepository(db.waypoints(), clock) }
     val trips by lazy { TripRepository(db.trips(), clock) }
     val tracks by lazy { TrackRepository(db.tracks()) }
@@ -114,6 +141,9 @@ class AppContainer(
     val placeSearch by lazy { PlaceSearch(placeBackend, placeSearchAvailable) }
     val tracking by lazy { TrackingController(context, tracks, permissions, sensorSource) }
 }
+
+/** A finished log is at most the size limit plus the row that crossed it and the closing row. */
+private const val EXPORT_SLACK_BYTES = 1L * 1024 * 1024
 
 class TrailApp : Application() {
     lateinit var container: AppContainer

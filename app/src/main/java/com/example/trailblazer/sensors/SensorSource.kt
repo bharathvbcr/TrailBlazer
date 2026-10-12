@@ -6,6 +6,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.hardware.TriggerEvent
 import android.hardware.TriggerEventListener
+import android.os.Handler
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -52,6 +53,16 @@ interface SensorSource {
     fun batchedSamples(type: Int, periodUs: Int, maxReportLatencyUs: Int): Flow<SensorSample>
 
     /**
+     * The registration both flows above are built on: [onSample] runs for every event, unconflated, on [handler]'s
+     * thread (the main thread when null). It must not block and must copy nothing it keeps ([SensorSample] already holds
+     * a copy). Closing the returned handle unregisters the listener. Returns null, registering nothing, when the sensor
+     * does not exist or the system refuses the registration (including a [SecurityException] for a rate that needs a
+     * permission). A caller that must account for every event (the recorder) uses this instead of a flow, so it controls
+     * where an overflowing queue drops.
+     */
+    fun register(type: Int, periodUs: Int, maxReportLatencyUs: Int, handler: Handler?, onSample: (SensorSample) -> Unit): AutoCloseable?
+
+    /**
      * One emission each time a one-shot trigger sensor such as significant motion fires; it is re-armed after every
      * trigger and disarmed when collection stops. Completes immediately when the sensor does not exist.
      */
@@ -72,25 +83,32 @@ class AndroidSensorSource(private val manager: SensorManager) : SensorSource {
     override fun batchedSamples(type: Int, periodUs: Int, maxReportLatencyUs: Int): Flow<SensorSample> =
         listen(type, periodUs, maxReportLatencyUs).buffer(BATCH_BUFFER)
 
-    private fun listen(type: Int, periodUs: Int, maxReportLatencyUs: Int): Flow<SensorSample> = callbackFlow {
-        val sensor = manager.getDefaultSensor(type)
-        if (sensor == null) {
-            close()
-            return@callbackFlow
-        }
+    override fun register(type: Int, periodUs: Int, maxReportLatencyUs: Int, handler: Handler?, onSample: (SensorSample) -> Unit): AutoCloseable? {
+        val sensor = manager.getDefaultSensor(type) ?: return null
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
-                trySend(SensorSample(event.values.copyOf(), event.accuracy, event.timestamp))
+                onSample(SensorSample(event.values.copyOf(), event.accuracy, event.timestamp))
             }
 
             // Every subsequent SensorEvent carries the new accuracy, so nothing to do here.
             override fun onAccuracyChanged(s: Sensor, newAccuracy: Int) = Unit
         }
-        if (!manager.registerListener(listener, sensor, periodUs, maxReportLatencyUs)) {
+        val registered = try {
+            if (handler == null) manager.registerListener(listener, sensor, periodUs, maxReportLatencyUs)
+            else manager.registerListener(listener, sensor, periodUs, maxReportLatencyUs, handler)
+        } catch (_: SecurityException) {
+            false
+        }
+        return if (registered) AutoCloseable { manager.unregisterListener(listener) } else null
+    }
+
+    private fun listen(type: Int, periodUs: Int, maxReportLatencyUs: Int): Flow<SensorSample> = callbackFlow {
+        val registration = register(type, periodUs, maxReportLatencyUs, null) { trySend(it) }
+        if (registration == null) {
             close()
             return@callbackFlow
         }
-        awaitClose { manager.unregisterListener(listener) }
+        awaitClose { registration.close() }
     }
 
     override fun triggers(type: Int): Flow<Unit> = callbackFlow {

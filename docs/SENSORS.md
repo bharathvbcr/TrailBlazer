@@ -124,6 +124,95 @@ A sensor event with a NaN or infinite value is dropped where it arrives, never p
 - **Pressure history:** `PressureSampler` stores one sample every 10 minutes while the app is in the foreground, with the GPS elevation at that moment if a fix is under 2 minutes old. Samples are kept for 7 days.
 - **Trend:** see `ALGORITHMS.md`.
 
+## Sensor stream logger
+
+*Sensors* (Diagnostics) has a **Record sensor data** switch. It writes raw accelerometer, gyroscope and barometer events, and raw GNSS measurements where the device reports them, to a CSV file in the app's private storage. Afterwards the user saves it with the system file picker, or discards it.
+
+### Design
+
+| Piece | Where | Role |
+|---|---|---|
+| `SensorCsv`, `ClockAnchor`, event rows | `core/.../sensors/log/SensorCsv.kt` | The format: RFC 4180 escaping, number text, UTC conversion. Android-free, tested on every `:core` target. |
+| `SensorLogger` | `sensors/SensorLogger.kt` | One recorder per process (`AppContainer.sensorLogger`). Owns listeners, queue, writer, limits and the state the UI shows. |
+| `SensorSource.register` | `sensors/SensorSource.kt` | The existing sensor seam, extended with a plain callback registration. `samples()` and `batchedSamples()` are built on it, so there is still one place that talks to `SensorManager`. |
+| `GnssMeasurementSource` | `sensors/GnssMeasurementSource.kt` | Raw `GnssMeasurementsEvent` through `LocationManagerCompat`. Separate from `GnssRepository`, which reports `GnssStatus` (the satellite list). |
+| `SensorLogFiles`, `SensorLogExporter` | `sensors/` | Private files and orphan repair; the bounded, cancellable copy to the picked document. |
+| `SensorRecorderCard` | `ui/tools/` | The switch, live counters, Save and Discard. A stateless body plus a thin wrapper. |
+
+**The sensor callback never touches the disk and never waits.** Each event is copied once (`SensorSample`) and offered with `Channel.trySend` to a bounded queue (16,384 events). One writer coroutine on `Dispatchers.IO` drains it into a 64 KiB `BufferedWriter` and flushes about once a second, so a crash loses at most that. Sensor callbacks run on a `HandlerThread`, not the main thread, and the UI sees counters published every 250 ms, not per sample, so recording does not cost UI frames.
+
+**Overflow policy: drop the newest, and count it.** When the queue is full the incoming event is discarded and a counter goes up. The writer then writes a `GAP` row (`dropped=N`, dropped since the previous row, at the point it noticed), and the closing row carries the total. The screen shows the count in the error colour with a sentence saying the log has gaps. Events that were queued but never written because the recording stopped early (size cap, full disk) are counted as dropped too (`dropped_at_stop`). The invariant, tested with a 100,000 event burst: `written + dropped` equals the events delivered.
+
+### Rates
+
+| Sensor | Requested | Why |
+|---|---|---|
+| Accelerometer, gyroscope | 200 Hz (period 5,000 µs), or the sensor's `minDelay` if that is slower | Android 12+ limits the accelerometer, gyroscope and magnetometer to 200 Hz for an app without `HIGH_SAMPLING_RATE_SENSORS`, and a higher request can throw a `SecurityException`. TrailBlazer does not declare that permission (adding it is a product and security decision), so `SamplingRates` refuses anything above 200 Hz. `SENSOR_DELAY_FASTEST` is never used. |
+| Barometer | 25 Hz, or `minDelay` if slower | The barometer is not among the rate-limited sensors. 25 Hz is a request, not a promise: phone barometers commonly top out around that rate, and the file records what the sensor delivered. |
+| GNSS raw measurements | The chipset's rate (normally 1 Hz) | Not configurable through the platform API. |
+
+Phones can deliver less than they are asked for. The closing row records what each sensor actually delivered (`observed_hz`). The rate-limit page also says motion sensors are limited whatever the permission when the user has switched the microphone off with the device toggle.
+
+Sources: [Sensors overview, rate limiting](https://developer.android.com/develop/sensors-and-location/sensors/sensors_overview), [`SensorEvent.timestamp`](https://developer.android.com/reference/android/hardware/SensorEvent#timestamp), [Android 9: limited access to sensors in the background](https://developer.android.com/about/versions/pie/android-9.0-changes-all), [raw GNSS measurements](https://developer.android.com/develop/sensors-and-location/sensors/gnss).
+
+### Limits (the recording stops by itself, with a visible reason)
+
+| Limit | Value | Stop reason shown |
+|---|---|---|
+| File size | 200 MiB (about 90 minutes of accelerometer and gyroscope at 200 Hz) | "reached its size limit" |
+| Duration | 4 hours | "reached its time limit" |
+| Free storage | Does not start below 64 MiB free; stops if free space falls below it (checked at each flush) | "almost out of storage" |
+| Write error | Any `IOException` | "could not be written to storage (…)" |
+
+A stopped recording stays on the phone until the user saves or discards it. It is deleted only after a save succeeded, or by the explicit, confirmed **Discard**. Starting another recording is refused while one is waiting.
+
+### Lifetime
+
+The recorder belongs to the application, not to the screen. Leaving Diagnostics does not stop it, and no screen holds a listener, so none can leak. It stops when the user stops it, at a limit, on a write failure, or when the process ends. Closing the sources is in `finally`, including when the app scope is cancelled, and a cancelled recording still ends as a whole-rows file with its closing row. No foreground service and no permission are added.
+
+**Background.** Android 9+ does not deliver continuous-reporting sensors to an app in the background that has no foreground service. Recording therefore has gaps while the app is not visible (screen off, another app in front); `APP_BACKGROUND` and `APP_FOREGROUND` rows mark them, and the Idle text says so. Whether raw GNSS continues while the tracking foreground service runs depends on the device and is not verified. A configuration change (rotation) is not reported as leaving the foreground.
+
+**Process death.** While recording, the file is `trailblazer-sensors-<UTC>.csv.part` in `noBackupFilesDir/sensorlogs/` (so it is not in cloud backup or device transfer). A normal stop renames it to `.csv`. On the next start, a `.part` file is an orphan: it is cut back to its last whole line, given a closing row (`stop_reason=interrupted;recovered=true;truncated_bytes=N`), renamed and offered with the message that it may end early. An orphan with no whole line is deleted. A `.csv` that was never saved is offered again too.
+
+### CSV format
+
+UTF-8, CRLF, RFC 4180: a field with a comma, quote or line break is quoted and its quotes doubled. One header row, then one row per event. Numbers are written with `toString()`, so there is no locale (no decimal commas) and a Float keeps its own digits (`0.1`, not `0.10000000149011612`). NaN and infinities are written as `NaN`, `Infinity`, `-Infinity`; an **empty cell means "not reported"**. Marker notes are `key=value;key=value` on one line.
+
+| Column | Meaning |
+|---|---|
+| `utc_iso` | `yyyy-MM-ddTHH:mm:ss.ffffffZ`, microseconds. The sensor clock anchored once to the wall clock at the start (`utc = anchor_wall_ms + (elapsed_ns − anchor_elapsed_ns)`), so a later NTP step or clock change cannot make it jump. The two anchor values are in the `SESSION_START` row. Accuracy is about a millisecond plus the sensor clock's drift against the wall clock over the session. |
+| `elapsed_ns` | The event time as the platform gave it. `SensorEvent.timestamp` uses the `SystemClock.elapsedRealtimeNanos()` time base. For GNSS it is `GnssClock.elapsedRealtimeNanos` when the chipset reports it (API 29+), otherwise the time the callback ran, and `note` says `elapsed=callback`. |
+| `sensor_type` | `ACCELEROMETER` (m/s², gravity included), `GYROSCOPE` (rad/s), `PRESSURE` (hPa, in `x`), `GNSS_MEASUREMENT`, or a marker: `SESSION_START`, `SESSION_END`, `GAP`, `APP_BACKGROUND`, `APP_FOREGROUND`, `GNSS_RAW_STATUS`. |
+| `x`, `y`, `z` | Raw values, unfiltered (a driver NaN stays NaN). A sensor reporting more than three values puts the rest in `note` as `v3=…;v4=…`. |
+| `accuracy` | The raw `SensorEvent.accuracy`: 0 unreliable, 1 low, 2 medium, 3 high. Empty for GNSS and markers. |
+| `svid`, `constellation` | Satellite number within its constellation, and the `GnssStatus.CONSTELLATION_*` code (1 GPS, 2 SBAS, 3 GLONASS, 4 QZSS, 5 BeiDou, 6 Galileo, 7 IRNSS; 0 on API below 26). |
+| `cn0_dbhz` | Carrier-to-noise density, dB-Hz. |
+| `received_sv_time_ns`, `received_sv_time_unc_ns`, `state` | The satellite's transmit time relative to the start of its system week (GLONASS: day), its 1-σ uncertainty, and the `GnssMeasurement.STATE_*` bit mask that says how far that time can be trusted. |
+| `pseudorange_rate_mps`, `pseudorange_rate_unc_mps` | Uncorrected pseudorange rate (m/s) and uncertainty. |
+| `time_offset_ns` | `GnssMeasurement.getTimeOffsetNanos`: measurement time = `clock_time_ns` + this. |
+| `adr_m`, `adr_state` | Accumulated delta range (carrier phase, metres) and its state bit mask. |
+| `carrier_freq_hz` | Carrier frequency; empty when the chipset does not say. |
+| `clock_time_ns`, `full_bias_ns`, `bias_ns`, `hw_clock_discontinuity` | `GnssClock.getTimeNanos`, `getFullBiasNanos`, `getBiasNanos` (empty when not reported) and `getHardwareClockDiscontinuityCount` (a change means the receiver clock jumped: do not smooth across it). |
+| `note` | Marker text, or `elapsed=callback` on a GNSS row. |
+
+**The logger does not compute pseudoranges.** It records what a pseudorange needs: GPS time = `clock_time_ns` − (`full_bias_ns` + `bias_ns`), and the satellite transmit time `received_sv_time_ns`. Turning those into metres needs week and day rollover and constellation time-system handling, which belong in analysis software, and a guess made on the phone would look like a measurement.
+
+**Rows that say how complete the file is.**
+
+- `SESSION_START`: `csv_format`, `device`, the UTC anchor, the period requested from each sensor in µs (or `absent` / `refused`), `gnss_raw=on` or `off(<reason>)`, the limits, `overflow=drop_newest`.
+- `GAP`: `dropped=N` since the previous row and `total_dropped`.
+- `SESSION_END`: `stop_reason` (`user`, `size_cap`, `duration_cap`, `disk_low`, `write_failed`, `cancelled`, `interrupted`), `accepted`, `written`, `dropped`, `dropped_at_stop`, `late_after_stop`, `duration_ms`, per-sensor `counts` and `observed_hz`.
+
+A file with no `SESSION_END` row, or with `recovered=true`, ended without the app closing it.
+
+### Saving
+
+`ActivityResultContracts.CreateDocument("text/csv")` opens the system picker with a suggested name, so the app needs no storage permission and the user chooses the location (including a USB drive or a cloud provider). The copy runs on IO in 64 KiB chunks, bounded by the file's size, checks for cancellation between chunks (there is a Cancel button) and is not reported as saved until the output stream has flushed and closed without error. A null result (the user backed out) changes nothing. A write failure or a full destination keeps the private file, deletes the half-written destination document, and shows the reason ("not enough space at the chosen location", or the system's message).
+
+### Not verified on a device
+
+The 200 Hz delivery rate, `minDelay` on specific phones, raw GNSS availability and field coverage (chipset dependent; mandatory since Android 10 per the GNSS page, but optional fields vary), how long the tracking service keeps sensors alive in the background, and the picker against third-party document providers were not exercised on hardware. The tests use a fake `SensorSource` and a fake GNSS source.
+
 ## Camera sighting
 
 The Sight screen shows a CameraX `PreviewView` with bearings overlaid. The horizontal field of view comes from `CameraCharacteristics`:

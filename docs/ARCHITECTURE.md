@@ -23,6 +23,7 @@
 | `io` | `XmlPull` (no DTD, no entities), `GpxReader`/`GpxWriter`, `KmlReader`/`KmlWriter` |
 | `trip` | `Stop`, `Trip`, `LegCalculator`, `TripRules`, `DaylightPlanner` |
 | `intents` | `MapLinks`: `geo:` URIs, Google Maps directions, OSM directions |
+| `sensors.log` | `SensorCsv` (the sensor-log CSV format: RFC 4180, locale-free numbers, UTC anchor) and its event rows. Android-free. |
 | `motion` | `Vec3`, g-force, inclination, the 3D-plot orbit camera |
 | `alerts`, `sos`, `units` | Speed alert with hysteresis, morse/whistle timelines, unit conversion |
 
@@ -33,7 +34,7 @@ Every public function returns a *total* result: a value, `null`, or a sealed "wh
 | Package | Responsibility |
 |---|---|
 | `TrailApp.kt` | `AppContainer`: manual dependency injection. Every repository is a `lazy` singleton on an application-wide `SupervisorJob` scope. |
-| `sensors` | `SensorSource` (the `SensorManager` seam), `Reading<T>`, and the barometer, magnetic, environment, motion, step, orientation and acoustic repositories. Also declination. |
+| `sensors` | `SensorSource` (the `SensorManager` seam), `Reading<T>`, and the barometer, magnetic, environment, motion, step, orientation and acoustic repositories. Also declination. `SensorLogger` records raw sensor and GNSS measurements to CSV for the Diagnostics screen (bounded queue, one IO writer, drop-newest with a counter; see SENSORS.md, "Sensor stream logger"); it is an application-scoped object in `AppContainer`, not a ViewModel, so it outlives the screen. |
 | `location` | `LocationRepository` (`LocationManagerCompat`, no Play Services), `GnssRepository` |
 | `permissions` | `AppPermission` and a `StateFlow` of grants refreshed on every resume |
 | `data` | Room `TrailDb` (waypoints, trips + stops, tracks + points, pressure samples), DataStore `Prefs`, repositories, SAF `ImportExport` |
