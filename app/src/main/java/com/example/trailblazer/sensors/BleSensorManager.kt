@@ -16,6 +16,7 @@ import android.content.Context
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import com.example.trailblazer.location.Fix
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -108,6 +109,7 @@ interface BleTransport {
         onDisconnected: () -> Unit,
         onLocationData: (ByteArray) -> Unit,
         onPositionQualityData: (ByteArray) -> Unit,
+        onLnFeatureData: (ByteArray) -> Unit,
         onNmeaData: (String) -> Unit,
         onPressureData: (Double) -> Unit,
         onTemperatureData: (Double) -> Unit,
@@ -211,6 +213,7 @@ class BleSensorManager(
             },
             onLocationData = { data -> pipeline.onLocationAndSpeed(data)?.let { _locationStream.tryEmit(it) } },
             onPositionQualityData = { data -> pipeline.onPositionQuality(data) },
+            onLnFeatureData = { data -> pipeline.onLnFeature(data) },
             onNmeaData = { chunk -> onNmea(chunk) },
             onPressureData = { p -> _pressureStream.tryEmit(p) },
             onTemperatureData = { t -> _temperatureStream.tryEmit(t) },
@@ -357,7 +360,9 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
         activeScanCallback = null
         try {
             adapter?.bluetoothLeScanner?.stopScan(cb)
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.w(TAG, "Stopping the BLE scan failed: ${e.javaClass.simpleName}") // non-fatal; the scan is already forgotten
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -367,6 +372,7 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
         onDisconnected: () -> Unit,
         onLocationData: (ByteArray) -> Unit,
         onPositionQualityData: (ByteArray) -> Unit,
+        onLnFeatureData: (ByteArray) -> Unit,
         onNmeaData: (String) -> Unit,
         onPressureData: (Double) -> Unit,
         onTemperatureData: (Double) -> Unit,
@@ -384,7 +390,7 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
         disconnect()
 
         val s = GattSession(
-            onConnected, onDisconnected, onLocationData, onPositionQualityData, onNmeaData,
+            onConnected, onDisconnected, onLocationData, onPositionQualityData, onLnFeatureData, onNmeaData,
             onPressureData, onTemperatureData, onHumidityData, onError,
         )
         session = s
@@ -426,6 +432,7 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
         private val onDisconnected: () -> Unit,
         private val onLocationData: (ByteArray) -> Unit,
         private val onPositionQualityData: (ByteArray) -> Unit,
+        private val onLnFeatureData: (ByteArray) -> Unit,
         private val onNmeaData: (String) -> Unit,
         private val onPressureData: (Double) -> Unit,
         private val onTemperatureData: (Double) -> Unit,
@@ -434,6 +441,7 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
     ) : BluetoothGattCallback() {
         @Volatile private var gatt: BluetoothGatt? = null
         @Volatile private var closed = false
+        @Volatile private var planned = false
         @Volatile private var plan = BleGattPlan(emptyList(), emptyMap())
         private val failedOps = HashSet<GattOp>()
 
@@ -450,9 +458,14 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
             if (closed) closeGatt(g)
         }
 
-        /** Closes the connection and ignores everything it still delivers. Reports nothing. */
+        /**
+         * Closes the connection and ignores everything it still delivers. Reports nothing. Idempotent, and it forgets this
+         * session in the transport, so a later [disconnect] cannot close the same GATT client a second time.
+         */
         fun shutdown() {
+            if (closed) return
             closed = true
+            if (session === this) session = null
             queue.clear()
             gatt?.let(::closeGatt)
         }
@@ -467,7 +480,9 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
             try {
                 g.disconnect()
                 g.close()
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                Log.w(TAG, "Closing the GATT client failed: ${e.javaClass.simpleName}") // non-fatal; the class only, never the device address
+            }
         }
 
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
@@ -493,7 +508,9 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            if (closed) return
+            // Android re-delivers this after a Service Changed indication; the connection is already set up and running, so a
+            // second delivery must not queue the same subscriptions again or report "connected" twice.
+            if (closed || planned) return
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 fail("Failed to discover GATT services: $status")
                 return
@@ -516,6 +533,7 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
                 return
             }
             plan = p
+            planned = true
             queue.enqueue(p.ops)
         }
 
@@ -598,6 +616,7 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
             when (BleGattPlanner.channelOf(service, ch.uuid)) {
                 BleChannel.LocationAndSpeed -> onLocationData(value)
                 BleChannel.PositionQuality -> onPositionQualityData(value)
+                BleChannel.LnFeature -> onLnFeatureData(value)
                 BleChannel.Pressure -> BleEssParser.parsePressure(value)?.let(onPressureData)
                 BleChannel.Temperature -> BleEssParser.parseTemperature(value)?.let(onTemperatureData)
                 BleChannel.Humidity -> BleEssParser.parseHumidity(value)?.let(onHumidityData)
@@ -610,5 +629,6 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
     private companion object {
         /** A GATT operation that has not completed after this long is abandoned and the queue moves on. */
         const val OP_TIMEOUT_MS = 5_000L
+        const val TAG = "BleTransport"
     }
 }

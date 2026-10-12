@@ -88,7 +88,7 @@ class BleSensorManagerTest {
         val job = scope.launch { manager.locationStream.collect { fixes.add(it) } }
 
         // Build a sample LNS Location and Speed (0x2A67) packet
-        // Flags: 0x1F = speed(bit0) | dist(bit1) | loc(bit2) | elev(bit3) | heading(bit4) | Position Status Ok (bits 7-8 = 1)
+        // Flags: 0x1F = speed(bit0) | dist(bit1) | loc(bit2) | elev(bit3) | heading(bit4)
         // flags: 2 bytes (0x1F, 0x00)
         // speed: 2 bytes uint16 in 0.01 m/s -> 15.5 m/s = 1550 = 0x060E -> (0x0E, 0x06)
         // distance: 3 bytes (ignored) -> (0x00, 0x00, 0x00)
@@ -97,7 +97,7 @@ class BleSensorManagerTest {
         // elev: 3 bytes sint24 in 0.01 m -> 2100.5 m = 210050 = 0x033482 -> (0x82, 0x34, 0x03)
         // heading: 2 bytes uint16 in 0.01 deg -> 180.25 deg = 18025 = 0x4669 -> (0x69, 0x46)
         val data = byteArrayOf(
-            0x9F.toByte(), 0x00.toByte(), // 0x1F | Position Status "Position Ok" (1 shl 7)
+            0x1F.toByte(), 0x00.toByte(),
             0x0E.toByte(), 0x06.toByte(),
             0x00.toByte(), 0x00.toByte(), 0x00.toByte(),
             0xB0.toByte(), 0x37.toByte(), 0xC0.toByte(), 0x1B.toByte(),

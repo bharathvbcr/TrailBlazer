@@ -75,6 +75,18 @@ class BleFixRecordingTest {
     }
 
     @Test
+    fun aReceiverWithoutPositionStatusSupportIsRecordedDespiteItsZeroStatusBits() = runBlocking {
+        val pipeline = BleLocationPipeline(clock) // LN Feature never read, or read and bit 20 clear
+        val recorder = TrackRecorder(db.tracks(), clock)
+        recorder.openOrStart("BLE")
+        assertTrue(recorder.offer(pipeline.onLocationAndSpeed(lnsLocation(46.5000, 7.8000, BlePositionStatus.NO_POSITION))!!))
+        now += 1_000
+        pipeline.onLnFeature(Frame().u32(0x1F).toBytes())
+        assertTrue(recorder.offer(pipeline.onLocationAndSpeed(lnsLocation(46.5006, 7.8000, BlePositionStatus.NO_POSITION))!!))
+        assertEquals(2, recorder.pointCount)
+    }
+
+    @Test
     fun aReceiverReportingPoorAccuracyIsStillRefusedAndAnEstimatedPositionIsNeverRecorded() = runBlocking {
         val recorder = TrackRecorder(db.tracks(), clock)
         recorder.openOrStart("BLE")
@@ -84,7 +96,9 @@ class BleFixRecordingTest {
         assertFalse("EHPE of 80 m is over the 30 m gate", recorder.offer(pipeline.onLocationAndSpeed(lnsLocation(46.5, 7.8))!!))
 
         now += 1_000
-        val estimated = BleLocationPipeline(clock).onLocationAndSpeed(lnsLocation(46.6, 7.8, BlePositionStatus.ESTIMATED))!!
+        // "Estimated" is only meaningful from a device that declared Position Status support in LN Feature (bit 20).
+        val statusAware = BleLocationPipeline(clock).also { it.onLnFeature(Frame().u32(1L shl 20).toBytes()) }
+        val estimated = statusAware.onLocationAndSpeed(lnsLocation(46.6, 7.8, BlePositionStatus.ESTIMATED))!!
         assertFalse("an estimated position is shown, not recorded", recorder.offer(estimated))
         assertEquals(0, recorder.pointCount)
     }

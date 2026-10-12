@@ -225,6 +225,41 @@ class BleSensorManagerLifecycleTest {
     }
 
     @Test
+    fun positionStatusIsEnforcedOnlyOnceTheDeviceDeclaresItInLnFeature() = runTest {
+        val m = manager()
+        val fixes = collectFixes(m)
+        val statusZeroFrame = lnsLocation(46.5, 7.8, BlePositionStatus.NO_POSITION)
+        m.connect("00:11:22:33:44:55", "Receiver")
+        transport.emitConnected(setOf(BleServiceType.Location))
+
+        // LN Feature not read yet (or the read failed): a device without Position Status must not lose fixes.
+        transport.emitLocation(statusZeroFrame)
+        assertEquals(1, fixes.size)
+        assertEquals(BleFixPolicy.DEFAULT_ACCURACY_M, fixes[0].accuracyM!!, 0.0)
+
+        transport.emitLnFeature(Frame().u32(0x1F).toBytes()) // bit 20 clear
+        transport.emitLocation(statusZeroFrame)
+        assertEquals(2, fixes.size)
+
+        transport.emitLnFeature(Frame().u32(1L shl 20).toBytes()) // Position Status Supported
+        transport.emitLocation(statusZeroFrame)
+        assertEquals("a device that reports status 'No Position' is believed", 2, fixes.size)
+        transport.emitLocation(lnsLocation(46.5, 7.8, BlePositionStatus.POSITION_OK))
+        assertEquals(3, fixes.size)
+
+        // A malformed feature value changes nothing.
+        transport.emitLnFeature(byteArrayOf(0x00))
+        transport.emitLocation(statusZeroFrame)
+        assertEquals(3, fixes.size)
+
+        // The next connection starts from "not supported" again.
+        m.disconnect()
+        m.connect("00:11:22:33:44:55", "Receiver")
+        transport.emitLocation(statusZeroFrame)
+        assertEquals(4, fixes.size)
+    }
+
+    @Test
     fun positionQualityGoesStaleAndIsForgottenOnDisconnect() = runTest {
         var now = clock.nowMs()
         val m = BleSensorManager(transport, backgroundScope, clock = Clock { now })

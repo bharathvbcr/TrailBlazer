@@ -96,6 +96,8 @@ class NmeaParserTest {
         assertEquals(BleFixPolicy.DEFAULT_ACCURACY_M, NmeaParser.parse(rmc(), clock)!!.accuracyM!!, 0.0)
         assertEquals(BleFixPolicy.DEFAULT_ACCURACY_M, NmeaParser.parse(gll(), clock)!!.accuracyM!!, 0.0)
         assertEquals("blank HDOP", BleFixPolicy.DEFAULT_ACCURACY_M, NmeaParser.parse(gga(hdop = ""), clock)!!.accuracyM!!, 0.0)
+        assertEquals("HDOP 0.0 means unknown, not a perfect fix", BleFixPolicy.DEFAULT_ACCURACY_M, NmeaParser.parse(gga(hdop = "0.0"), clock)!!.accuracyM!!, 0.0)
+        assertEquals("HDOP 0", BleFixPolicy.DEFAULT_ACCURACY_M, NmeaParser.parse(gga(hdop = "0"), clock)!!.accuracyM!!, 0.0)
         assertTrue("TrackRecorder.MAX_ACCURACY_M is 30", BleFixPolicy.DEFAULT_ACCURACY_M < 30.0)
         assertTrue(BleFixPolicy.ESTIMATED_ACCURACY_M > 30.0)
     }

@@ -125,6 +125,37 @@ class BleGattPlannerTest {
     }
 
     @Test
+    fun lnFeatureIsReadOnceBeforeTheLocationNotificationsAreEnabled() {
+        val plan = BleGattPlanner.plan(
+            listOf(
+                GattServiceInfo(
+                    BleUuids.LNS_SERVICE,
+                    listOf(notify(BleUuids.LOCATION_AND_SPEED), notify(BleUuids.POSITION_QUALITY), read(BleUuids.LN_FEATURE)),
+                ),
+            ),
+        )
+        val feature = GattOp.Read(BleUuids.LNS_SERVICE, BleUuids.LN_FEATURE)
+        assertEquals(GattOp.RequestMtu(BleGattPlanner.PREFERRED_MTU), plan.ops[0])
+        assertEquals("the feature read precedes every notification so the first fix is judged correctly", feature, plan.ops[1])
+        assertEquals(1, plan.ops.count { it == feature })
+        // The read refines how fixes are judged; if it fails the device still provides a position.
+        assertEquals(setOf(BleServiceType.Location), plan.servicesAfter(setOf(feature)))
+        assertEquals(BleChannel.LnFeature, BleGattPlanner.channelOf(BleUuids.LNS_SERVICE, BleUuids.LN_FEATURE))
+    }
+
+    @Test
+    fun anLnFeatureThatCannotBeReadOrIsAloneAddsNothing() {
+        val noRead = BleGattPlanner.plan(
+            listOf(GattServiceInfo(BleUuids.LNS_SERVICE, listOf(notify(BleUuids.LOCATION_AND_SPEED), notify(BleUuids.LN_FEATURE)))),
+        )
+        assertTrue("never subscribed to as if it were data", noRead.ops.none { it.characteristic == BleUuids.LN_FEATURE })
+        val alone = BleGattPlanner.plan(listOf(GattServiceInfo(BleUuids.LNS_SERVICE, listOf(read(BleUuids.LN_FEATURE)))))
+        assertTrue(alone.ops.isEmpty())
+        val absent = BleGattPlanner.plan(listOf(GattServiceInfo(BleUuids.LNS_SERVICE, listOf(notify(BleUuids.LOCATION_AND_SPEED)))))
+        assertTrue(absent.ops.none { it is GattOp.Read })
+    }
+
+    @Test
     fun duplicateCharacteristicsProduceOneOperation() {
         val plan = BleGattPlanner.plan(
             listOf(GattServiceInfo(BleUuids.ESS_SERVICE, listOf(notify(BleUuids.PRESSURE), notify(BleUuids.PRESSURE)))),

@@ -13,6 +13,7 @@ class BleLocationPipeline(private val clock: Clock) {
     private val merger = NmeaEpochMerger(clock)
     private var quality: BlePositionQuality? = null
     private var qualityAtMs = 0L
+    private var positionStatusSupported = false
 
     /** True while a received NMEA epoch is waiting for its other sentences; the owner flushes it after a short delay. */
     val hasPendingNmea: Boolean get() = synchronized(lock) { merger.hasPending }
@@ -38,16 +39,26 @@ class BleLocationPipeline(private val clock: Clock) {
         }
     }
 
+    /**
+     * The LN Feature value read from the device. Until it arrives (or if the read fails or is malformed) the device is
+     * assumed not to report Position Status, so no fix is dropped for want of it.
+     */
+    fun onLnFeature(data: ByteArray) {
+        val supported = BleLnFeatureParser.positionStatusSupported(data) ?: return
+        synchronized(lock) { positionStatusSupported = supported }
+    }
+
     /** An LNS frame as a fix, using the Position Quality received at most [BleFixPolicy.MAX_QUALITY_AGE_MS] ago. */
     fun onLocationAndSpeed(data: ByteArray): Fix? = synchronized(lock) {
         val fresh = quality?.takeIf { clock.nowMs() - qualityAtMs in 0..BleFixPolicy.MAX_QUALITY_AGE_MS }
-        BleLnsParser.parse(data, clock, fresh)
+        BleLnsParser.parse(data, clock, fresh, positionStatusSupported)
     }
 
-    /** Drops partial text, the open epoch and the quality sample (on disconnect or error). */
+    /** Drops partial text, the open epoch, the quality sample and the feature bits (on disconnect or error). */
     fun reset() = synchronized(lock) {
         lines.clear()
         merger.reset()
         quality = null
+        positionStatusSupported = false
     }
 }

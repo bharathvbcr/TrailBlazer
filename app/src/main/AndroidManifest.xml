@@ -17,7 +17,18 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <!--
+      neverForLocation: TrailBlazer scans only to list nearby sensors and never derives the phone's position from scan
+      results (fixes come over GATT from the receiver the user picked). This narrows what the app asserts and widens no
+      access; Android 12+ then needs no location permission for the scan, and filters out some beacon advertisements, which
+      does not affect the Location and Navigation, Environmental Sensing or Nordic UART peripherals used here.
+      ACCESS_FINE_LOCATION above stays unrestricted because the phone's own GPS needs it. See
+      https://developer.android.com/develop/connectivity/bluetooth/bt-permissions
+    -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />

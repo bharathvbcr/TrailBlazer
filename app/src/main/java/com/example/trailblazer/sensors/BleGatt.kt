@@ -117,18 +117,17 @@ class GattOpQueue(
                 }
                 return
             }
+            // The operation is current *before* it starts, so a completion delivered synchronously from inside [execute]
+            // (a test double, or a stack that calls back on the caller's thread) is matched instead of lost.
+            val g = ++generation
+            current = next
+            cancelTimeout = scheduler.schedule(timeoutMs) { onTimeout(g) }
             val started = try {
                 execute(next)
             } catch (_: RuntimeException) {
                 false
             }
-            if (!started) {
-                onFinished(next, GattOpResult.Failed)
-                continue
-            }
-            current = next
-            val g = ++generation
-            cancelTimeout = scheduler.schedule(timeoutMs) { onTimeout(g) }
+            if (!started && generation == g && current === next) finishCurrent(next, GattOpResult.Failed)
         }
     }
 }
@@ -139,7 +138,7 @@ data class GattCharacteristicInfo(val uuid: UUID, val canNotify: Boolean, val ca
 data class GattServiceInfo(val uuid: UUID, val characteristics: List<GattCharacteristicInfo>)
 
 /** Which characteristic a notification or read belongs to, decided by service and characteristic together. */
-enum class BleChannel { LocationAndSpeed, PositionQuality, Pressure, Temperature, Humidity, NmeaSerial }
+enum class BleChannel { LocationAndSpeed, PositionQuality, LnFeature, Pressure, Temperature, Humidity, NmeaSerial }
 
 /**
  * The operations to run after service discovery, and the capability each of them provides. A peripheral is only reported as
@@ -164,6 +163,7 @@ object BleGattPlanner {
     private val channels: Map<Pair<java.util.UUID, java.util.UUID>, BleChannel> = mapOf(
         (BleUuids.LNS_SERVICE to BleUuids.LOCATION_AND_SPEED) to BleChannel.LocationAndSpeed,
         (BleUuids.LNS_SERVICE to BleUuids.POSITION_QUALITY) to BleChannel.PositionQuality,
+        (BleUuids.LNS_SERVICE to BleUuids.LN_FEATURE) to BleChannel.LnFeature,
         (BleUuids.ESS_SERVICE to BleUuids.PRESSURE) to BleChannel.Pressure,
         (BleUuids.ESS_SERVICE to BleUuids.TEMPERATURE) to BleChannel.Temperature,
         (BleUuids.ESS_SERVICE to BleUuids.HUMIDITY) to BleChannel.Humidity,
@@ -175,7 +175,7 @@ object BleGattPlanner {
 
     private fun capabilityOf(channel: BleChannel): BleServiceType? = when (channel) {
         BleChannel.LocationAndSpeed -> BleServiceType.Location
-        BleChannel.PositionQuality -> null // refines the location fix, provides nothing on its own
+        BleChannel.PositionQuality, BleChannel.LnFeature -> null // refine the location fix, provide nothing on their own
         BleChannel.Pressure -> BleServiceType.Pressure
         BleChannel.Temperature -> BleServiceType.Temperature
         BleChannel.Humidity -> BleServiceType.Humidity
@@ -185,14 +185,22 @@ object BleGattPlanner {
     /**
      * Subscribes to exactly the known characteristics a peripheral offers: nothing else is touched, and in particular an
      * unknown vendor service is never treated as an NMEA source. Position Quality is subscribed to when it notifies and read
-     * once when it only supports reads. The MTU request comes first so it is settled before the notification traffic starts.
+     * once when it only supports reads. LN Feature (0x2A6A) is read once, before the location notifications are enabled, so
+     * the parser knows whether the device reports Position Status. The MTU request comes first so it is settled before the
+     * notification traffic starts.
      */
     fun plan(services: List<GattServiceInfo>): BleGattPlan {
+        val reads = ArrayList<GattOp>()
         val ops = ArrayList<GattOp>()
         val provides = LinkedHashMap<GattOp, BleServiceType>()
         for (service in services) {
             for (ch in service.characteristics) {
                 val channel = channelOf(service.uuid, ch.uuid) ?: continue
+                if (channel == BleChannel.LnFeature) {
+                    val read = GattOp.Read(service.uuid, ch.uuid)
+                    if (ch.canRead && read !in reads) reads += read
+                    continue
+                }
                 val op: GattOp = when {
                     ch.canNotify -> GattOp.EnableNotify(service.uuid, ch.uuid)
                     channel == BleChannel.PositionQuality && ch.canRead -> GattOp.Read(service.uuid, ch.uuid)
@@ -204,6 +212,6 @@ object BleGattPlanner {
             }
         }
         if (provides.isEmpty()) return BleGattPlan(emptyList(), emptyMap())
-        return BleGattPlan(listOf<GattOp>(GattOp.RequestMtu(PREFERRED_MTU)) + ops, provides)
+        return BleGattPlan(listOf<GattOp>(GattOp.RequestMtu(PREFERRED_MTU)) + reads + ops, provides)
     }
 }

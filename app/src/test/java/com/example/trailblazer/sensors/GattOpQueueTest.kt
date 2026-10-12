@@ -220,6 +220,24 @@ class GattOpQueueTest {
     }
 
     @Test
+    fun aCompletionDeliveredFromInsideTheExecutorIsNotLost() {
+        lateinit var q: GattOpQueue
+        q = GattOpQueue(
+            timeoutMs = 1_000,
+            scheduler = scheduler,
+            execute = { op -> started += op; q.complete(op.kind, op.characteristic, true); true }, // the stack answers on the caller's thread
+            onFinished = { op, r -> finished += op to r },
+            onDrained = { drained++ },
+        )
+        q.enqueue(listOf(a, b, c))
+        assertEquals(listOf<GattOp>(a, b, c), started)
+        assertEquals(listOf(a to GattOpResult.Success, b to GattOpResult.Success, c to GattOpResult.Success), finished)
+        assertEquals(1, drained)
+        assertTrue(q.isIdle)
+        assertTrue("no timer left running", scheduler.live.isEmpty())
+    }
+
+    @Test
     fun theMtuRequestIsMatchedByKindAlone() {
         val mtu = GattOp.RequestMtu(247)
         queue.enqueue(listOf(mtu, a))

@@ -38,24 +38,44 @@ object BlePositionQualityParser {
         if (flags and 0x40 != 0) r.skip(1) ?: return null
         return BlePositionQuality(
             positionStatus = (flags shr 7) and 0x03,
-            ehpeM = ehpe?.takeIf { it.isFinite() && it <= BleFixPolicy.MAX_ACCURACY_M },
-            hdop = hdop?.takeIf { it.isFinite() },
+            ehpeM = ehpe?.takeIf { it.isFinite() && it > 0.0 && it <= BleFixPolicy.MAX_ACCURACY_M }, // 0 means unknown, not exact
+            hdop = hdop?.takeIf { it.isFinite() && it > 0.0 },
         )
     }
 }
 
 /**
+ * Parses the LN Feature characteristic (0x2A6A): a uint32 of "supported" bits. Bit 20 is Position Status Supported; a device
+ * without it sends 0 in the Position Status bits of every frame, whatever the quality of the fix.
+ */
+object BleLnFeatureParser {
+    private const val POSITION_STATUS_SUPPORTED = 1L shl 20
+
+    /** Whether the device reports Position Status, or null if [data] is not a 4-byte feature field. */
+    fun positionStatusSupported(data: ByteArray): Boolean? =
+        LeReader(data).u32()?.let { (it and POSITION_STATUS_SUPPORTED) != 0L }
+}
+
+/**
  * Parses the Bluetooth SIG Location and Speed characteristic (0x2A67). Flags uint16: bit 0 speed, 1 total distance, 2 location,
- * 3 elevation, 4 heading, 5 rolling time, 6 UTC time, 7-8 Position Status. A frame is a fix only when it carries a location
- * and its Position Status is Position Ok or Estimated; No Position and Last Known frames hold stale or meaningless
- * coordinates and are rejected. An Estimated position is returned with [BleFixPolicy.ESTIMATED_ACCURACY_M] so it can be shown
- * but not recorded.
+ * 3 elevation, 4 heading, 5 rolling time, 6 UTC time, 7-8 Position Status. A frame is a fix only when it carries a location.
+ *
+ * Position Status is honoured only when the device declares it in LN Feature ([positionStatusSupported], bit 20): then
+ * No Position and Last Known frames hold stale or meaningless coordinates and are rejected, and an Estimated position is
+ * returned with [BleFixPolicy.ESTIMATED_ACCURACY_M] so it can be shown but not recorded. A device that does not support it
+ * sends 0 next to valid coordinates, so those bits are ignored and the fix is taken as valid. [positionStatusSupported] is
+ * false until the LN Feature read has completed, and stays false if it fails: a pending or failed read never drops fixes.
  */
 object BleLnsParser {
-    fun parse(data: ByteArray, clock: Clock = Clock.System, quality: BlePositionQuality? = null): Fix? {
+    fun parse(
+        data: ByteArray,
+        clock: Clock = Clock.System,
+        quality: BlePositionQuality? = null,
+        positionStatusSupported: Boolean = false,
+    ): Fix? {
         val r = LeReader(data)
         val flags = r.u16() ?: return null
-        val status = (flags shr 7) and 0x03
+        val status = if (positionStatusSupported) (flags shr 7) and 0x03 else BlePositionStatus.POSITION_OK
         if (status != BlePositionStatus.POSITION_OK && status != BlePositionStatus.ESTIMATED) return null
 
         var speedMps: Double? = null
@@ -87,8 +107,11 @@ object BleLnsParser {
         }
 
         val nowMs = clock.nowMs()
-        var accuracy = quality?.takeIf { it.positionStatus == BlePositionStatus.POSITION_OK || it.positionStatus == BlePositionStatus.ESTIMATED }
-            ?.let { it.ehpeM ?: BleFixPolicy.accuracyFromHdop(it.hdop) }
+        // A quality sample that itself says No Position / Last Known describes nothing; a device without Position Status always says 0.
+        var accuracy = quality?.takeIf {
+            !positionStatusSupported || it.positionStatus == BlePositionStatus.POSITION_OK || it.positionStatus == BlePositionStatus.ESTIMATED
+        }
+            ?.let { it.ehpeM?.takeIf { e -> e > 0.0 } ?: BleFixPolicy.accuracyFromHdop(it.hdop) }
             ?: BleFixPolicy.DEFAULT_ACCURACY_M
         if (status == BlePositionStatus.ESTIMATED) accuracy = maxOf(accuracy, BleFixPolicy.ESTIMATED_ACCURACY_M)
 

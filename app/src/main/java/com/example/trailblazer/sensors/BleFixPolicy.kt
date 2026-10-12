@@ -32,9 +32,9 @@ object BleFixPolicy {
 
     private const val DAY_MS = 86_400_000L
 
-    /** Accuracy from an HDOP figure, or null when the figure is not a usable number. */
+    /** Accuracy from an HDOP figure, or null when it is not a usable number. Zero (and below) means "unknown" for many receivers, not "perfect", so it is no accuracy either. */
     fun accuracyFromHdop(hdop: Double?): Double? =
-        hdop?.takeIf { it.isFinite() && it >= 0.0 }?.times(HDOP_TO_METERS)?.takeIf { it <= MAX_ACCURACY_M }
+        hdop?.takeIf { it.isFinite() && it > 0.0 }?.times(HDOP_TO_METERS)?.takeIf { it <= MAX_ACCURACY_M }
 
     /**
      * Turns a UTC time of day into epoch milliseconds. A receiver date ([epochDay], days since 1970) is used when it agrees

@@ -21,6 +21,7 @@ class FakeBleTransport : BleTransport {
     private var onDisconnectedCallback: (() -> Unit)? = null
     private var onLocationDataCallback: ((ByteArray) -> Unit)? = null
     private var onPositionQualityCallback: ((ByteArray) -> Unit)? = null
+    private var onLnFeatureCallback: ((ByteArray) -> Unit)? = null
     private var onNmeaDataCallback: ((String) -> Unit)? = null
     private var onPressureDataCallback: ((Double) -> Unit)? = null
     private var onTemperatureDataCallback: ((Double) -> Unit)? = null
@@ -56,6 +57,7 @@ class FakeBleTransport : BleTransport {
         onDisconnected: () -> Unit,
         onLocationData: (ByteArray) -> Unit,
         onPositionQualityData: (ByteArray) -> Unit,
+        onLnFeatureData: (ByteArray) -> Unit,
         onNmeaData: (String) -> Unit,
         onPressureData: (Double) -> Unit,
         onTemperatureData: (Double) -> Unit,
@@ -68,6 +70,7 @@ class FakeBleTransport : BleTransport {
         onDisconnectedCallback = onDisconnected
         onLocationDataCallback = onLocationData
         onPositionQualityCallback = onPositionQualityData
+        onLnFeatureCallback = onLnFeatureData
         onNmeaDataCallback = onNmeaData
         onPressureDataCallback = onPressureData
         onTemperatureDataCallback = onTemperatureData
@@ -104,6 +107,10 @@ class FakeBleTransport : BleTransport {
 
     fun emitPositionQuality(bytes: ByteArray) {
         onPositionQualityCallback?.invoke(bytes)
+    }
+
+    fun emitLnFeature(bytes: ByteArray) {
+        onLnFeatureCallback?.invoke(bytes)
     }
 
     fun emitNmea(chunk: String) {
