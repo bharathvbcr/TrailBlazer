@@ -75,7 +75,8 @@ class BarometerRepository(
         if (bleSensors != null) {
             emitAll(
                 bleSensors.connectionState.flatMapLatest { state ->
-                    if (state is BleConnectionState.Connected && state.hasEnvironmental) {
+                    // Only a peripheral whose Pressure characteristic is actually subscribed replaces the phone barometer.
+                    if (state is BleConnectionState.Connected && state.hasPressure) {
                         flow {
                             val bleMedian = MedianFilter(5)
                             emit(Reading.Acquiring)
@@ -109,16 +110,44 @@ class MagneticRepository(source: SensorSource, scope: CoroutineScope, clock: Clo
         }.shareReading(scope)
 }
 
-/** Ambient sensors that only some phones have; each is independently Unavailable when absent. */
-class EnvironmentRepository(private val source: SensorSource, private val scope: CoroutineScope, private val clock: Clock) {
-    private fun single(type: Int, range: ClosedFloatingPointRange<Double>) =
-        source.reading(type, SensorManager.SENSOR_DELAY_NORMAL, clock) { s ->
+/**
+ * Ambient sensors that only some phones have; each is independently Unavailable when absent. Temperature and humidity come
+ * from a connected BLE environmental sensor while it provides that channel, and from the phone otherwise.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+class EnvironmentRepository(
+    private val source: SensorSource,
+    private val scope: CoroutineScope,
+    private val clock: Clock,
+    private val bleSensors: BleSensorManager? = null,
+) {
+    private fun single(
+        type: Int,
+        range: ClosedFloatingPointRange<Double>,
+        hasChannel: (BleConnectionState.Connected) -> Boolean = { false },
+        external: Flow<Double>? = null,
+    ): StateFlow<Reading<Double>> {
+        val internal = source.reading(type, SensorManager.SENSOR_DELAY_NORMAL, clock) { s ->
             s.values.firstOrNull()?.toDouble()?.takeIf { it.isFinite() && it in range }
+        }
+        if (bleSensors == null || external == null) return internal.shareReading(scope)
+        return bleSensors.connectionState.flatMapLatest { state ->
+            if (state is BleConnectionState.Connected && hasChannel(state)) {
+                flow {
+                    emit(Reading.Acquiring)
+                    external.collect { emit(Reading.Value(it, Accuracy.High, clock.nowMs())) }
+                }
+            } else {
+                internal
+            }
         }.shareReading(scope)
+    }
 
     val lightLux: StateFlow<Reading<Double>> = single(Sensor.TYPE_LIGHT, 0.0..200_000.0)
-    val temperatureC: StateFlow<Reading<Double>> = single(Sensor.TYPE_AMBIENT_TEMPERATURE, -60.0..70.0)
-    val humidityPct: StateFlow<Reading<Double>> = single(Sensor.TYPE_RELATIVE_HUMIDITY, 0.0..100.0)
+    val temperatureC: StateFlow<Reading<Double>> =
+        single(Sensor.TYPE_AMBIENT_TEMPERATURE, -60.0..70.0, { it.hasTemperature }, bleSensors?.temperatureStream)
+    val humidityPct: StateFlow<Reading<Double>> =
+        single(Sensor.TYPE_RELATIVE_HUMIDITY, 0.0..100.0, { it.hasHumidity }, bleSensors?.humidityStream)
 }
 
 /** Raw motion vectors for the level, vehicle tilt and the 3D plot. */

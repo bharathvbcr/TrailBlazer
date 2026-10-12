@@ -45,6 +45,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -123,13 +124,18 @@ fun TripsScreen(nav: Navigator) {
     }
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         ctx.container.permissions.refresh()
-        if (ctx.container.permissions.isGranted(AppPermission.Location)) vm.startRecording()
+        // Whatever the user allowed, the controller starts or says (in a message) what is still missing.
+        vm.startRecording()
     }
 
-    /** Location is required. Notifications are asked with it the first time, and never block a later start. */
+    /**
+     * Precise location is required: approximate fixes are too coarse to record, and Android shows its approximate to
+     * precise upgrade prompt when both location permissions are asked for again. Notifications are asked with it the
+     * first time, and never block a later start.
+     */
     fun startRecording() {
         val needs = permissionsToRequest(
-            locationGranted = AppPermission.Location in granted,
+            locationGranted = AppPermission.PreciseLocation in granted,
             notificationsGranted = AppPermission.Notifications in granted,
             location = AppPermission.Location.manifest,
             notifications = AppPermission.Notifications.manifest,
@@ -303,7 +309,7 @@ fun TripsScreen(nav: Navigator) {
                         fmt = fmt,
                         onStart = { startRecording() },
                         onPause = { vm.pauseRecording() },
-                        onResume = { if (!vm.resumeRecording()) startRecording() },
+                        onResume = { if (AppPermission.PreciseLocation in granted) vm.resumeRecording() else startRecording() },
                         onStop = { vm.stopRecording() },
                     )
                 }
@@ -480,6 +486,8 @@ private fun RecorderCard(
         if (open == null) {
             Text("Record a track", style = MaterialTheme.typography.titleMedium)
             Text("Uses GPS in the background with a notification you can pause or stop from.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // A start that failed before any track existed (a full disk, say) leaves no track to hang the reason on.
+            interrupted?.let { InterruptNote(it) }
             Spacer(Modifier.height(12.dp))
             Button(onClick = onStart, modifier = Modifier.fillMaxWidth().height(48.dp), shape = CircleShape) {
                 Icon(TrailIcons.Record, null, Modifier.size(18.dp))
@@ -499,16 +507,7 @@ private fun RecorderCard(
             color = if (live) status.danger else status.caution,
             style = MaterialTheme.typography.labelLarge,
         )
-        interrupted?.let {
-            Text(
-                when (it) {
-                    InterruptReason.LocationPermissionRevoked -> "Stopped because location permission was removed."
-                    InterruptReason.LocationDisabled -> "Stopped because location was turned off."
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = status.caution,
-            )
-        }
+        interrupted?.let { InterruptNote(it) }
         Text("${fmt.distance(open.distanceM)} · ↑${fmt.elevation(open.gainM)} · ${open.pointCount} points", style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -517,6 +516,11 @@ private fun RecorderCard(
             OutlinedButton(onClick = onStop, modifier = Modifier.weight(1f)) { Icon(TrailIcons.Stop, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("Finish") }
         }
     }
+}
+
+@Composable
+private fun InterruptNote(reason: InterruptReason) {
+    Text(stringResource(reason.messageRes), style = MaterialTheme.typography.bodySmall, color = LocalStatusColors.current.caution)
 }
 
 @Composable

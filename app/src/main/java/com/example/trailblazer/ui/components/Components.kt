@@ -1,7 +1,10 @@
 package com.example.trailblazer.ui.components
 
+import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.core.net.toUri
 import android.provider.Settings as AndroidSettings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -482,5 +485,14 @@ fun EmptyState(title: String, body: String, modifier: Modifier = Modifier, icon:
         Text(title, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
         Spacer(Modifier.height(6.dp))
         Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+    }
+}
+
+/** Opens [url] in whatever app handles it; when there is none, reports it through [onError] instead of crashing. */
+internal fun openUrl(ctx: Context, url: String, onError: (String) -> Unit) {
+    try {
+        ctx.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
+    } catch (_: ActivityNotFoundException) {
+        onError("No app on this phone can open this link.")
     }
 }

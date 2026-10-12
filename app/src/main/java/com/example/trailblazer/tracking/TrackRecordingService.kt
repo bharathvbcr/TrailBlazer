@@ -11,166 +11,198 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.example.trailblazer.MainActivity
 import com.example.trailblazer.R
 import com.example.trailblazer.container
 import com.example.trailblazer.data.TrackState
+import com.example.trailblazer.location.Fix
 import com.example.trailblazer.permissions.AppPermission
 import com.trailblazer.core.sensors.Reading
 import com.trailblazer.core.sensors.UnavailableReason
 import com.trailblazer.core.units.Length
 import com.trailblazer.core.units.UnitSystem
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.Locale
-
-/** Why recording stopped on its own, shown on the Tracks screen. */
-enum class InterruptReason { LocationPermissionRevoked, LocationDisabled }
 
 /**
  * Foreground service (type location) that records a track while the screen is off. It holds no state
  * that is not also in Room: if the process dies, the open track is resumed from the database the next
- * time the app is in the foreground.
+ * time the app is in the foreground. The service is not sticky on purpose: Android will not let a restarted
+ * service enter the foreground with the location type while the app is in the background, so a system restart
+ * could only crash (see [onStartCommand]).
+ *
+ * The recording lifecycle itself lives in [RecordingSession]; this class owns the foreground notification and
+ * what happens to the service when the session stops.
  */
-class TrackRecordingService : LifecycleService() {
+class TrackRecordingService : LifecycleService(), RecordingSession.Listener {
     private lateinit var recorder: TrackRecorder
-    private var collectJob: Job? = null
-    private var tickJob: Job? = null
-    private val lock = Mutex()
-    private var units = UnitSystem.Metric
+    private lateinit var session: RecordingSession
     private lateinit var dutyCycle: GnssDutyCycle
+    private var units = UnitSystem.Metric
+    private var foreground = false
+    private var latestStartId = 0
 
-    /** True while the GNSS receiver sleeps because the phone is lying still. */
-    private var resting = false
+    /** What the notification currently shows, so an unchanged one is not posted again. */
+    private var lastRendered: Rendered? = null
 
     override fun onCreate() {
         super.onCreate()
         recorder = TrackRecorder(container.db.tracks(), container.clock)
         dutyCycle = GnssDutyCycle(container.sensorSource)
+        session = RecordingSession(
+            scope = lifecycleScope,
+            recorder = recorder,
+            readings = ::readings,
+            noteMovement = dutyCycle::noteMovement,
+            defaultName = ::defaultName,
+            permissionLoss = {
+                if (container.permissions.isGranted(AppPermission.Location)) InterruptReason.PreciseLocationRequired
+                else InterruptReason.LocationPermissionRevoked
+            },
+            listener = this,
+        )
         ensureChannel(this)
         lifecycleScope.launch { container.prefs.settings.collect { units = it.units } }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
-        if (!promote()) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
+        latestStartId = startId
         when (intent?.action) {
-            ACTION_START, ACTION_RESUME, null -> lifecycleScope.launch { start() }
-            ACTION_PAUSE -> lifecycleScope.launch { pause(null) }
+            ACTION_START, ACTION_RESUME -> {
+                // startForegroundService() obliges the service to call startForeground() before it stops, whatever
+                // else turns out to be wrong, so that comes first and every refusal after it.
+                val blocked = promote()
+                lifecycleScope.launch {
+                    when {
+                        blocked != null -> stopBecause(blocked)
+                        // Coarse access satisfies the location foreground type, so precision is judged only now that
+                        // the service is in the foreground and can leave it properly.
+                        !container.permissions.isGranted(AppPermission.Location) -> stopBecause(InterruptReason.LocationPermissionRevoked)
+                        !container.permissions.isGranted(AppPermission.PreciseLocation) -> stopBecause(InterruptReason.PreciseLocationRequired)
+                        else -> start()
+                    }
+                }
+            }
+            ACTION_PAUSE -> lifecycleScope.launch { pause() }
+            // Stopping needs nothing from the foreground, so a revoked permission cannot keep the track open.
             ACTION_STOP -> lifecycleScope.launch { finish() }
+            // Every sender sets an action and the service is not sticky, so the system never delivers a null intent.
+            else -> stopSelf(startId)
         }
         return START_NOT_STICKY
     }
 
-    /** Enters the foreground immediately, as Android requires. Fails (and we stop) without location permission. */
-    private fun promote(): Boolean {
-        if (!container.permissions.isGranted(AppPermission.Location)) return false
+    /**
+     * Enters the foreground immediately, as Android requires. Returns why it could not, or null once it has.
+     * It judges nothing itself: the permission checks come after it (see [onStartCommand]), because they also
+     * run when the notification's Resume button starts the service directly, bypassing the controller's checks.
+     *
+     * One window stays open: with no location grant at all, Android 14+ refuses a location-type foreground service
+     * with a SecurityException, and then there is nothing legal to call startForeground() with. No other foreground
+     * type fits recording, and adding one to the manifest would be a product decision, not a fix. The window is
+     * narrow: the controller checks the grant before it sends START, and revoking a runtime permission kills the app
+     * process, so only a revoke between that check and this call reaches it.
+     */
+    private fun promote(): InterruptReason? {
         return try {
             val type = if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
-            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(TrackState.Recording), type)
-            true
+            val rendered = render(TrackState.Recording)
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, build(rendered), type)
+            lastRendered = rendered
+            foreground = true
+            null
         } catch (_: SecurityException) {
-            false
+            InterruptReason.LocationPermissionRevoked
         } catch (_: IllegalStateException) {
             // ForegroundServiceStartNotAllowedException (API 31+) when started from the background.
-            false
+            InterruptReason.ForegroundStartBlocked
         }
     }
 
-    private suspend fun start() = lock.withLock {
-        val t = recorder.track ?: recorder.openOrStart(defaultName())
-        if (t.state != TrackState.Recording) recorder.setState(TrackState.Recording)
+    private suspend fun start() {
+        if (!session.start()) return stopBecause(InterruptReason.StorageFailed)
+        if (container.interrupts.current() != null) container.interrupts.set(null)
+        container.resumeBackoff.reset()
+        getSystemService(NotificationManager::class.java)?.cancel(STOPPED_NOTIFICATION_ID)
+        // onDestroy already cleared the flag if the service went away while the start was still writing.
+        if (lifecycle.currentState == Lifecycle.State.DESTROYED) return
         _running.value = true
-        _interrupted.value = null
-        if (collectJob?.isActive == true) return@withLock
-        collectJob = lifecycleScope.launch {
-            val mode = container.prefs.settings.map { it.trackingMode }
-            dutyCycle.readings(mode) { interval -> container.location.live(interval) }.collect { r ->
-                if ((r == null) != resting) {
-                    resting = r == null
-                    updateNotification(TrackState.Recording)
-                }
-                when (r) {
-                    // The receiver sleeps while the phone lies still; TrackStats judges the gap by its average speed.
-                    null -> Unit
-                    is Reading.Value -> lock.withLock {
-                        if (recorder.offer(r.value)) dutyCycle.noteMovement()
-                        if (recorder.flushDue()) recorder.flush()
-                    }
-                    is Reading.Unavailable -> {
-                        // pause() cancels this collector, so it must run in its own coroutine.
-                        val reason = if (r.reason == UnavailableReason.Disabled) InterruptReason.LocationDisabled else InterruptReason.LocationPermissionRevoked
-                        lifecycleScope.launch { pause(reason) }
-                    }
-                    Reading.Acquiring -> Unit
-                }
-            }
-        }
-        tickJob?.cancel()
-        tickJob = lifecycleScope.launch {
-            while (isActive) {
-                delay(5_000)
-                lock.withLock { if (recorder.flushDue()) recorder.flush() }
-                updateNotification(TrackState.Recording)
-            }
-        }
+        updateNotification(TrackState.Recording)
     }
 
-    private suspend fun pause(reason: InterruptReason?) {
-        collectJob?.cancel()
-        tickJob?.cancel()
-        resting = false
-        lock.withLock {
-            if (attachToOpenTrack()) recorder.setState(TrackState.Paused)
-        }
-        _interrupted.value = reason
-        if (reason != null) {
-            // Location is gone: leave the foreground so no location-type service runs without location.
-            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-            _running.value = false
-            stopSelf()
-        } else {
-            updateNotification(TrackState.Paused)
+    private suspend fun pause() {
+        val reason = session.pause(null)
+        when {
+            reason != null -> stopBecause(reason)
+            foreground -> updateNotification(TrackState.Paused)
+            // Nothing is running to show a notification for (the process was restarted): there is nothing left to keep alive.
+            else -> stopSelf(latestStartId)
         }
     }
 
     private suspend fun finish() {
-        collectJob?.cancel()
-        tickJob?.cancel()
-        lock.withLock {
-            if (attachToOpenTrack()) recorder.setState(TrackState.Finished)
-        }
-        _running.value = false
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        val failure = session.finish()
+        if (failure != null) return stopBecause(failure)
+        if (container.interrupts.current() != null) container.interrupts.set(null)
+        leave()
     }
 
-    /** Binds the recorder to the open track (after process death the service starts empty). Never creates one. */
-    private suspend fun attachToOpenTrack(): Boolean {
-        if (recorder.track != null) return true
-        if (container.db.tracks().open() == null) return false
-        recorder.openOrStart(defaultName())
-        return true
+    /** Duty-cycled fixes. Recording needs precise fixes, so losing precision ends them like losing the permission does. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun readings(): Flow<Reading<Fix>?> {
+        val mode = container.prefs.settings.map { it.trackingMode }
+        return dutyCycle.readings(mode) { interval ->
+            container.permissions.flowOf(AppPermission.PreciseLocation).flatMapLatest { precise ->
+                if (precise) container.location.live(interval) else flowOf(Reading.Unavailable(UnavailableReason.PermissionDenied))
+            }
+        }
+    }
+
+    override fun onRestingChanged() = updateNotification(TrackState.Recording)
+
+    override fun onTick() = updateNotification(TrackState.Recording)
+
+    override suspend fun onInterrupted(reason: InterruptReason) = stopBecause(reason)
+
+    /** Records why recording ended, tells the user, and takes the service down. */
+    private suspend fun stopBecause(reason: InterruptReason) {
+        container.interrupts.set(reason)
+        // Leaving the foreground removes the recording notification, so say what happened where the user will see it.
+        getSystemService(NotificationManager::class.java)?.notify(STOPPED_NOTIFICATION_ID, stoppedNotification(reason))
+        leave()
+    }
+
+    /** Leaves the foreground (no location-type service should run without location) and stops. */
+    private fun leave() {
+        _running.value = false
+        foreground = false
+        lastRendered = null
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        // With the latest start id, so a START queued behind the STOP that led here is not stopped before it runs.
+        stopSelf(latestStartId)
     }
 
     override fun onDestroy() {
         _running.value = false
         // Persist anything still buffered even though the service scope is being cancelled.
-        container.scope.launch { withContext(NonCancellable) { lock.withLock { recorder.flush() } } }
+        container.scope.launch {
+            withContext(NonCancellable) {
+                session.flush()?.let { container.interrupts.set(it) }
+            }
+        }
         super.onDestroy()
     }
 
@@ -179,9 +211,14 @@ class TrackRecordingService : LifecycleService() {
         return String.format(Locale.getDefault(), "Track %1\$tF %1\$tR", c)
     }
 
+    /** Posts the notification only when what it shows has changed; the tick would otherwise repost it every five seconds. */
     private fun updateNotification(state: TrackState) {
+        if (!foreground) return
+        val rendered = render(state)
+        if (rendered == lastRendered) return
         val nm = getSystemService(NotificationManager::class.java) ?: return
-        nm.notify(NOTIFICATION_ID, notification(state))
+        lastRendered = rendered
+        nm.notify(NOTIFICATION_ID, build(rendered))
     }
 
     private fun action(action: String, requestCode: Int): PendingIntent =
@@ -190,37 +227,54 @@ class TrackRecordingService : LifecycleService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-    private fun notification(state: TrackState): Notification {
+    private fun openApp(): PendingIntent = PendingIntent.getActivity(
+        this, 0, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    /** Everything the recording notification shows that can change; equal values render the same notification. */
+    private data class Rendered(val paused: Boolean, val resting: Boolean, val text: String)
+
+    private fun render(state: TrackState): Rendered {
         val (d, unit) = Length.distance(if (::recorder.isInitialized) recorder.distanceM else 0.0, units)
         val minutes = (if (::recorder.isInitialized) recorder.elapsedMs else 0L) / 60_000
         val text = String.format(Locale.getDefault(), "%.1f %s · %d:%02d h", d, unit, minutes / 60, minutes % 60)
-        val open = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
+        val paused = state == TrackState.Paused
+        return Rendered(paused, resting = !paused && ::session.isInitialized && session.resting, text)
+    }
+
+    private fun build(r: Rendered): Notification {
         val b = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_track)
-            .setContentTitle(
-                getString(
-                    when {
-                        state == TrackState.Paused -> R.string.recording_paused
-                        resting -> R.string.recording_gps_resting
-                        else -> R.string.recording_track
-                    },
-                ),
-            )
-            .setContentText(text)
+            .setContentTitle(getString(if (r.paused) R.string.recording_paused else if (r.resting) R.string.recording_gps_resting else R.string.recording_track))
+            .setContentText(r.text)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setContentIntent(open)
+            .setContentIntent(openApp())
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-        if (state == TrackState.Paused) b.addAction(0, getString(R.string.resume), action(ACTION_RESUME, 2))
+        if (r.paused) b.addAction(0, getString(R.string.resume), action(ACTION_RESUME, 2))
         else b.addAction(0, getString(R.string.pause), action(ACTION_PAUSE, 1))
         b.addAction(0, getString(R.string.stop), action(ACTION_STOP, 3))
         return b.build()
     }
+
+    /**
+     * Posted on its own default-importance channel: the quiet recording channel would never alert for it. Without
+     * the notification permission (Android 13+) the system drops it, which is accepted: the Tracks screen shows the
+     * same reason from [InterruptState].
+     */
+    private fun stoppedNotification(reason: InterruptReason): Notification =
+        NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_track)
+            .setContentTitle(getString(R.string.recording_stopped))
+            .setContentText(getString(reason.messageRes))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(getString(reason.messageRes)))
+            .setAutoCancel(true)
+            .setCategory(NotificationCompat.CATEGORY_ERROR)
+            .setContentIntent(openApp())
+            .build()
 
     companion object {
         const val ACTION_START = "com.example.trailblazer.track.START"
@@ -228,12 +282,12 @@ class TrackRecordingService : LifecycleService() {
         const val ACTION_RESUME = "com.example.trailblazer.track.RESUME"
         const val ACTION_STOP = "com.example.trailblazer.track.STOP"
         private const val CHANNEL_ID = "tracking"
+        const val ALERT_CHANNEL_ID = "tracking_alerts"
         private const val NOTIFICATION_ID = 42
+        const val STOPPED_NOTIFICATION_ID = 43
 
         private val _running = MutableStateFlow(false)
         val running: StateFlow<Boolean> get() = _running
-        private val _interrupted = MutableStateFlow<InterruptReason?>(null)
-        val interrupted: StateFlow<InterruptReason?> get() = _interrupted
 
         fun ensureChannel(context: Context) {
             if (Build.VERSION.SDK_INT < 26) return
@@ -241,8 +295,15 @@ class TrackRecordingService : LifecycleService() {
             nm.createNotificationChannel(
                 NotificationChannel(CHANNEL_ID, context.getString(R.string.channel_tracking), NotificationManager.IMPORTANCE_LOW),
             )
+            nm.createNotificationChannel(
+                NotificationChannel(ALERT_CHANNEL_ID, context.getString(R.string.channel_tracking_alerts), NotificationManager.IMPORTANCE_DEFAULT),
+            )
         }
 
+        /**
+         * Sends [action] to the service. Starting it in the foreground throws [IllegalStateException]
+         * (ForegroundServiceStartNotAllowedException on API 31+) when the app is in the background.
+         */
         fun send(context: Context, action: String) {
             val i = Intent(context, TrackRecordingService::class.java).setAction(action)
             if (action == ACTION_START || action == ACTION_RESUME) ContextCompat.startForegroundService(context, i)

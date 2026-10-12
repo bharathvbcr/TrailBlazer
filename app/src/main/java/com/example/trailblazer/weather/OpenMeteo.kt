@@ -8,10 +8,17 @@ import com.trailblazer.core.weather.OmHourly
 import com.trailblazer.core.weather.OmResponse
 import com.trailblazer.core.weather.WmoCode
 import com.trailblazer.core.weather.sanitized
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
@@ -21,6 +28,8 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /** The one network seam in the app. Tests replace it to prove nothing is sent before consent. */
 fun interface HttpTransport {
@@ -28,32 +37,59 @@ fun interface HttpTransport {
     suspend fun get(url: String): String
 }
 
+/**
+ * Runs the blocking [block] on the IO dispatcher and calls [onCancel] if the caller is cancelled while it is
+ * still running. Blocking socket calls ignore coroutine cancellation, so [onCancel] must be what unblocks
+ * them (closing the connection); without it a cancelled or timed-out caller would wait out the whole read.
+ */
+internal suspend fun <T> blockingCancellable(onCancel: () -> Unit, block: () -> T): T = withContext(Dispatchers.IO) {
+    coroutineScope {
+        val finished = AtomicBoolean(false)
+        // Undispatched: the watcher is already waiting for cancellation before the blocking call starts.
+        val watcher = launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                awaitCancellation()
+            } finally {
+                if (!finished.get()) onCancel()
+            }
+        }
+        try {
+            block()
+        } finally {
+            finished.set(true)
+            watcher.cancel()
+        }
+    }
+}
+
 /** HTTPS GET with bounded timeouts and a bounded response size. No cookies, no identifiers, no retries. */
 class UrlConnectionTransport(private val maxBytes: Int = 512 * 1024) : HttpTransport {
-    override suspend fun get(url: String): String = withContext(Dispatchers.IO) {
+    override suspend fun get(url: String): String {
         require(url.startsWith("https://")) { "only https is allowed" }
         val c = URL(url).openConnection() as HttpURLConnection
-        try {
-            c.connectTimeout = 10_000
-            c.readTimeout = 10_000
-            c.instanceFollowRedirects = false
-            c.useCaches = false
-            c.setRequestProperty("Accept", "application/json")
-            val code = c.responseCode
-            if (code != 200) throw IOException("HTTP $code")
-            c.inputStream.use { input ->
-                val out = ByteArrayOutputStream()
-                val buf = ByteArray(8192)
-                while (true) {
-                    val n = input.read(buf)
-                    if (n < 0) break
-                    out.write(buf, 0, n)
-                    if (out.size() > maxBytes) throw IOException("response too large")
+        return blockingCancellable(onCancel = c::disconnect) {
+            try {
+                c.connectTimeout = 10_000
+                c.readTimeout = 10_000
+                c.instanceFollowRedirects = false
+                c.useCaches = false
+                c.setRequestProperty("Accept", "application/json")
+                val code = c.responseCode
+                if (code != 200) throw IOException("HTTP $code")
+                c.inputStream.use { input ->
+                    val out = ByteArrayOutputStream()
+                    val buf = ByteArray(8192)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        out.write(buf, 0, n)
+                        if (out.size() > maxBytes) throw IOException("response too large")
+                    }
+                    out.toString("UTF-8")
                 }
-                out.toString("UTF-8")
+            } finally {
+                c.disconnect()
             }
-        } finally {
-            c.disconnect()
         }
     }
 }
@@ -77,10 +113,23 @@ sealed interface ForecastResult {
  * opted in; coordinates are rounded to 0.01° (~1 km) before they leave the phone; results are cached
  * for 30 minutes per rounded location.
  */
-class OpenMeteoClient(private val http: HttpTransport, private val clock: Clock) {
+class OpenMeteoClient internal constructor(
+    private val http: HttpTransport,
+    private val clock: Clock,
+    private val timeoutMs: Long,
+) {
+    constructor(http: HttpTransport, clock: Clock) : this(http, clock, REQUEST_TIMEOUT_MS)
+
     private val json = Json { ignoreUnknownKeys = true; isLenient = false; explicitNulls = false }
     private val mutex = Mutex()
-    private var cache: Forecast? = null
+
+    /**
+     * The cached forecast and the generation it belongs to. [clearCache] swaps in a new object with the next
+     * generation, so a fetch that began before the clear fails its compare-and-set and cannot put its answer back.
+     */
+    private class Slot(val generation: Long, val forecast: Forecast?)
+
+    private val slot = AtomicReference(Slot(0L, null))
 
     fun url(p: LatLon): String = String.format(
         Locale.ROOT,
@@ -98,15 +147,27 @@ class OpenMeteoClient(private val http: HttpTransport, private val clock: Clock)
         if (!consented) return ForecastResult.NotConsented
         val key = rounded(position)
         return mutex.withLock {
-            val c = cache
+            val before = slot.get()
+            val c = before.forecast
             if (!force && c != null && c.requestedFor == key && clock.nowMs() - c.fetchedMs < CACHE_MS) {
                 return@withLock ForecastResult.Ok(c, fromCache = true)
             }
             try {
-                val body = http.get(url(key))
-                val parsed = json.decodeFromString(OmResponse.serializer(), body).sanitized()
+                // The lock is held for the whole call, so the call as a whole is bounded, not only each read.
+                val parsed = withTimeoutOrNull(timeoutMs) {
+                    try {
+                        val body = http.get(url(key))
+                        json.decodeFromString(OmResponse.serializer(), body).sanitized()
+                    } catch (e: IOException) {
+                        // A connection closed to enforce the deadline (or the caller's cancellation) surfaces
+                        // as "Socket closed"; that is the timeout, not a network error.
+                        currentCoroutineContext().ensureActive()
+                        throw e
+                    }
+                } ?: return@withLock ForecastResult.Failed("timed out")
                 val f = Forecast(parsed, clock.nowMs(), key)
-                cache = f
+                // Cleared while the request was in flight (consent withdrawn, data wiped): drop the answer.
+                if (!slot.compareAndSet(before, Slot(before.generation, f))) return@withLock ForecastResult.NotConsented
                 ForecastResult.Ok(f, fromCache = false)
             } catch (e: IOException) {
                 ForecastResult.Failed(e.message ?: "network error")
@@ -118,12 +179,18 @@ class OpenMeteoClient(private val http: HttpTransport, private val clock: Clock)
         }
     }
 
+    /**
+     * Forgets the cached forecast and voids any request in flight. Deliberately not behind [mutex]: callers are
+     * toggles and wipes that cannot suspend, and waiting for a slow request would delay the privacy action.
+     */
     fun clearCache() {
-        cache = null
+        slot.updateAndGet { Slot(it.generation + 1, null) }
     }
 
     companion object {
         const val CACHE_MS = 30 * 60_000L
+        /** Upper bound for one forecast request including connect, read and parse. */
+        const val REQUEST_TIMEOUT_MS = 20_000L
         const val ATTRIBUTION = "Weather data by Open-Meteo.com (CC BY 4.0)"
         const val ATTRIBUTION_URL = "https://open-meteo.com/"
     }
