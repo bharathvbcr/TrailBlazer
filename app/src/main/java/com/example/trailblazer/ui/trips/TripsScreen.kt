@@ -45,6 +45,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -93,6 +94,7 @@ fun TripsScreen(nav: Navigator) {
     val fix by vm.fix.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val availableMaps by vm.availableMaps.collectAsStateWithLifecycle()
+    val demTiles by vm.demTiles.collectAsStateWithLifecycle()
     val activeTileSource by vm.activeTileSource.collectAsStateWithLifecycle()
     val trackPaths by vm.trackPaths.collectAsStateWithLifecycle()
     val granted by ctx.container.permissions.granted.collectAsStateWithLifecycle()
@@ -111,18 +113,29 @@ fun TripsScreen(nav: Navigator) {
             segment = Segment.Map
         }
     }
+    val demImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) {
+            vm.importDemTiles(uris)
+            segment = Segment.Map
+        }
+    }
     val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         uri?.let { vm.exportWaypoints(it, pendingFormat) }
     }
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         ctx.container.permissions.refresh()
-        if (ctx.container.permissions.isGranted(AppPermission.Location)) vm.startRecording()
+        // Whatever the user allowed, the controller starts or says (in a message) what is still missing.
+        vm.startRecording()
     }
 
-    /** Location is required. Notifications are asked with it the first time, and never block a later start. */
+    /**
+     * Precise location is required: approximate fixes are too coarse to record, and Android shows its approximate to
+     * precise upgrade prompt when both location permissions are asked for again. Notifications are asked with it the
+     * first time, and never block a later start.
+     */
     fun startRecording() {
         val needs = permissionsToRequest(
-            locationGranted = AppPermission.Location in granted,
+            locationGranted = AppPermission.PreciseLocation in granted,
             notificationsGranted = AppPermission.Notifications in granted,
             location = AppPermission.Location.manifest,
             notifications = AppPermission.Notifications.manifest,
@@ -142,6 +155,10 @@ fun TripsScreen(nav: Navigator) {
                 DropdownMenuItem(text = { Text("Import map tiles (.mbtiles, .pmtiles)…") }, onClick = {
                     menu = false
                     mapImporter.launch(arrayOf("application/octet-stream", "application/x-sqlite3", "application/vnd.sqlite3", "*/*"))
+                })
+                DropdownMenuItem(text = { Text("Import elevation tiles (.hgt)…") }, onClick = {
+                    menu = false
+                    demImporter.launch(arrayOf("application/octet-stream", "*/*"))
                 })
                 DropdownMenuItem(text = { Text("Export waypoints as GPX…") }, onClick = { menu = false; pendingFormat = GeoFormat.Gpx; exporter.launch("waypoints.gpx") })
                 DropdownMenuItem(text = { Text("Export waypoints as KML…") }, onClick = { menu = false; pendingFormat = GeoFormat.Kml; exporter.launch("waypoints.kml") })
@@ -292,7 +309,7 @@ fun TripsScreen(nav: Navigator) {
                         fmt = fmt,
                         onStart = { startRecording() },
                         onPause = { vm.pauseRecording() },
-                        onResume = { if (!vm.resumeRecording()) startRecording() },
+                        onResume = { if (AppPermission.PreciseLocation in granted) vm.resumeRecording() else startRecording() },
                         onStop = { vm.stopRecording() },
                     )
                 }
@@ -344,6 +361,38 @@ fun TripsScreen(nav: Navigator) {
                     Spacer(Modifier.height(8.dp))
                     PillButton("Import map archive (.mbtiles, .pmtiles)", TrailIcons.Import) {
                         mapImporter.launch(arrayOf("application/octet-stream", "application/x-sqlite3", "application/vnd.sqlite3", "*/*"))
+                    }
+                }
+                item {
+                    Spacer(Modifier.height(8.dp))
+                    PillButton("Import elevation tiles (.hgt)", TrailIcons.Import) {
+                        demImporter.launch(arrayOf("application/octet-stream", "*/*"))
+                    }
+                    Text(
+                        if (demTiles.isEmpty()) "Elevation profiles for planned trips need SRTM 1 or 3 arc-second tiles. Unzip them first: only .hgt files import."
+                        else "${demTiles.size} elevation ${if (demTiles.size == 1) "tile" else "tiles"} installed",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+                items(demTiles, key = { it.file.absolutePath }) { tile ->
+                    GlassCard {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(tile.id.fileName.removeSuffix(".hgt"), style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    "${tile.label} · ${tile.sizeBytes / (1024 * 1024)} MB",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            IconButton(onClick = {
+                                confirmDelete = "Delete elevation tile ${tile.id.fileName.removeSuffix(".hgt")}?" to { vm.deleteDemTile(tile.id); Unit }
+                            }) {
+                                Icon(TrailIcons.Delete, "Delete elevation tile")
+                            }
+                        }
                     }
                 }
                 if (availableMaps.isNotEmpty()) {
@@ -437,6 +486,8 @@ private fun RecorderCard(
         if (open == null) {
             Text("Record a track", style = MaterialTheme.typography.titleMedium)
             Text("Uses GPS in the background with a notification you can pause or stop from.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // A start that failed before any track existed (a full disk, say) leaves no track to hang the reason on.
+            interrupted?.let { InterruptNote(it) }
             Spacer(Modifier.height(12.dp))
             Button(onClick = onStart, modifier = Modifier.fillMaxWidth().height(48.dp), shape = CircleShape) {
                 Icon(TrailIcons.Record, null, Modifier.size(18.dp))
@@ -456,16 +507,7 @@ private fun RecorderCard(
             color = if (live) status.danger else status.caution,
             style = MaterialTheme.typography.labelLarge,
         )
-        interrupted?.let {
-            Text(
-                when (it) {
-                    InterruptReason.LocationPermissionRevoked -> "Stopped because location permission was removed."
-                    InterruptReason.LocationDisabled -> "Stopped because location was turned off."
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = status.caution,
-            )
-        }
+        interrupted?.let { InterruptNote(it) }
         Text("${fmt.distance(open.distanceM)} · ↑${fmt.elevation(open.gainM)} · ${open.pointCount} points", style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -474,6 +516,11 @@ private fun RecorderCard(
             OutlinedButton(onClick = onStop, modifier = Modifier.weight(1f)) { Icon(TrailIcons.Stop, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("Finish") }
         }
     }
+}
+
+@Composable
+private fun InterruptNote(reason: InterruptReason) {
+    Text(stringResource(reason.messageRes), style = MaterialTheme.typography.bodySmall, color = LocalStatusColors.current.caution)
 }
 
 @Composable

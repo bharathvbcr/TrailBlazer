@@ -30,7 +30,7 @@ class BarometerRepositoryBleTest {
     @Before
     fun setUp() {
         transport = FakeBleTransport()
-        bleSensors = BleSensorManager(androidx.test.core.app.ApplicationProvider.getApplicationContext(), transport, scope, clock)
+        bleSensors = BleSensorManager(transport, scope, clock)
         fakeInternalSource = FakeSensorSource(setOf(Sensor.TYPE_PRESSURE))
     }
 
@@ -52,7 +52,7 @@ class BarometerRepositoryBleTest {
 
         // Connect external BLE environmental sensor
         bleSensors.connect("11:22:33:44:55:66", "Nordic Barometer")
-        transport.emitConnected(setOf(BleServiceType.Environmental))
+        transport.emitConnected(setOf(BleServiceType.Environmental, BleServiceType.Pressure))
 
         // Emit external pressure: 850.0 hPa
         transport.emitPressure(850.0)
@@ -66,5 +66,53 @@ class BarometerRepositoryBleTest {
         assertEquals(1020.0, fallbackValue.value, 0.01)
 
         job.cancel()
+    }
+
+    @Test
+    fun anEnvironmentalPeripheralWithoutPressureKeepsThePhoneBarometer() {
+        val repo = BarometerRepository(fakeInternalSource, scope, clock, bleSensors)
+        val seen = mutableListOf<Reading<Double>>()
+        val job = scope.launch { repo.pressureHpa.collect { seen.add(it) } }
+
+        // A temperature/humidity-only sensor: ESS is present, the Pressure characteristic is not.
+        bleSensors.connect("11:22:33:44:55:66", "Thermo Hygro")
+        transport.emitConnected(setOf(BleServiceType.Environmental, BleServiceType.Temperature, BleServiceType.Humidity))
+
+        fakeInternalSource.emit(Sensor.TYPE_PRESSURE, 1007.5f, timestampNs = 1)
+        val value = seen.filterIsInstance<Reading.Value<Double>>().lastOrNull()
+        assertTrue("phone barometer must keep reporting", value != null)
+        assertEquals(1007.5, value!!.value, 0.01)
+        assertTrue("never parked on an Acquiring that no sample can resolve", seen.last() is Reading.Value<*>)
+        job.cancel()
+    }
+
+    @Test
+    fun blePeripheralTemperatureAndHumidityReplaceThePhoneSensorsOnlyForTheirOwnChannel() {
+        val fakeSource = FakeSensorSource(setOf(Sensor.TYPE_AMBIENT_TEMPERATURE, Sensor.TYPE_RELATIVE_HUMIDITY))
+        val env = EnvironmentRepository(fakeSource, scope, clock, bleSensors)
+        val temps = mutableListOf<Reading<Double>>()
+        val hums = mutableListOf<Reading<Double>>()
+        val jobs = listOf(
+            scope.launch { env.temperatureC.collect { temps.add(it) } },
+            scope.launch { env.humidityPct.collect { hums.add(it) } },
+        )
+
+        fakeSource.emit(Sensor.TYPE_AMBIENT_TEMPERATURE, 19.0f, timestampNs = 1)
+        fakeSource.emit(Sensor.TYPE_RELATIVE_HUMIDITY, 60.0f, timestampNs = 1)
+        assertEquals(19.0, (temps.last() as Reading.Value<Double>).value, 0.01)
+
+        // The peripheral offers temperature only.
+        bleSensors.connect("11:22:33:44:55:66", "Thermo")
+        transport.emitConnected(setOf(BleServiceType.Environmental, BleServiceType.Temperature))
+        transport.emitTemperature(4.5)
+        transport.emitHumidity(99.0) // not a subscribed channel: must not surface
+        assertEquals(4.5, (temps.last() as Reading.Value<Double>).value, 0.01)
+        fakeSource.emit(Sensor.TYPE_RELATIVE_HUMIDITY, 61.0f, timestampNs = 2)
+        assertEquals("humidity stays on the phone sensor", 61.0, (hums.last() as Reading.Value<Double>).value, 0.01)
+
+        bleSensors.disconnect()
+        fakeSource.emit(Sensor.TYPE_AMBIENT_TEMPERATURE, 20.0f, timestampNs = 3)
+        assertEquals("falls back to the phone", 20.0, (temps.last() as Reading.Value<Double>).value, 0.01)
+        jobs.forEach { it.cancel() }
     }
 }

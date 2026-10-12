@@ -13,6 +13,7 @@ import com.example.trailblazer.data.Waypoint
 import com.example.trailblazer.location.Fix
 import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.tracking.InterruptReason
+import com.example.trailblazer.tracking.StartResult
 import com.trailblazer.core.trip.Trip
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -44,7 +45,29 @@ class TripsViewModel(private val c: AppContainer) : ViewModel() {
 
     private val mapsLock = Mutex()
 
+    /** Installed SRTM elevation tiles (`.hgt`), used for the elevation profile of a planned trip. */
+    val demTiles = MutableStateFlow<List<com.example.trailblazer.data.DemTileInfo>>(emptyList())
+
+    private suspend fun refreshDemTiles() {
+        demTiles.value = withContext(Dispatchers.IO) { c.demTiles.listTiles() }
+    }
+
+    fun importDemTiles(uris: List<Uri>) = viewModelScope.launch {
+        message.value = c.demTiles.importAll(uris)
+    }
+
+    fun deleteDemTile(id: com.trailblazer.core.geo.DemTileId) = viewModelScope.launch {
+        message.value = if (c.demTiles.deleteTile(id)) {
+            "Deleted elevation tile ${id.fileName}"
+        } else {
+            "Could not delete elevation tile ${id.fileName}: it is not installed or could not be removed."
+        }
+    }
+
     init {
+        // Tiles also arrive from the trip editor, so the list follows the manager's revision (which it bumps on every
+        // import and delete, and which emits once on subscription) instead of refreshing after its own actions.
+        viewModelScope.launch { c.demTiles.revision.collect { refreshDemTiles() } }
         viewModelScope.launch { refreshMaps() }
         viewModelScope.launch {
             tracks.collect { summaries ->
@@ -112,10 +135,15 @@ class TripsViewModel(private val c: AppContainer) : ViewModel() {
         activeTileSource.value?.closeInBackground()
     }
 
-    fun startRecording(): Boolean = c.tracking.start()
+    fun startRecording() = report(c.tracking.start())
     fun pauseRecording() = c.tracking.pause()
-    fun resumeRecording(): Boolean = c.tracking.resume()
+    fun resumeRecording() = report(c.tracking.resume())
     fun stopRecording() = c.tracking.stop()
+
+    /** A refused start says why where the Tracks screen shows messages. */
+    private fun report(r: StartResult) {
+        if (r is StartResult.Refused) message.value = r.reason.message
+    }
 
     fun deleteTrip(id: String) = viewModelScope.launch { c.trips.delete(id) }
     fun deleteWaypoint(id: String) = viewModelScope.launch {

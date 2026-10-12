@@ -20,16 +20,12 @@ import com.trailblazer.core.sensors.Accuracy
 import com.example.trailblazer.sensors.BleConnectionState
 import com.example.trailblazer.sensors.BleSensorManager
 import com.example.trailblazer.sensors.Clock
-import com.example.trailblazer.sensors.NmeaParser
 import com.trailblazer.core.sensors.Reading
 import com.trailblazer.core.sensors.UnavailableReason
 import com.trailblazer.core.sensors.shareReading
 import com.trailblazer.core.geo.LatLon
 import com.trailblazer.core.math.mod360
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -77,24 +73,6 @@ class LocationRepository(
     private val clock: Clock = Clock.System,
 ) {
     private val mainExecutor: Executor = ContextCompat.getMainExecutor(context)
-    private val manualExternalFixes = MutableSharedFlow<Fix>(extraBufferCapacity = 16)
-
-    /**
-     * Parses an external NMEA sentence (GGA, RMC, GLL) into a [Fix] and delivers it to the repository.
-     * Returns the parsed [Fix], or null if invalid or corrupt.
-     */
-    fun parseNmea(sentence: String): Fix? {
-        val fix = NmeaParser.parse(sentence, clock)
-        if (fix != null) {
-            feedExternalFix(fix)
-        }
-        return fix
-    }
-
-    /** Injects an external position fix (e.g. from a BLE GNSS peripheral or external NMEA stream). */
-    fun feedExternalFix(fix: Fix) {
-        manualExternalFixes.tryEmit(fix)
-    }
 
     /** Emits whenever location services are switched on or off in system settings. */
     private val enabled: Flow<Boolean> = callbackFlow {
@@ -126,41 +104,28 @@ class LocationRepository(
             }
         }
 
+    /**
+     * The phone's own providers, replaced by an external BLE receiver only while one is connected *and* can supply a position.
+     * A barometer-only peripheral leaves the phone GPS running; the switch is keyed on that single fact so unrelated state
+     * changes (a service list updating) do not restart the providers.
+     */
     private fun locationSource(intervalMs: Long): Flow<Reading<Fix>> {
-        val externalFixesFlow = if (bleSensors != null) {
-            merge(bleSensors.locationStream, manualExternalFixes)
-        } else {
-            manualExternalFixes
-        }
-
-        if (bleSensors == null) {
-            return merge(
-                updates(intervalMs),
-                externalFixesFlow.map { fix ->
-                    Reading.Value(toSeaLevel(fix), accuracyForFix(fix), clock.nowMs())
-                },
-            )
-        }
-
-        return bleSensors.connectionState.flatMapLatest { state ->
-            if (state is BleConnectionState.Connected) {
-                // Connected to external BLE peripheral: parse & stream external fixes!
-                flow {
-                    emit(Reading.Acquiring)
-                    externalFixesFlow.collect { fix ->
-                        emit(Reading.Value(toSeaLevel(fix), accuracyForFix(fix), clock.nowMs()))
+        val ble = bleSensors ?: return updates(intervalMs)
+        return ble.connectionState
+            .map { it is BleConnectionState.Connected && it.hasLocation }
+            .distinctUntilChanged()
+            .flatMapLatest { external ->
+                if (external) {
+                    flow {
+                        emit(Reading.Acquiring)
+                        ble.locationStream.collect { fix ->
+                            emit(Reading.Value(toSeaLevel(fix), accuracyForFix(fix), clock.nowMs()))
+                        }
                     }
+                } else {
+                    updates(intervalMs) // graceful fallback to the phone when BLE is disconnected, errored or has no position
                 }
-            } else {
-                // Graceful fallback to internal phone sensors when BLE is disconnected or errored!
-                merge(
-                    updates(intervalMs),
-                    manualExternalFixes.map { fix ->
-                        Reading.Value(toSeaLevel(fix), accuracyForFix(fix), clock.nowMs())
-                    },
-                )
             }
-        }
     }
 
     private fun accuracyForFix(fix: Fix): Accuracy = when {
@@ -316,8 +281,8 @@ class GnssRepository(
 ) {
     private val executor: Executor = ContextCompat.getMainExecutor(context)
 
-    val status: StateFlow<Reading<GnssSnapshot>> = permissions.flowOf(AppPermission.Location).flatMapLatest { ok ->
-        if (!ok || !permissions.hasFineLocation()) flowOf(Reading.Unavailable(UnavailableReason.PermissionDenied))
+    val status: StateFlow<Reading<GnssSnapshot>> = permissions.flowOf(AppPermission.PreciseLocation).flatMapLatest { precise ->
+        if (!precise) flowOf(Reading.Unavailable(UnavailableReason.PermissionDenied))
         else if (!LocationManagerCompat.hasProvider(manager, LocationManager.GPS_PROVIDER)) flowOf(Reading.Unavailable(UnavailableReason.NoHardware))
         else statusUpdates()
     }.shareReading(scope)

@@ -6,6 +6,7 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.SystemClock
 import androidx.core.location.LocationManagerCompat
+import com.example.trailblazer.permissions.AppPermission
 import com.example.trailblazer.permissions.Permissions
 import com.trailblazer.core.sensors.log.GnssMeasurementRow
 import java.util.concurrent.ExecutorService
@@ -46,7 +47,7 @@ class AndroidGnssMeasurementSource(
 ) : GnssMeasurementSource {
     @SuppressLint("MissingPermission") // Gated on fine location below; SecurityException is still handled.
     override fun register(onRows: (List<GnssMeasurementRow>) -> Unit, onStatus: (String) -> Unit): GnssRawRegistration {
-        if (!permissions.hasFineLocation()) return GnssRawRegistration.Unavailable("precise location permission not granted")
+        if (!permissions.isGranted(AppPermission.PreciseLocation)) return GnssRawRegistration.Unavailable("precise location permission not granted")
         if (!LocationManagerCompat.hasProvider(manager, LocationManager.GPS_PROVIDER)) {
             return GnssRawRegistration.Unavailable("no GNSS receiver")
         }
