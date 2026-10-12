@@ -2,6 +2,7 @@ package com.trailblazer.core.io
 
 import com.trailblazer.core.geo.LatLon
 import com.trailblazer.core.time.Iso8601
+import com.trailblazer.core.track.ElevationDatum
 import com.trailblazer.core.track.TrackPoint
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -23,7 +24,7 @@ class GeoFormatsTest {
         w.route(com.trailblazer.core.io.Route("Plan", listOf(NamedPoint(LatLon(1.0, 2.0), "A"), NamedPoint(LatLon(3.0, 4.0), "B"))))
         w.beginTrack("Walk")
         w.beginSegment()
-        for (i in 0 until 5) w.trackPoint(TrackPoint(1_700_000_000_000 + i * 1000L, LatLon(46.0 + i * 1e-4, 7.0), 1000.0 + i))
+        for (i in 0 until 5) w.trackPoint(TrackPoint(1_700_000_000_000 + i * 1000L, LatLon(46.0 + i * 1e-4, 7.0), 1000.0 + i, datum = ElevationDatum.Msl))
         w.endSegment()
         w.endTrack()
         w.finish()

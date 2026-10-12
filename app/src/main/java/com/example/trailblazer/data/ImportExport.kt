@@ -141,19 +141,23 @@ class ImportExport(
         var t = 0
         val dao = db.tracks()
         for (track in doc.tracks) {
-            val points = track.segments.flatten().sortedBy { it.epochMs }
-            if (points.isEmpty()) continue
+            // Files do write fixes out of order, so each segment is put in time order, but only within itself: sorting
+            // across segments would interleave them and draw a line over the break between two `trkseg`s. Segments keep
+            // the order the file gives and are numbered from 0; an empty one is dropped.
+            val segments = track.segments.map { seg -> seg.sortedBy { it.epochMs } }.filter { it.isNotEmpty() }
+            if (segments.isEmpty()) continue
+            val points = segments.flatMapIndexed { index, seg -> seg.map { it.copy(segment = index) } }
             val stats = TrackStats().also { s -> points.forEach { s.add(it) } }
             val id = newId()
             val entity = TrackEntity(
-                id, (track.name ?: "Imported track").take(NAME_MAX), points.first().epochMs, points.last().epochMs, TrackState.Finished,
+                id, (track.name ?: "Imported track").take(NAME_MAX), segments.minOf { it.first().epochMs }, segments.maxOf { it.last().epochMs }, TrackState.Finished,
                 stats.distanceM, stats.gainM, stats.lossM, stats.movingMs, stats.maxSpeedMps, points.size,
             )
             // All-or-nothing: the outer withTransaction ensures whole-import atomicity.
             dao.insert(entity)
             points.chunked(1_000).forEachIndexed { chunkIndex, chunk ->
                 dao.insertPoints(chunk.mapIndexed { i, p ->
-                    TrackPointEntity(id, chunkIndex * 1_000 + i, p.epochMs, p.position.lat, p.position.lon, p.elevationM, p.accuracyM, p.speedMps)
+                    TrackPointEntity(id, chunkIndex * 1_000 + i, p.epochMs, p.position.lat, p.position.lon, p.elevationM, p.accuracyM, p.speedMps, p.segment, p.datum)
                 })
             }
             t++
@@ -199,14 +203,32 @@ class ImportExport(
         return write(uri) { w ->
             var n = 0
             when (format) {
+                // One `<trkseg>` (KML: one LineString) per stored segment, so a pause is not drawn as a line. The
+                // writers leave out the height of a point that is not known to be above sea level.
                 GeoFormat.Gpx -> GpxWriter(w).apply {
-                    beginTrack(t.name); beginSegment()
-                    tracks.forEachPoint(id) { trackPoint(it); n++ }
-                    endSegment(); endTrack(); finish()
+                    beginTrack(t.name)
+                    var segment: Int? = null
+                    tracks.forEachPoint(id) {
+                        if (it.segment != segment) {
+                            if (segment != null) endSegment()
+                            beginSegment()
+                            segment = it.segment
+                        }
+                        trackPoint(it); n++
+                    }
+                    if (segment != null) endSegment()
+                    endTrack(); finish()
                 }
                 GeoFormat.Kml -> KmlWriter(w, t.name).apply {
                     beginTrack(t.name)
-                    tracks.forEachPoint(id) { trackPoint(it); n++ }
+                    var segment: Int? = null
+                    tracks.forEachPoint(id) {
+                        if (it.segment != segment) {
+                            beginSegment()
+                            segment = it.segment
+                        }
+                        trackPoint(it); n++
+                    }
                     endTrack(); finish()
                 }
             }

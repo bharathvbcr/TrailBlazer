@@ -3,7 +3,9 @@ package com.trailblazer.core.io
 import com.trailblazer.core.geo.LatLon
 import com.trailblazer.core.math.formatDecimals
 import com.trailblazer.core.time.Iso8601
+import com.trailblazer.core.track.ElevationDatum
 import com.trailblazer.core.track.TrackPoint
+import com.trailblazer.core.track.exportElevationM
 
 /** A named position: a GPX waypoint / route point, or a KML Point placemark. */
 data class NamedPoint(
@@ -195,7 +197,10 @@ object GpxReader {
                                 // A track is only a track if every point is timed; otherwise it is a path, kept as a
                                 // route rather than inventing timestamps.
                                 if (segs.all { seg -> seg.all { it.time != null } }) {
-                                    tracks += TrackData(curTrackName, segs.map { seg -> seg.map { TrackPoint(it.time!!, it.pos, it.ele, null, it.speed) } })
+                                    // Each `trkseg` keeps its own index so a break between them is never bridged; `<ele>` is read as sea level.
+                                    tracks += TrackData(curTrackName, segs.mapIndexed { i, seg ->
+                                        seg.map { TrackPoint(it.time!!, it.pos, it.ele, null, it.speed, i, it.ele?.let { ElevationDatum.Msl }) }
+                                    })
                                 } else {
                                     routes += Route(curTrackName, segs.flatten().map { NamedPoint(it.pos, elevationM = it.ele, epochMs = it.time) })
                                 }
@@ -251,9 +256,10 @@ class GpxWriter(private val out: Writer, creator: String = "TrailBlazer") {
 
     fun beginSegment() = out.write("    <trkseg>\n")
 
+    /** Writes the fix; its `<ele>` only when the height is known to be above sea level (see [exportElevationM]). */
     fun trackPoint(p: TrackPoint) {
         out.write("      <trkpt lat=\"${f6(p.position.lat)}\" lon=\"${f6(p.position.lon)}\">")
-        p.elevationM?.takeIf { it.isFinite() }?.let { out.write("<ele>${f1(it)}</ele>") }
+        p.exportElevationM()?.let { out.write("<ele>${f1(it)}</ele>") }
         out.write("<time>${Iso8601.format(p.epochMs)}</time>")
         out.write("</trkpt>\n")
     }
@@ -357,7 +363,8 @@ object KmlReader {
                                 val t = gxCoords[i]
                                 if (++total > maxPoints) throw XmlFormatException("more than $maxPoints points")
                                 parseKmlTuple(t.split(WHITESPACE_REGEX))?.let { (p, ele) ->
-                                    pts += TrackPoint(time, p, ele)
+                                    // One `gx:Track` is one segment; an absolute KML altitude is above sea level.
+                                    pts += TrackPoint(time, p, ele, segment = pmTrackSegments.size, datum = ele?.let { ElevationDatum.Msl })
                                 }
                             }
                             if (pts.isNotEmpty()) pmTrackSegments += pts
@@ -415,16 +422,40 @@ class KmlWriter(private val out: Writer, name: String?) {
         out.write("</coordinates></LineString></Placemark>\n")
     }
 
-    /** Tracks are streamed as a LineString; only GPX export preserves per-point timestamps. */
+    private var lineOpen = false
+
+    /**
+     * Tracks are streamed as a `MultiGeometry` with one LineString per segment; only GPX export preserves per-point
+     * timestamps. The first [trackPoint] opens a segment if [beginSegment] was not called.
+     */
     fun beginTrack(name: String?) {
         out.write("<Placemark>")
         name?.let { out.write("<name>${XmlPull.escape(it)}</name>") }
-        out.write("<LineString><tessellate>1</tessellate><coordinates>\n")
+        out.write("<MultiGeometry>\n")
     }
 
-    fun trackPoint(p: TrackPoint) = out.write(coord(p.position, p.elevationM, ",") + "\n")
+    /** Ends the current segment, if any, and starts the next. */
+    fun beginSegment() {
+        endSegment()
+        out.write("<LineString><tessellate>1</tessellate><coordinates>\n")
+        lineOpen = true
+    }
 
-    fun endTrack() = out.write("</coordinates></LineString></Placemark>\n")
+    fun endSegment() {
+        if (lineOpen) out.write("</coordinates></LineString>\n")
+        lineOpen = false
+    }
+
+    /** Writes the fix; its height only when it is known to be above sea level (see [exportElevationM]). */
+    fun trackPoint(p: TrackPoint) {
+        if (!lineOpen) beginSegment()
+        out.write(coord(p.position, p.exportElevationM(), ",") + "\n")
+    }
+
+    fun endTrack() {
+        endSegment()
+        out.write("</MultiGeometry></Placemark>\n")
+    }
 
     fun finish() {
         out.write("</Document>\n</kml>\n")

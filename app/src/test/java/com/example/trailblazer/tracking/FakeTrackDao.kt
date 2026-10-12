@@ -80,8 +80,6 @@ class FakeTrackDao : TrackDao {
     override suspend fun pointsAfter(trackId: String, afterSeq: Int, limit: Int): List<TrackPointEntity> =
         points.filter { it.trackId == trackId && it.seq > afterSeq }.sortedBy { it.seq }.take(limit)
 
-    override suspend fun lastPoint(trackId: String): TrackPointEntity? = points.filter { it.trackId == trackId }.maxByOrNull { it.seq }
-
     /** All or nothing, like the real @Transaction: a failure leaves neither the points nor the row changed. */
     override suspend fun appendPoints(track: TrackEntity, points: List<TrackPointEntity>) {
         appendCalls++

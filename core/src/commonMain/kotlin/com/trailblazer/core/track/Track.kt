@@ -14,6 +14,10 @@ data class TrackPoint(
     val elevationM: Double? = null,
     val accuracyM: Double? = null,
     val speedMps: Double? = null,
+    /** Which continuous stretch of the recording the fix belongs to; it changes after a pause or at a `trkseg` break. */
+    val segment: Int = 0,
+    /** The datum of [elevationM]; null when it is not known. */
+    val datum: ElevationDatum? = null,
 )
 
 /**
@@ -68,6 +72,11 @@ class ElevationClimb(private val hysteresisM: Double = DEFAULT_HYSTERESIS_M) {
  * only speaks for a short step; a step longer than [instantSpeedMaxGapMs] (sparse expedition fixes, or a gap while
  * the receiver slept, Battery Saver withheld fixes, recording was paused or the process died) is judged by its
  * average speed, distance over time. Distance is the same either way: the straight line between the two fixes.
+ *
+ * Nothing is counted across a segment break (a pause, or a `trkseg` boundary in an imported file): the straight line
+ * between the last fix of one segment and the first of the next is neither distance nor moving time, and the climb
+ * reference starts again. The same holds when the elevation datum changes (ellipsoid to sea level, or the reverse):
+ * the two heights differ by the geoid undulation, so the step between them is not climb.
  */
 class TrackStats(
     hysteresisM: Double = ElevationClimb.DEFAULT_HYSTERESIS_M,
@@ -87,6 +96,7 @@ class TrackStats(
 
     private var last: TrackPoint? = null
     private val climb = ElevationClimb(hysteresisM)
+    private var elevDatum: ElevationDatum? = null
 
     val elapsedMs: Long get() = if (startMs != null && endMs != null) endMs!! - startMs!! else 0L
 
@@ -94,7 +104,11 @@ class TrackStats(
         points++
         if (startMs == null) startMs = p.epochMs
         endMs = p.epochMs
-        val prev = last
+        val before = last
+        val segmentBreak = before != null && before.segment != p.segment
+        // The climb reference starts again after a break, so no step across it is counted as gain or loss.
+        if (segmentBreak) climb.breakRun()
+        val prev = if (segmentBreak) null else before
         if (prev != null && p.epochMs > prev.epochMs) {
             val d = Geo.distanceM(prev.position, p.position)
             val dt = p.epochMs - prev.epochMs
@@ -105,7 +119,12 @@ class TrackStats(
             // Only trust device-reported speed for the maximum; derived speed spikes on position jumps.
             p.speedMps?.takeIf { it.isFinite() && it >= 0 }?.let { maxSpeedMps = max(maxSpeedMps ?: 0.0, it) }
         } else if (prev == null) {
-            p.speedMps?.takeIf { it.isFinite() && it >= 0 }?.let { maxSpeedMps = it }
+            p.speedMps?.takeIf { it.isFinite() && it >= 0 }?.let { maxSpeedMps = max(maxSpeedMps ?: 0.0, it) }
+        }
+        if (p.elevationM?.isFinite() == true) {
+            // Compared with the datum of the last point that had an elevation, not of the last point.
+            if (p.datum != elevDatum) climb.breakRun()
+            elevDatum = p.datum
         }
         climb.add(p.elevationM)
         last = p

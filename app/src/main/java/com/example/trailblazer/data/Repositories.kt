@@ -77,9 +77,10 @@ class TripRepository(private val dao: TripDao, private val clock: Clock) {
 
     fun observe(id: String): Flow<Trip?> = dao.observe(id).map { it?.toModel() }
 
-    suspend fun save(trip: Trip, createdMs: Long? = null) {
+    /** Creates the trip or updates it in place; `createdMs` is set by the first save and never changed by a later one. */
+    suspend fun save(trip: Trip) {
         val now = clock.nowMs()
-        val entity = TripEntity(trip.id, trip.name.trim().ifEmpty { "Trip" }.take(NAME_MAX), createdMs ?: now, now)
+        val entity = TripEntity(trip.id, trip.name.trim().ifEmpty { "Trip" }.take(NAME_MAX), now, now)
         val stops = trip.stops.mapIndexed { i, s ->
             StopEntity(s.id, trip.id, i, s.name.take(NAME_MAX), s.kind.name, s.position.lat, s.position.lon, s.plannedDay, s.note?.take(NOTE_MAX))
         }
@@ -116,7 +117,7 @@ suspend fun TrackDao.forEachPoint(id: String, pageSize: Int = 2_000, block: susp
         if (page.isEmpty()) return after
         for (p in page) {
             val pos = LatLon.of(p.lat, p.lon) ?: continue
-            block(TrackPoint(p.timeMs, pos, p.elevationM, p.accuracyM, p.speedMps), p.seq)
+            block(TrackPoint(p.timeMs, pos, p.elevationM, p.accuracyM, p.speedMps, p.segment, p.elevationDatum), p.seq)
         }
         after = page.last().seq
     }
