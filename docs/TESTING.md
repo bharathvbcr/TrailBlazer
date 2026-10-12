@@ -29,11 +29,12 @@ macOS (needs Xcode and an iOS simulator runtime):
 
 **Apple tests never skip silently.**
 - If `xcrun simctl list devices available` shows no iPhone or iPad (or `xcrun` is missing or fails), `core/build.gradle.kts` disables `iosSimulatorArm64Test` and `iosX64Test` locally. When `CI=true` it fails the build instead, so a runner without a simulator is red, not green.
-- `iosX64Test` is an Intel simulator and Kotlin does not execute it on Apple Silicon, even with a runtime installed: it is compiled and linked only. `iosSimulatorArm64Test` runs the same common code.
-- After `:core:allTests`, the task `reportAppleTestsNotRun` prints `WARNING: NOT RUN: …` for every Apple test that did not run on this host (also on Linux, where none are built). Read the end of the build output: if that warning appears, those targets are unverified on this machine.
+- Kotlin itself skips Apple test tasks the host cannot execute: `iosX64Test` is an Intel simulator and does not run on Apple Silicon (it is compiled and linked only; `iosSimulatorArm64Test` runs the same common code), and the arm64 targets would not run on an Intel Mac.
+- `AppleTestWatch` (a build-event listener in `core/build.gradle.kts`) records what Gradle actually did to `macosArm64Test`, `iosSimulatorArm64Test` and `iosX64Test`. At the end of any build it prints `WARNING: NOT RUN: …` for every one that was skipped, for whatever reason, whether you ran `:core:allTests` or a single task, and also on a configuration-cache hit. After `:core:allTests` on a non-macOS host, where no Apple task exists, it says so too. Under GitHub Actions it also emits a `::warning::` annotation. An up-to-date or cached result counts as a run: the same inputs passed earlier.
+- The only skips that fail the build are the CI + missing simulator case above; the rest are inherent to the host, so they are reported, not failed.
 - `scripts/verify-build-config.sh` tests these rules with a stub `xcrun`.
 
-A green `:core:allTests` on an Apple Silicon Mac therefore means JVM, Android host, macOS native and iOS arm64 simulator ran; `iosX64Test` did not.
+Read the end of the build output: if `WARNING: NOT RUN` appears, those targets are unverified on this machine. A green `:core:allTests` with no such line means JVM, Android host, macOS native and both iOS simulators ran. On an Apple Silicon Mac the line for `iosX64Test` is always there.
 
 Quick local loop on any machine:
 

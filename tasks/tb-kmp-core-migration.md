@@ -31,7 +31,7 @@ The :core module is already 100% pure Kotlin/JVM with zero Android dependencies,
   - `core/build.gradle.kts`: `jvm()`, Android KMP library with host tests, `macosArm64`, `iosArm64`, `iosSimulatorArm64`, `iosX64`, each with a static `TrailBlazerCore` framework.
 - [x] Verify all existing astronomy, geodesy, and stress tests execute on KMP JVM and Apple targets
   - `./gradlew :core:allTests` on an Apple Silicon Mac ran the same 209 `commonTest` tests with 0 failures and 0 skips on `jvmTest`, `testAndroidHostTest`, `macosArm64Test` and `iosSimulatorArm64Test`.
-  - Not run: `iosX64Test`. Kotlin does not execute the Intel simulator on Apple Silicon; it is compiled and linked, and `reportAppleTestsNotRun` says so on every run.
+  - Not run: `iosX64Test`. Kotlin does not execute the Intel simulator on Apple Silicon; it is compiled and linked, and the `AppleTestWatch` build listener says so on every run.
   - Getting there needed a fix: `TileUtilsTest` used the JVM-only `Charsets`, so `commonTest` did not compile for any Apple target until then.
 - [x] Retain binary and source compatibility for the :app Android module
   - `:app` builds and tests against the KMP `:core` (`:app:testDebugUnitTest`, `:app:lintDebug`, `:app:assembleRelease`).
