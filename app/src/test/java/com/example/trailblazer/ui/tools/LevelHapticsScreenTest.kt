@@ -11,14 +11,13 @@ import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.navigation3.runtime.NavBackStack
-import androidx.navigation3.runtime.NavKey
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.trailblazer.TrailApp
 import com.example.trailblazer.data.ThemeMode
 import com.example.trailblazer.testing.awaitMainLooper
 import com.example.trailblazer.ui.nav.LevelRoute
+import com.example.trailblazer.ui.nav.NavigationState
 import com.example.trailblazer.ui.nav.Navigator
 import com.example.trailblazer.ui.theme.TrailTheme
 import kotlinx.coroutines.flow.first
@@ -59,7 +58,7 @@ class LevelHapticsScreenTest {
         shadowOf(manager).addSensor(gravity)
         // DataStore is a process-wide singleton, so a setting written by an earlier test is still there: start from on.
         runBlocking { app.container.prefs.update { it.copy(levelHaptics = true) } }
-        val nav = Navigator(NavBackStack<NavKey>(LevelRoute))
+        val nav = Navigator(NavigationState.single(LevelRoute))
         rule.setContent {
             TrailTheme(mode = ThemeMode.Dark, dynamicColor = false, nightRed = false) {
                 CompositionLocalProvider(LocalHapticFeedback provides recorder) { LevelScreen(nav) }

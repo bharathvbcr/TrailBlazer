@@ -60,12 +60,8 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
-import androidx.navigation3.runtime.NavBackStack
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
-import androidx.navigation3.runtime.rememberNavBackStack
-import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
 import com.example.trailblazer.ui.components.Backdrop
 import com.example.trailblazer.ui.components.GlassChrome
@@ -91,19 +87,27 @@ import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 
 /** Navigation actions handed to screens, so screens never touch the back stack directly. */
-class Navigator(private val stack: NavBackStack<NavKey>) {
+class Navigator(private val state: NavigationState) {
     fun go(route: Route) {
-        stack.add(route)
+        state.stack.add(route)
     }
 
     fun back() {
+        val stack = state.stack
         if (stack.size > 1) stack.removeAt(stack.size - 1)
     }
 
+    /**
+     * Shows [route]'s tab, with whatever was open on it. Choosing the tab already showing pops it back to its root,
+     * the usual meaning of tapping the current tab again.
+     */
     fun tab(route: Route) {
-        if (stack.size == 1 && stack[0] == route) return
-        stack.clear()
-        stack.add(route)
+        if (route == state.tab) {
+            val stack = state.stack
+            while (stack.size > 1) stack.removeAt(stack.size - 1)
+        } else {
+            state.tab = route
+        }
     }
 }
 
@@ -140,8 +144,8 @@ private val PillEstimate = 84.dp
 
 @Composable
 fun TrailNav(sharedText: String? = null, onShareHandled: () -> Unit = {}) {
-    val stack = rememberNavBackStack(NowRoute)
-    val nav = remember(stack) { Navigator(stack) }
+    val state = rememberNavigationState(TopLevel)
+    val nav = remember(state) { Navigator(state) }
     // Something shared to the app opens "Add to a trip" on top of wherever the user was; consumed once.
     LaunchedEffect(sharedText) {
         if (sharedText != null) {
@@ -150,14 +154,35 @@ fun TrailNav(sharedText: String? = null, onShareHandled: () -> Unit = {}) {
         }
     }
     val haze = rememberHazeState()
-    val top = stack.lastOrNull() as? Route ?: NowRoute
-    val showBar = stack.size == 1 && top in TopLevel
+    val top = state.stack.lastOrNull() as? Route ?: NowRoute
+    val showBar = state.stack.size == 1 && top in TopLevel
     var barHeightPx by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current
     val navBarBottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
+    val provider = remember(nav) {
+        entryProvider<NavKey> {
+            // Tabs are siblings, not a hierarchy: switching crossfades instead of sliding.
+            entry<NowRoute>(metadata = TabSwitch) { NowScreen(nav) }
+            entry<SkyRoute>(metadata = TabSwitch) { SkyScreen(nav) }
+            entry<TripsRoute>(metadata = TabSwitch) { TripsScreen(nav) }
+            entry<ToolsRoute>(metadata = TabSwitch) { ToolsScreen(nav) }
+            entry<SettingsRoute> { SettingsScreen(nav) }
+            entry<DocsRoute> { DocsScreen(nav, it.file) }
+            entry<TripEditRoute> { TripEditScreen(nav, it.tripId, it.seed) }
+            entry<ShareRoute> { ShareScreen(nav, it.text) }
+            entry<TrackDetailRoute> { TrackDetailScreen(nav, it.trackId) }
+            entry<LevelRoute> { LevelScreen(nav) }
+            entry<AltimeterRoute> { AltimeterScreen(nav) }
+            entry<SosRoute> { SosScreen(nav) }
+            entry<DiagnosticsRoute> { DiagnosticsScreen(nav) }
+            entry<SightingRoute> { SightingScreen(nav) }
+            entry<StargazeRoute> { StargazeScreen(nav, it.lat, it.lon, it.label) }
+        }
+    }
+
     // Back from another tab's root returns to Now before leaving the app.
-    BackHandler(enabled = stack.size == 1 && top != NowRoute) { nav.tab(NowRoute) }
+    BackHandler(enabled = state.stack.size == 1 && top != NowRoute) { nav.tab(NowRoute) }
 
     Backdrop {
         CompositionLocalProvider(
@@ -167,7 +192,7 @@ fun TrailNav(sharedText: String? = null, onShareHandled: () -> Unit = {}) {
             else navBarBottomInset + PillEstimate,
         ) {
             NavDisplay(
-                backStack = stack,
+                entries = state.entries(provider),
                 modifier = Modifier.fillMaxSize().hazeSource(haze),
                 onBack = { nav.back() },
                 transitionSpec = { PushTransition },
@@ -175,25 +200,6 @@ fun TrailNav(sharedText: String? = null, onShareHandled: () -> Unit = {}) {
                 // The back gesture drives this frame by frame: the page shrinks and follows the finger, and the
                 // screen underneath is already there, so releasing early (cancel) snaps back with nothing lost.
                 predictivePopTransitionSpec = { edge -> predictivePop(edge) },
-                entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator(), rememberViewModelStoreNavEntryDecorator()),
-                entryProvider = entryProvider {
-                    // Tabs are siblings, not a hierarchy: switching crossfades instead of sliding.
-                    entry<NowRoute>(metadata = TabSwitch) { NowScreen(nav) }
-                    entry<SkyRoute>(metadata = TabSwitch) { SkyScreen(nav) }
-                    entry<TripsRoute>(metadata = TabSwitch) { TripsScreen(nav) }
-                    entry<ToolsRoute>(metadata = TabSwitch) { ToolsScreen(nav) }
-                    entry<SettingsRoute> { SettingsScreen(nav) }
-                    entry<DocsRoute> { DocsScreen(nav, it.file) }
-                    entry<TripEditRoute> { TripEditScreen(nav, it.tripId, it.seed) }
-                    entry<ShareRoute> { ShareScreen(nav, it.text) }
-                    entry<TrackDetailRoute> { TrackDetailScreen(nav, it.trackId) }
-                    entry<LevelRoute> { LevelScreen(nav) }
-                    entry<AltimeterRoute> { AltimeterScreen(nav) }
-                    entry<SosRoute> { SosScreen(nav) }
-                    entry<DiagnosticsRoute> { DiagnosticsScreen(nav) }
-                    entry<SightingRoute> { SightingScreen(nav) }
-                    entry<StargazeRoute> { StargazeScreen(nav, it.lat, it.lon, it.label) }
-                },
             )
         }
         if (showBar) {

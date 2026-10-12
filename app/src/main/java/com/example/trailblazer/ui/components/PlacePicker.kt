@@ -33,11 +33,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -49,16 +49,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.trailblazer.container
 import com.example.trailblazer.places.FoundPlace
 import com.example.trailblazer.places.SavedPlaces
-import com.example.trailblazer.places.SearchResult
 import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.ui.Fmt
 import com.trailblazer.core.geo.CoordinateParse
 import com.trailblazer.core.geo.CoordinateParser
 import com.trailblazer.core.geo.ParsedPlace
-import kotlinx.coroutines.launch
 
 /**
  * The "use where I am" choice, whose meaning belongs to the caller (add a stop here, or follow the live position).
@@ -83,7 +82,10 @@ fun PlacePicker(
 ) {
     val ctx = LocalContext.current
     val c = ctx.container
-    val scope = rememberCoroutineScope()
+    val picker: PlacePickerViewModel = viewModel { PlacePickerViewModel(c) }
+    // The ViewModel outlives this dialog (it belongs to the screen under it); a closed picker must not leave a search or its answer behind.
+    DisposableEffect(picker) { onDispose { picker.reset() } }
+    val ps by picker.state.collectAsStateWithLifecycle()
     val settings = c.prefs.settings.collectAsStateWithLifecycle(null).value
     val fmt = remember(settings) { settings?.let { Fmt(ctx, it) } }
     val waypoints by c.waypoints.all.collectAsStateWithLifecycle(emptyList())
@@ -93,33 +95,17 @@ fun PlacePicker(
 
     var text by rememberSaveable { mutableStateOf(initialText.take(4000)) }
     var started by rememberSaveable { mutableStateOf(false) }
-    var message by remember { mutableStateOf<String?>(null) }
+    var localMessage by remember { mutableStateOf<String?>(null) }
     var offerLookup by remember { mutableStateOf(false) }
-    var askConsent by remember { mutableStateOf<String?>(null) }
-    var searching by remember { mutableStateOf(false) }
-    var results by remember { mutableStateOf<Pair<String, List<FoundPlace>>?>(null) }
+    // The picker's own notices (a link it could not use) win over the last search's.
+    val message = localMessage ?: ps.notice
     // Whether the clipboard holds text, from its description only: the text itself is read when the chip is tapped.
     val clipboard = remember { ctx.getSystemService(ClipboardManager::class.java) }
     val clipHasText = remember { clipboard?.hasPrimaryClip() == true && clipboard.primaryClipDescription?.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN) == true }
 
-    /** [justAgreed] covers the moment between tapping "Turn on search" and the setting arriving from storage. */
-    fun search(q: String, justAgreed: Boolean = false) {
-        results = null
-        message = null
-        searching = true
-        scope.launch {
-            when (val r = c.placeSearch.search(q, justAgreed || settings?.placeSearchConsent == true)) {
-                is SearchResult.Ok -> {
-                    results = q to r.places
-                    if (r.places.isEmpty()) message = "Nothing found for “$q”."
-                }
-                SearchResult.NotConsented -> askConsent = q
-                SearchResult.NotAvailable -> message = "Place search isn’t available on this phone. Paste coordinates or a map link instead."
-                is SearchResult.Failed -> message = r.message
-                is SearchResult.Refused -> message = r.message
-            }
-            searching = false
-        }
+    fun search(q: String) {
+        localMessage = null
+        picker.search(q, consented = settings?.placeSearchConsent == true)
     }
 
     fun take(r: CoordinateParse, resolvedUrl: String? = null) {
@@ -131,10 +117,10 @@ fun PlacePicker(
                 // A link that only names a place (Google's "maps?q=Eiffel Tower&ftid=…") can still be found by name.
                 val name = resolvedUrl?.let(CoordinateParser::placeQuery) ?: CoordinateParser.placeQuery(text.trim())
                 if (name != null) {
-                    message = "The link names “$name” but has no coordinates. Searching for it by name."
+                    localMessage = "The link names “$name” but has no coordinates. Searching for it by name."
                     search(name)
                 } else {
-                    message = parseProblem(r)
+                    localMessage = parseProblem(r)
                     offerLookup = needsLookup(r)
                 }
             }
@@ -168,11 +154,11 @@ fun PlacePicker(
                     }
                     OutlinedTextField(
                         value = text,
-                        onValueChange = { text = it.take(4000); message = null; offerLookup = false; results = null },
+                        onValueChange = { text = it.take(4000); localMessage = null; offerLookup = false; picker.reset() },
                         placeholder = { Text("Place, address, coordinates or map link") },
                         leadingIcon = { Icon(TrailIcons.Search, null) },
                         trailingIcon = {
-                            if (searching) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            if (ps.searching) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                             else if (text.isNotBlank()) TextButton(onClick = ::submit) { Text("Go") }
                         },
                         singleLine = true,
@@ -181,11 +167,11 @@ fun PlacePicker(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        here?.let { h -> AssistChip(onClick = { h.onHere()?.let { message = it } }, label = { Text(h.label) }, leadingIcon = { Icon(TrailIcons.MyLocation, null, Modifier.size(18.dp)) }) }
+                        here?.let { h -> AssistChip(onClick = { h.onHere()?.let { localMessage = it } }, label = { Text(h.label) }, leadingIcon = { Icon(TrailIcons.MyLocation, null, Modifier.size(18.dp)) }) }
                         if (clipHasText) AssistChip(
                             onClick = {
                                 val clip = clipboard?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(ctx)?.toString()?.trim()
-                                if (clip.isNullOrEmpty()) message = "The clipboard is empty." else {
+                                if (clip.isNullOrEmpty()) localMessage = "The clipboard is empty." else {
                                     text = clip.take(4000)
                                     take(CoordinateParser.parse(text))
                                 }
@@ -195,8 +181,8 @@ fun PlacePicker(
                         )
                     }
                     message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 4.dp)) }
-                    if (offerLookup) ShortLinkLookup(text, onParsed = { r, url -> take(r, url) }, onError = { message = it })
-                    askConsent?.let { q ->
+                    if (offerLookup) ShortLinkLookup(text, onParsed = { r, url -> take(r, url) }, onError = { localMessage = it })
+                    ps.askConsent?.let { q ->
                         Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
                             Column(Modifier.padding(12.dp)) {
                                 Text("Search online for “$q”?", style = MaterialTheme.typography.titleSmall)
@@ -206,24 +192,20 @@ fun PlacePicker(
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                                 Row {
-                                    TextButton(onClick = {
-                                        askConsent = null
-                                        scope.launch { c.prefs.update { it.copy(placeSearchConsent = true) } }
-                                        search(q, justAgreed = true)
-                                    }) { Text("Turn on search") }
-                                    TextButton(onClick = { askConsent = null; message = "Search is off. Paste coordinates or a map link, or pick a saved place." }) { Text("Not now") }
+                                    TextButton(onClick = { localMessage = null; picker.agreeAndSearch(q) }) { Text("Turn on search") }
+                                    TextButton(onClick = { localMessage = null; picker.declineConsent() }) { Text("Not now") }
                                 }
                             }
                         }
                     }
-                    val shown = results
+                    val shown = ps.results
                     val saved = remember(waypoints, trips, near, text, shown) {
                         if (shown == null) SavedPlaces.list(waypoints, trips, near, filter = text.takeIf { CoordinateParser.parse(it) is CoordinateParse.NotRecognized } ?: "", excludeTripId = excludeTripId) else emptyList()
                     }
                     LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
                         if (shown != null) {
-                            item { Header("Results for “${shown.first}”") }
-                            items(shown.second) { p -> PlaceRow(p, near?.let { com.trailblazer.core.geo.Geo.distanceM(it, p.position) }, fmt) { onPick(listOf(ParsedPlace(p.position, p.name))) } }
+                            item { Header("Results for “${shown.query}”") }
+                            items(shown.places) { p -> PlaceRow(p, near?.let { com.trailblazer.core.geo.Geo.distanceM(it, p.position) }, fmt) { onPick(listOf(ParsedPlace(p.position, p.name))) } }
                         } else if (saved.isNotEmpty()) {
                             item { Header(if (near != null) "Your places, nearest first" else "Your places") }
                             items(saved) { e -> PlaceRow(e.place, e.distanceM, fmt) { onPick(listOf(ParsedPlace(e.place.position, e.place.name))) } }

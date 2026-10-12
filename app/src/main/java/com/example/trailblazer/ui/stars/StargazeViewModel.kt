@@ -1,11 +1,13 @@
 package com.example.trailblazer.ui.stars
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.trailblazer.AppContainer
 import com.example.trailblazer.data.Settings
 import com.example.trailblazer.sensors.Declination
 import com.example.trailblazer.sensors.Hold
+import com.example.trailblazer.ui.persist
 import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.ui.LocalDays
 import com.trailblazer.core.astro.ApparentPlace
@@ -30,6 +32,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -77,13 +80,35 @@ data class ChartObject(val label: String?, val name: String, val azimuthDeg: Dou
 data class ChartState(val timeMs: Long, val objects: List<ChartObject>, val facingDeg: Double?, val sunAltitudeDeg: Double)
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class StargazeViewModel(private val c: AppContainer, routePlace: StarPlace?) : ViewModel() {
+/** The furthest ahead of now, in minutes, the chart can be set. */
+internal const val MAX_CHART_OFFSET_MIN = 12 * 60
+
+/** The chart's time and "follow compass" live in [saved], so they survive the process being killed. */
+class StargazeViewModel(
+    private val c: AppContainer,
+    routePlace: StarPlace?,
+    private val saved: SavedStateHandle = SavedStateHandle(),
+) : ViewModel() {
     private val started = SharingStarted.WhileSubscribed(5_000)
     val settings: StateFlow<Settings?> = c.prefs.settings.stateIn(viewModelScope, started, null)
 
+    private val _chartOffsetMin = MutableStateFlow((saved.get<Int>(KEY_OFFSET) ?: 0).coerceIn(0, MAX_CHART_OFFSET_MIN))
+    private val _followCompass = MutableStateFlow(saved.get<Boolean>(KEY_FOLLOW) == true)
+
     /** Minutes ahead of now shown on the chart (0 … 12 h). */
-    val chartOffsetMin = MutableStateFlow(0)
-    val followCompass = MutableStateFlow(false)
+    val chartOffsetMin: StateFlow<Int> = _chartOffsetMin.asStateFlow()
+    val followCompass: StateFlow<Boolean> = _followCompass.asStateFlow()
+
+    fun setChartOffsetMin(minutes: Int) {
+        val m = minutes.coerceIn(0, MAX_CHART_OFFSET_MIN)
+        _chartOffsetMin.value = m
+        saved[KEY_OFFSET] = m
+    }
+
+    fun setFollowCompass(on: Boolean) {
+        _followCompass.value = on
+        saved[KEY_FOLLOW] = on
+    }
 
     private val minuteTicker: Flow<Long> = flow {
         while (true) {
@@ -135,7 +160,12 @@ class StargazeViewModel(private val c: AppContainer, routePlace: StarPlace?) : V
     /** Whether a "follow compass" chart can have a true heading at all: it needs both a compass and a position fix. */
     val compassAvailable: Boolean get() = c.orientation.headingSource != null
 
-    fun setNightRed(on: Boolean) = viewModelScope.launch { c.prefs.update { it.copy(nightRed = on) } }
+    fun setNightRed(on: Boolean) = c.persist { it.copy(nightRed = on) }
+
+    private companion object {
+        const val KEY_OFFSET = "chartOffsetMin"
+        const val KEY_FOLLOW = "followCompass"
+    }
 
     private fun compute(p: StarPlace, nightDay: Long): Tonight {
         val (start, end) = LocalDays.noonToNoon(nightDay)

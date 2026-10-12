@@ -8,7 +8,9 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.trailblazer.MainActivity
+import com.example.trailblazer.testing.awaitAppReady
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -23,6 +25,9 @@ import org.junit.runner.RunWith
 class PredictiveBackTest {
     @get:Rule
     val rule = createAndroidComposeRule<MainActivity>()
+
+    @Before
+    fun appIsUp() = rule.awaitAppReady() // the Settings button appears only once the saved settings have loaded
 
     private fun shown(text: String) = rule.onAllNodesWithText(text, ignoreCase = true).fetchSemanticsNodes().isNotEmpty()
 

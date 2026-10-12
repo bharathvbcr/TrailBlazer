@@ -1,6 +1,7 @@
 package com.example.trailblazer.ui.trips
 
 import android.net.Uri
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.trailblazer.AppContainer
@@ -24,6 +25,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
@@ -33,29 +35,37 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transformLatest
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** A removal that can still be undone: the list before it, and the list it produced. */
 data class RemovedStop(val stop: Stop, val before: List<Stop>, val after: List<Stop>)
 
+/**
+ * [saved] holds the unsaved edits (id, name, stops, dirty), so they come back when the process is killed and the
+ * screen is restored. It is the screen's SavedStateHandle; the default is a private one for callers that have none.
+ * The undo offer ([lastRemoved]) and transient [message]s are deliberately not kept.
+ */
 class TripEditViewModel(
     private val c: AppContainer,
     tripId: String?,
     seed: List<ParsedPlace> = emptyList(),
-    /** How a route's elevation profile is built; tests replace it with a slow or observable one. */
+    private val saved: SavedStateHandle = SavedStateHandle(),
+    /** How a route's elevation profile is built; tests replace it with a slow or observable one. Last, for a trailing lambda. */
     private val buildProfile: suspend (List<LatLon>) -> ElevationProfile? = { c.demTiles.profile(it) },
 ) : ViewModel() {
     private val started = SharingStarted.WhileSubscribed(5_000)
-    val id: String = tripId ?: newId()
+    val id: String = tripId ?: saved.get<String>(KEY_ID)?.takeIf { it.isNotEmpty() } ?: newId()
     val isNew = tripId == null
 
     val settings: StateFlow<Settings?> = c.prefs.settings.stateIn(viewModelScope, started, null)
     val fix: StateFlow<Reading<Fix>> = c.location.fix
 
-    val name = MutableStateFlow("New trip")
-    val stops = MutableStateFlow<List<Stop>>(emptyList())
-    val dirty = MutableStateFlow(false)
+    private val _name = MutableStateFlow(saved.get<String>(KEY_NAME)?.take(SavedStops.NAME_MAX) ?: "New trip")
+    private val _stops = MutableStateFlow(SavedStops.decode(saved.get<Any>(KEY_STOPS)))
+    private val _dirty = MutableStateFlow(saved.get<Boolean>(KEY_DIRTY) == true)
+    val name: StateFlow<String> = _name.asStateFlow()
+    val stops: StateFlow<List<Stop>> = _stops.asStateFlow()
+    val dirty: StateFlow<Boolean> = _dirty.asStateFlow()
     val message = MutableStateFlow<String?>(null)
     val loaded = MutableStateFlow(tripId == null)
 
@@ -69,6 +79,21 @@ class TripEditViewModel(
         .map { list -> DaylightPlanner.plan(list) { day -> LocalDays.window(day) } }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, started, emptyList())
+
+    private fun setName(n: String) {
+        _name.value = n
+        saved[KEY_NAME] = n
+    }
+
+    private fun setStops(list: List<Stop>) {
+        _stops.value = list
+        saved[KEY_STOPS] = SavedStops.encode(list)
+    }
+
+    private fun setDirty(on: Boolean) {
+        _dirty.value = on
+        saved[KEY_DIRTY] = on
+    }
 
     /**
      * Elevation along the route from the offline SRTM tiles. Recomputed only when a stop moves (not when one is renamed
@@ -100,13 +125,14 @@ class TripEditViewModel(
     }
 
     init {
+        saved[KEY_ID] = id
         if (tripId != null) viewModelScope.launch {
             val t = c.trips.observe(tripId).first()
             if (!dirty.value) {
                 if (t == null) message.value = "This trip is no longer on this phone."
                 else {
-                    name.value = t.name
-                    stops.value = t.stops
+                    setName(t.name)
+                    setStops(t.stops)
                 }
             }
             loaded.value = true
@@ -116,8 +142,13 @@ class TripEditViewModel(
         } else addSeed(seed)
     }
 
-    /** A shared place joins an existing route before its destination (as a place to visit); a new trip just grows. */
+    /**
+     * A shared place joins an existing route before its destination (as a place to visit); a new trip just grows.
+     * Done once per editor: a restored editor already holds the place, so adding it again would duplicate it.
+     */
     private fun addSeed(seed: List<ParsedPlace>) {
+        if (saved.get<Boolean>(KEY_SEEDED) == true) return
+        saved[KEY_SEEDED] = true
         if (seed.isEmpty()) return
         if (stops.value.size >= 2) {
             val added = insert(seed, beforeDestination = true)
@@ -129,13 +160,12 @@ class TripEditViewModel(
 
     private fun edit(block: (List<Stop>) -> List<Stop>) {
         lastRemoved.value = null
-        var changed = false
-        stops.update {
-            val next = normalizeKinds(block(it))
-            changed = next != it
-            next
+        val current = _stops.value
+        val next = normalizeKinds(block(current))
+        if (next != current) {
+            setStops(next)
+            setDirty(true)
         }
-        if (changed) dirty.value = true
     }
 
     /** Keeps Start first and End last, so reordering never produces an End in the middle. */
@@ -150,8 +180,8 @@ class TripEditViewModel(
 
     fun rename(n: String) {
         lastRemoved.value = null
-        name.value = n.take(80)
-        dirty.value = true
+        setName(n.take(SavedStops.NAME_MAX))
+        setDirty(true)
     }
 
     fun addPlaces(places: List<ParsedPlace>) {
@@ -203,8 +233,8 @@ class TripEditViewModel(
         val r = lastRemoved.value ?: return
         lastRemoved.value = null
         if (stops.value != r.after) return
-        stops.value = r.before
-        dirty.value = true
+        setStops(r.before)
+        setDirty(true)
     }
 
     fun setKind(index: Int, kind: StopKind) = edit { cur -> cur.mapIndexed { i, s -> if (i == index) s.copy(kind = kind) else s } }
@@ -221,7 +251,7 @@ class TripEditViewModel(
             return@launch
         }
         c.trips.save(trip())
-        dirty.value = false
+        setDirty(false)
         onDone()
     }
 
@@ -230,5 +260,13 @@ class TripEditViewModel(
             is IoResult.Ok -> "Exported ${r.value} stops"
             is IoResult.Failed -> r.message
         }
+    }
+
+    private companion object {
+        const val KEY_ID = "id"
+        const val KEY_NAME = "name"
+        const val KEY_STOPS = "stops"
+        const val KEY_DIRTY = "dirty"
+        const val KEY_SEEDED = "seeded"
     }
 }

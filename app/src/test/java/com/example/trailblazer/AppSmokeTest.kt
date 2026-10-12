@@ -12,8 +12,10 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.hasScrollAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.example.trailblazer.testing.awaitAppReady
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -27,6 +29,10 @@ import org.robolectric.Shadows.shadowOf
 class AppSmokeTest {
     @get:Rule
     val rule = createAndroidComposeRule<MainActivity>()
+
+    // The Now screen draws only after the saved settings load; every case below starts from it.
+    @Before
+    fun appIsUp() = rule.awaitAppReady()
 
     @Test
     fun launchesWithoutRequestingPermissionsAndShowsHonestStates() {
