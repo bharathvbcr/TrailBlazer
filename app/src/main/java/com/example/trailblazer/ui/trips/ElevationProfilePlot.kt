@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import com.example.trailblazer.ui.Fmt
 import com.example.trailblazer.ui.components.GlassCard
 import com.example.trailblazer.ui.components.LabelValue
+import com.example.trailblazer.ui.components.ScrubAdjust
 import com.example.trailblazer.ui.components.scrubX
 import com.trailblazer.core.plot.SeriesPlot
 import com.trailblazer.core.trip.ElevationProfile
@@ -152,8 +153,9 @@ fun ElevationProfilePlot(profile: ElevationProfile, markers: List<Extremum>, fmt
 
     Column(modifier) {
         val shown = scrub?.let { samples[it] }
+        val readout = shown?.let { "${fmt.distance(it.distanceM)} · ${it.elevationM?.let(fmt::elevation) ?: "no data"}" } ?: "Tap or drag along the profile"
         Text(
-            shown?.let { "${fmt.distance(it.distanceM)} · ${it.elevationM?.let(fmt::elevation) ?: "no data"}" } ?: "Tap or drag along the profile",
+            readout,
             style = MaterialTheme.typography.labelLarge,
             color = line,
             modifier = Modifier.padding(bottom = 4.dp),
@@ -163,7 +165,16 @@ fun ElevationProfilePlot(profile: ElevationProfile, markers: List<Extremum>, fmt
                 .fillMaxWidth()
                 .height(140.dp)
                 .semantics { contentDescription = description }
-                .scrubX(profile) { f ->
+                .scrubX(
+                    profile,
+                    // A screen reader steps from sample to sample along the route and hears the readout shown above.
+                    adjust = if (samples.size < 2) null else ScrubAdjust(
+                        fraction = (scrub ?: 0) / (samples.size - 1f),
+                        stateText = readout,
+                        steps = samples.size - 2,
+                        onAdjust = { f -> scrub = SeriesPlot.scrubIndex(f, samples.size) },
+                    ),
+                ) { f ->
                     val target = f * total
                     scrub = samples.indices.minByOrNull { abs(samples[it].distanceM - target) }
                 },

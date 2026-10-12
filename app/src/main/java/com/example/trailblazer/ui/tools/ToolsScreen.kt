@@ -4,9 +4,12 @@ import android.view.View
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -54,10 +57,11 @@ fun ToolsScreen(nav: Navigator) {
     ) {
         tools.chunked(2).forEach { pair ->
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                // A card is as tall as its text needs (at least 180 dp), and the pair share the taller one's height.
+                Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     pair.forEach { t ->
                         GlassCard(
-                            Modifier.weight(1f).height(180.dp),
+                            Modifier.weight(1f).heightIn(min = 180.dp).fillMaxHeight(),
                             onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 nav.go(t.route)

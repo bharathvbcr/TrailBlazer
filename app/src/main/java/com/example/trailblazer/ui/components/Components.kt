@@ -54,6 +54,13 @@ import androidx.compose.ui.platform.LocalContext
 import com.example.trailblazer.ui.theme.LocalStatusColors
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.Surface
+import kotlin.math.roundToInt
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -231,10 +238,12 @@ fun Sparkline(
     var scrub by remember(frame) { mutableStateOf<Int?>(null) }
     val shown = scrub?.let { i -> frame.samples.minByOrNull { abs(it.index - i) } } ?: if (caption != null) frame.samples.first() else null
     val grid = MaterialTheme.colorScheme.outlineVariant
+    val shownSlot = shown?.let { frame.samples.indexOf(it) }?.coerceAtLeast(0) ?: 0
+    val readout = shown?.let { s -> caption?.invoke(s.index, s.value) ?: valueText?.invoke(s.value) }
     Column(modifier) {
-        if (shown != null && (caption != null || valueText != null)) {
+        if (readout != null) {
             Text(
-                caption?.invoke(shown.index, shown.value) ?: valueText!!.invoke(shown.value),
+                readout,
                 style = MaterialTheme.typography.labelLarge,
                 color = color,
                 modifier = Modifier.padding(bottom = 4.dp),
@@ -245,7 +254,17 @@ fun Sparkline(
                 .fillMaxWidth()
                 .height(88.dp)
                 .semantics { contentDescription = "Chart, ${frame.samples.size} points" }
-                .scrubX(frame.count) { f -> scrub = SeriesPlot.scrubIndex(f, frame.count) },
+                .scrubX(
+                    frame.count,
+                    // Adjusting walks the samples that exist one at a time (a gap is not a stop); a screen reader hears
+                    // the same readout as the caption.
+                    adjust = ScrubAdjust(
+                        fraction = if (frame.samples.size <= 1) 0f else shownSlot / (frame.samples.size - 1f),
+                        stateText = readout ?: shown?.let { "Point ${shownSlot + 1} of ${frame.samples.size}" } ?: "No point selected",
+                        steps = (frame.samples.size - 2).coerceAtLeast(0),
+                        onAdjust = { f -> scrub = frame.samples[SeriesPlot.scrubIndex(f, frame.samples.size)].index },
+                    ),
+                ) { f -> scrub = SeriesPlot.scrubIndex(f, frame.count) },
         ) {
             fun xy(index: Int, value: Double): Offset {
                 val x = if (frame.count <= 1) 0f else size.width * index / (frame.count - 1)
@@ -343,7 +362,14 @@ fun Dial(
     val markerLayouts = remember(markers, measurer, smallStyle) {
         markers.map { m -> m to measurer.measure(m.label, smallStyle) }
     }
-    Canvas(modifier.aspectRatio(1f).alpha(if (dimmed) 0.45f else 1f)) {
+    // The markers are drawn pictures; a screen reader gets them as words, since the heading text below says nothing of them.
+    val markerText = remember(markers) { dialMarkerText(markers) }
+    Canvas(
+        modifier.aspectRatio(1f).alpha(if (dimmed) 0.45f else 1f).semantics {
+            contentDescription = "Compass dial"
+            markerText?.let { stateDescription = it }
+        },
+    ) {
         val r = min(size.width, size.height) / 2
         val c = Offset(size.width / 2, size.height / 2)
         drawCircle(cs.surfaceContainerHighest.copy(alpha = 0.5f), r, c)
@@ -460,6 +486,34 @@ fun Dial(
         } else {
             drawCircle(cs.primary, 5.dp.toPx(), c)
         }
+    }
+}
+
+/** The dial's markers in words ("Sun at 120 degrees, Moon at 300 degrees"), or null when it has none. */
+internal fun dialMarkerText(markers: List<DialMarker>): String? =
+    markers.takeIf { it.isNotEmpty() }?.joinToString(", ") { m ->
+        val bearing = if (m.bearingDeg.isFinite()) ((m.bearingDeg % 360 + 360) % 360).roundToInt() % 360 else null
+        if (bearing == null) "${m.label}, direction unknown" else "${m.label} at $bearing degrees"
+    }
+
+/**
+ * A read-only status pill, shaped like an assist chip. A chip whose click does nothing is announced as a button, so
+ * facts ("Relative only: no magnetometer") use this instead: no click action, no button role.
+ */
+@Composable
+fun StatusChip(label: String, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = AssistChipDefaults.shape,
+        color = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.heightIn(min = 32.dp).padding(horizontal = 12.dp).wrapContentHeight(Alignment.CenterVertically),
+        )
     }
 }
 

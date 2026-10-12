@@ -76,6 +76,7 @@ import com.trailblazer.core.sensors.Reading
 import com.example.trailblazer.ui.Fmt
 import com.example.trailblazer.ui.components.Dial
 import com.example.trailblazer.ui.components.DialMarker
+import com.example.trailblazer.ui.components.StatusChip
 import com.example.trailblazer.ui.components.GlassCard
 import com.example.trailblazer.ui.components.SatelliteSky
 import com.example.trailblazer.ui.components.LabelValue
@@ -352,7 +353,7 @@ private fun CompassCard(
                 }
             }
             if (h?.source == HeadingSource.GameRotation) {
-                AssistChip(onClick = {}, label = { Text("Relative only: no magnetometer") })
+                StatusChip("Relative only: no magnetometer")
             } else if (fieldAccuracy == Accuracy.Low || fieldAccuracy == Accuracy.Unreliable) {
                 AssistChip(
                     onClick = onCalibrate,
