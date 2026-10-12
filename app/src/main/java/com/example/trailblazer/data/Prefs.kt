@@ -96,6 +96,7 @@ class PrefsRepository(private val context: Context) {
         val levelRoll = doublePreferencesKey("level_roll_offset_deg")
         val trackingMode = stringPreferencesKey("tracking_mode")
         val activeOfflineMapPath = stringPreferencesKey("active_offline_map_path")
+        val trackingInterrupt = stringPreferencesKey("tracking_interrupt")
     }
 
     private inline fun <reified E : Enum<E>> Preferences.enum(key: Preferences.Key<String>, default: E): E =
@@ -104,6 +105,18 @@ class PrefsRepository(private val context: Context) {
     val settings: Flow<Settings> = context.store.data
         .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
         .map { readFrom(it) }
+
+    /**
+     * Why the recording service stopped on its own (an `InterruptReason` name), kept apart from [Settings] because it
+     * is service state, not a preference. It outlives the process so the reason is still on screen after a restart.
+     */
+    val trackingInterrupt: Flow<String?> = context.store.data
+        .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+        .map { it[K.trackingInterrupt] }
+
+    suspend fun setTrackingInterrupt(name: String?) {
+        context.store.edit { p -> if (name == null) p.remove(K.trackingInterrupt) else p[K.trackingInterrupt] = name }
+    }
 
     suspend fun update(transform: (Settings) -> Settings) {
         context.store.edit { p ->

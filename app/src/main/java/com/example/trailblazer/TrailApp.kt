@@ -8,6 +8,7 @@ import android.location.LocationManager
 import android.os.Handler
 import android.os.Looper
 import android.view.Display
+import androidx.room.withTransaction
 import com.example.trailblazer.data.ImportExport
 import com.example.trailblazer.data.PrefsRepository
 import com.example.trailblazer.data.PressureHistory
@@ -33,6 +34,7 @@ import com.example.trailblazer.sensors.OrientationRepository
 import com.example.trailblazer.sensors.SensorSource
 import com.example.trailblazer.sensors.StepRepository
 import com.example.trailblazer.sensors.ThermalRepository
+import com.example.trailblazer.tracking.InterruptState
 import com.example.trailblazer.tracking.TrackingController
 import com.example.trailblazer.links.LinkLookup
 import com.example.trailblazer.places.GeocoderBackend
@@ -112,7 +114,22 @@ class AppContainer(
     val weather by lazy { OpenMeteoClient(http, clock) }
     val linkLookup by lazy { LinkLookup(redirects) }
     val placeSearch by lazy { PlaceSearch(placeBackend, placeSearchAvailable) }
-    val tracking by lazy { TrackingController(context, tracks, permissions, sensorSource) }
+    val interrupts by lazy { InterruptState(prefs, scope) }
+    val tracking by lazy { TrackingController(context, tracks, permissions, sensorSource, interrupts) }
+
+    /**
+     * Removes everything the user has stored. An active recording is finished first: it would otherwise keep
+     * writing points for a track that no longer exists.
+     */
+    suspend fun deleteAllData() {
+        tracking.stopAndAwait()
+        db.withTransaction {
+            db.tracks().deleteAll(); db.trips().deleteAll(); db.waypoints().deleteAll(); db.pressure().deleteAll()
+        }
+        prefs.clear()
+        tracking.clearInterrupt()
+        weather.clearCache()
+    }
 }
 
 class TrailApp : Application() {

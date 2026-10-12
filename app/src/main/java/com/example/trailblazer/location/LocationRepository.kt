@@ -316,8 +316,8 @@ class GnssRepository(
 ) {
     private val executor: Executor = ContextCompat.getMainExecutor(context)
 
-    val status: StateFlow<Reading<GnssSnapshot>> = permissions.flowOf(AppPermission.Location).flatMapLatest { ok ->
-        if (!ok || !permissions.hasFineLocation()) flowOf(Reading.Unavailable(UnavailableReason.PermissionDenied))
+    val status: StateFlow<Reading<GnssSnapshot>> = permissions.flowOf(AppPermission.PreciseLocation).flatMapLatest { precise ->
+        if (!precise) flowOf(Reading.Unavailable(UnavailableReason.PermissionDenied))
         else if (!LocationManagerCompat.hasProvider(manager, LocationManager.GPS_PROVIDER)) flowOf(Reading.Unavailable(UnavailableReason.NoHardware))
         else statusUpdates()
     }.shareReading(scope)

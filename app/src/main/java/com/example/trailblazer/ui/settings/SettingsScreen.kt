@@ -34,7 +34,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.room.withTransaction
 import com.example.trailblazer.container
 import com.example.trailblazer.data.NorthReference
 import com.example.trailblazer.data.Settings
@@ -188,13 +187,7 @@ fun SettingsScreen(nav: Navigator) {
         confirmButton = {
             TextButton(onClick = {
                 wipe = false
-                scope.launch {
-                    c.db.withTransaction {
-                        c.db.tracks().deleteAll(); c.db.trips().deleteAll(); c.db.waypoints().deleteAll(); c.db.pressure().deleteAll()
-                    }
-                    c.prefs.clear()
-                    c.weather.clearCache()
-                }
+                scope.launch { c.deleteAllData() }
             }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
         },
         dismissButton = { TextButton(onClick = { wipe = false }) { Text("Cancel") } },
