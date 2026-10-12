@@ -113,6 +113,7 @@ class AppContainer(
 
     val importExport by lazy { ImportExport(context.contentResolver, db, waypoints, trips, tracks) }
     val offlineMaps by lazy { com.example.trailblazer.data.OfflineMapManager(context, prefs) }
+    val demTiles by lazy { com.example.trailblazer.data.DemTileManager(context) }
 
     val weather by lazy { OpenMeteoClient(http, clock) }
     val linkLookup by lazy { LinkLookup(redirects) }
