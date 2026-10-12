@@ -9,6 +9,42 @@ plugins {
   alias(libs.plugins.room)
 }
 
+/**
+ * Release identity. Gradle properties (`-PversionCode=…`, `-PversionName=…`, or gradle.properties) win; otherwise the
+ * commit count of the checkout gives a monotonic versionCode. Without git (a source tarball) the old fixed values apply.
+ */
+val gitCommitCount: Int? = runCatching {
+    providers.exec {
+        commandLine("git", "rev-list", "--count", "HEAD")
+        isIgnoreExitValue = true
+    }.standardOutput.asText.get().trim().toIntOrNull()
+}.getOrNull()?.takeIf { it > 0 }
+val releaseVersionCode: Int = providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: gitCommitCount ?: 2
+val releaseVersionName: String = providers.gradleProperty("versionName").orNull
+    ?: gitCommitCount?.let { "2.0.$it" } ?: "2.0"
+
+/**
+ * Release signing comes only from the environment or Gradle properties, never from the repository. All four values
+ * present gives a signed release. None gives an UNSIGNED release APK (app-release-unsigned.apk): it builds and shrinks,
+ * and cannot be installed, so it can never be mistaken for a shippable build. A partial set fails the build.
+ */
+fun signingValue(property: String, env: String): String? =
+    (providers.gradleProperty(property).orNull ?: providers.environmentVariable(env).orNull)?.takeIf { it.isNotBlank() }
+
+val signingStoreFile = signingValue("trailblazer.signing.storeFile", "TRAILBLAZER_KEYSTORE_PATH")
+val signingStorePassword = signingValue("trailblazer.signing.storePassword", "TRAILBLAZER_KEYSTORE_PASSWORD")
+val signingKeyAlias = signingValue("trailblazer.signing.keyAlias", "TRAILBLAZER_KEY_ALIAS")
+val signingKeyPassword = signingValue("trailblazer.signing.keyPassword", "TRAILBLAZER_KEY_PASSWORD")
+val signingParts = listOf(signingStoreFile, signingStorePassword, signingKeyAlias, signingKeyPassword)
+val releaseSigningConfigured = signingParts.all { it != null }
+if (!releaseSigningConfigured && signingParts.any { it != null }) {
+    throw GradleException(
+        "Incomplete release signing configuration: set all of trailblazer.signing.storeFile / storePassword / keyAlias / " +
+            "keyPassword (or TRAILBLAZER_KEYSTORE_PATH / TRAILBLAZER_KEYSTORE_PASSWORD / TRAILBLAZER_KEY_ALIAS / " +
+            "TRAILBLAZER_KEY_PASSWORD), or none of them for an unsigned release.",
+    )
+}
+
 android {
     namespace = "com.example.trailblazer"
     compileSdk = 37
@@ -16,13 +52,25 @@ android {
         applicationId = "com.example.trailblazer"
         minSdk = 24
         targetSdk = 36
-        versionCode = 2
-        versionName = "2.0"
+        versionCode = releaseVersionCode
+        versionName = releaseVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            create("release") {
+                storeFile = file(signingStoreFile!!)
+                storePassword = signingStorePassword
+                keyAlias = signingKeyAlias
+                keyPassword = signingKeyPassword
+            }
+        }
     }
 
     buildTypes {
         release {
+            if (releaseSigningConfigured) signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
