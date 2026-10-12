@@ -1,7 +1,6 @@
 package com.example.trailblazer.ui.trips
 
 import android.app.DatePickerDialog
-import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import androidx.activity.compose.BackHandler
@@ -48,11 +47,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.trailblazer.container
 import com.example.trailblazer.data.GeoFormat
+import com.example.trailblazer.data.closeInBackground
 import com.example.trailblazer.ui.Fmt
 import com.example.trailblazer.ui.LocalDays
 import com.example.trailblazer.ui.components.GlassCard
@@ -63,6 +62,7 @@ import com.example.trailblazer.ui.components.SectionTitle
 import com.example.trailblazer.ui.components.HereOption
 import com.example.trailblazer.ui.components.PlacePicker
 import com.example.trailblazer.ui.components.TrailIcons
+import com.example.trailblazer.ui.components.openUrl
 import com.example.trailblazer.ui.components.stopLetter
 import com.example.trailblazer.ui.nav.Navigator
 import com.example.trailblazer.ui.nav.SeedPlace
@@ -145,14 +145,15 @@ fun TripEditScreen(nav: Navigator, tripId: String?, seed: List<SeedPlace> = empt
             }
             if (showMap) {
                 item {
-                    val tileSource = remember { ctx.container.offlineMaps.openActiveSource() }
-                    androidx.compose.runtime.DisposableEffect(tileSource) {
-                        onDispose { tileSource?.close() }
+                    // Opened off the main thread; closed when this card leaves the screen.
+                    val tileSource by androidx.compose.runtime.produceState<com.example.trailblazer.data.OfflineTileSource?>(null) {
+                        value = ctx.container.offlineMaps.openActiveSource()
+                        awaitDispose { value?.closeInBackground() }
                     }
                     Box(modifier = Modifier.fillMaxWidth().height(320.dp).clip(RoundedCornerShape(16.dp))) {
                         OfflineMapCanvas(
                             tileSource = tileSource,
-                            stops = stops,
+                            routes = listOf(stops),
                             distanceFormatter = { fmt.distance(it) },
                         )
                     }
@@ -313,14 +314,6 @@ fun TripEditScreen(nav: Navigator, tripId: String?, seed: List<SeedPlace> = empt
         },
         dismissButton = { TextButton(onClick = { discardAsk = false; nav.back() }) { Text("Discard") } },
     )
-}
-
-private fun openUrl(ctx: Context, url: String, onError: (String) -> Unit) {
-    try {
-        ctx.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
-    } catch (_: ActivityNotFoundException) {
-        onError("No app can open map links on this phone.")
-    }
 }
 
 @Composable

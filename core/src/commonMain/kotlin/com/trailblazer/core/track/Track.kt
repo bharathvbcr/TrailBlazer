@@ -219,17 +219,4 @@ object DouglasPeucker {
         val w = ((d + 540.0) % 360.0) - 180.0
         return if (w.isFinite()) w else 0.0
     }
-
-    private fun perpendicularM(p: LatLon, a: LatLon, b: LatLon): Double {
-        val k = cos(a.lat * DEG) * Geo.EARTH_RADIUS_M * DEG
-        val kLat = Geo.EARTH_RADIUS_M * DEG
-        val bx = wrapLon(b.lon - a.lon) * k
-        val by = (b.lat - a.lat) * kLat
-        val px = wrapLon(p.lon - a.lon) * k
-        val py = (p.lat - a.lat) * kLat
-        val len2 = bx * bx + by * by
-        if (len2 == 0.0) return kotlin.math.hypot(px, py)
-        val t = ((px * bx + py * by) / len2).coerceIn(0.0, 1.0)
-        return kotlin.math.hypot(px - t * bx, py - t * by)
-    }
 }

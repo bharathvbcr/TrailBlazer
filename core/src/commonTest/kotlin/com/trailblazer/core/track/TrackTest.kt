@@ -1,5 +1,6 @@
 package com.trailblazer.core.track
 
+import com.trailblazer.core.budgetMs
 import com.trailblazer.core.geo.Geo
 import com.trailblazer.core.geo.LatLon
 import kotlin.test.Test
@@ -90,7 +91,60 @@ class TrackTest {
         assertTrue(simplified.size in 2..2000)
         assertEquals(pts.first(), simplified.first())
         assertEquals(pts.last(), simplified.last())
-        assertTrue(ms < 20_000, "took $ms ms")
+        assertTrue(ms < budgetMs(20_000), "took $ms ms (limit ${budgetMs(20_000)})")
+    }
+
+    private fun walk(n: Int, seed: Int, start: LatLon = LatLon(46.0, 7.0)): List<Pair<Int, LatLon>> {
+        val rnd = Random(seed)
+        var p = start
+        var bearing = 0.0
+        return List(n) { i ->
+            bearing += rnd.nextDouble(-25.0, 25.0)
+            p = Geo.destination(p, bearing, 5.0 + rnd.nextDouble(0.0, 20.0))
+            i to p
+        }
+    }
+
+    @Test
+    fun simplifyToMaxIsBoundedDeterministicOrderedAndNested() {
+        val pts = walk(5_000, seed = 11)
+        var previous: List<Pair<Int, LatLon>>? = null
+        for (max in listOf(2, 3, 5, 10, 50, 500, 4_999)) {
+            val a = DouglasPeucker.simplifyToMax(pts, max) { it.second }
+            val b = DouglasPeucker.simplifyToMax(pts.toList(), max) { it.second }
+            assertEquals(a, b, "same input, same answer (max=$max)")
+            assertTrue(a.size in 2..max, "max=$max kept ${a.size}")
+            assertEquals(pts.first(), a.first())
+            assertEquals(pts.last(), a.last())
+            assertTrue(a.zipWithNext().all { (x, y) -> x.first < y.first }, "points stay in track order (max=$max)")
+            // The ranking does not depend on the bound, so a smaller bound keeps a subset of a larger one.
+            previous?.let { smaller -> assertTrue(a.containsAll(smaller), "max=$max keeps everything the smaller bound kept") }
+            previous = a
+        }
+        assertEquals(pts, DouglasPeucker.simplifyToMax(pts, 5_000) { it.second })
+        assertEquals(pts, DouglasPeucker.simplifyToMax(pts, 9_000) { it.second })
+        assertTrue(runCatching { DouglasPeucker.simplifyToMax(pts, 1) { it.second } }.exceptionOrNull() is IllegalArgumentException)
+    }
+
+    @Test
+    fun simplifyToMaxOnDegenerateInputKeepsTheEnds() {
+        val line = List(1_000) { LatLon(0.0, it * 0.001) }
+        val kept = DouglasPeucker.simplifyToMax(line, 50) { it }
+        assertTrue(kept.size in 2..50 && kept.first() == line.first() && kept.last() == line.last())
+        val same = List(100) { LatLon(10.0, 10.0) }
+        assertEquals(2, DouglasPeucker.simplifyToMax(same, 10) { it }.size)
+        assertEquals(listOf(LatLon(1.0, 2.0)), DouglasPeucker.simplifyToMax(listOf(LatLon(1.0, 2.0)), 2) { it })
+    }
+
+    @Test
+    fun simplifyToMaxKeepsTheBumpAcrossTheAntimeridian() {
+        // Due east along the equator from 179.0 to -179.0, one point 0.03 degrees (about 3.3 km) off the line.
+        val pts = (0..200).map { i ->
+            val lon = 179.0 + i * 0.01
+            LatLon(if (i == 150) 0.03 else 0.0, if (lon > 180.0) lon - 360.0 else lon)
+        }
+        val kept = DouglasPeucker.simplifyToMax(pts, 3) { it }
+        assertEquals(listOf(pts.first(), pts[150], pts.last()), kept)
     }
 
     @Test

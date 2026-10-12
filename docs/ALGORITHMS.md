@@ -1,6 +1,6 @@
 # Algorithms
 
-Everything here is in `:core` and is tested on the JVM. The sign conventions are the same everywhere:
+Everything here is in `:core` (common Kotlin Multiplatform code) and is tested by the shared `commonTest` suite on the JVM, as Android host tests and natively on Apple targets. The sign conventions are the same everywhere:
 
 - **Latitude:** degrees, north positive, in [−90, 90].
 - **Longitude:** degrees, east positive, in [−180, 180].
@@ -174,14 +174,15 @@ The Negretti & Zambra forecaster. It needs sea-level pressure in 950–1050 hPa 
   - moving time (speed ≥ 0.5 m/s). A step of up to 30 s uses the device-reported speed. A longer step uses its average speed (distance / time), because an instantaneous speed says nothing about the time before it. Longer steps come from sparse Expedition fixes, GPS resting while still, Battery Saver withholding fixes, a pause, or process death. Distance is the straight line between fixes either way.
   - maximum speed
   - elevation gain and loss with a **3 m hysteresis** band, so GPS and barometer noise does not add up to phantom climbing
-- **`DouglasPeucker`** is iterative (no recursion, so a 100k-point track cannot overflow the stack). `simplifyToMax(n)` searches for the smallest tolerance that yields ≤ n points. Imported routes over 50 points are simplified to 50 stops. The track detail map path is stride-sampled while streaming, then simplified to at most 500 points. Charts average the points into fixed buckets. Stored tracks are never altered.
+- **`DouglasPeucker`** is iterative (no recursion, so a 100k-point track cannot overflow the stack). `simplifyToMax(n)` keeps the points in order of how far each one deviates (one ranked pass, a heap of segments) until n remain, so it never returns more than n points and gives the same answer for the same input. Longitude differences wrap at ±180°, so a track across the antimeridian simplifies like any other. Imported routes over 50 points are simplified to 50 stops. The track detail map path is stride-sampled while streaming, then simplified to at most 500 points. Charts average the points into fixed buckets. Stored tracks are never altered.
 
 ## GPX and KML (`io/`)
 
-- **`XmlPull`** is a minimal streaming reader. It never expands DTDs or entities beyond the five predefined ones and numeric character references, so XXE and "billion laughs" inputs have no effect.
-- **`GpxReader.read` and `KmlReader.read`** stop with an error beyond 1,000,000 points (`maxPoints`).
+- **`XmlPull`** is a minimal streaming reader. It never expands DTDs or entities beyond the five predefined ones and numeric character references, so XXE and "billion laughs" inputs have no effect. Character data arrives in chunks of about 32,768 characters, so no text length limits a document.
+- **`XmlEncoding.detect`** picks the character encoding from the file's own bytes: a byte-order mark first (UTF-8, UTF-16, UTF-32), then the `<?xml encoding="…"?>` declaration (UTF-8, ISO-8859-1, ISO-8859-15, US-ASCII, windows-1252 and their usual aliases), then UTF-8. Any other declared name (Shift_JIS, KOI8-R, windows-1251…) is passed to the platform, which decodes it or, if it does not know the name, refuses the file with an import error. A UTF-16/32 declaration the bytes contradict is refused too, instead of being decoded into garbage. Bytes that are invalid in the declared encoding decode to U+FFFD (a stray bad byte in a name does not cost the whole file).
+- **`GpxReader.read` and `KmlReader.read`** stop with an error beyond 1,000,000 points (`maxPoints`). That is the only size limit on a coordinate list: a KML `<coordinates>` list is parsed tuple by tuple as it streams in, so memory grows with the points kept, not with the text. Names and descriptions are read up to 1,000,000 characters each and cut beyond that. A number, timestamp or coordinate tuple longer than 256 characters is an error, not a dropped field. A document of more than 400,000,000 characters is refused whatever its structure.
 - **`GpxReader`** reads `wpt`, `rte`/`rtept` and `trk`/`trkseg`/`trkpt`. A track without timestamps is imported as a *route*; the app does not invent times.
-- **`KmlReader`** reads `Point` and `LineString` placemarks.
+- **`KmlReader`** reads `Point` and `LineString` placemarks and `gx:Track` / `gx:MultiTrack`. Every geometry of a `MultiGeometry` is kept, and a `<when>` outside a `gx:Track` (such as a `TimeStamp`) is not a track time. A `Polygon` is skipped.
 - **Writers** escape `& < > " '` and stream their output. They write tracks as GPX `trk` and KML `LineString`.
 
 ## Map hand-off (`intents/MapLinks.kt`)

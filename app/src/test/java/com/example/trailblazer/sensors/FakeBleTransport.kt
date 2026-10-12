@@ -6,10 +6,22 @@ class FakeBleTransport : BleTransport {
     var scanning = false
     var connectedAddress: String? = null
 
+    /** Number of scan starts and stops, so tests can prove a scan was (or was not) left running. */
+    var scanStarts = 0
+        private set
+    var scanStops = 0
+        private set
+
+    /** Make [startScan] fail the way a missing permission does: it reports a reason and returns false. */
+    var scanStartFailure: String? = null
+
     private var onDeviceFoundCallback: ((BleDeviceInfo) -> Unit)? = null
+    private var onScanFailedCallback: ((String) -> Unit)? = null
     private var onConnectedCallback: ((Set<BleServiceType>) -> Unit)? = null
     private var onDisconnectedCallback: (() -> Unit)? = null
     private var onLocationDataCallback: ((ByteArray) -> Unit)? = null
+    private var onPositionQualityCallback: ((ByteArray) -> Unit)? = null
+    private var onLnFeatureCallback: ((ByteArray) -> Unit)? = null
     private var onNmeaDataCallback: ((String) -> Unit)? = null
     private var onPressureDataCallback: ((Double) -> Unit)? = null
     private var onTemperatureDataCallback: ((Double) -> Unit)? = null
@@ -19,16 +31,24 @@ class FakeBleTransport : BleTransport {
     override fun isBluetoothAvailable(): Boolean = isAvailable
     override fun isBluetoothEnabled(): Boolean = isEnabled
 
-    override fun startScan(onDeviceFound: (BleDeviceInfo) -> Unit): Boolean {
+    override fun startScan(onDeviceFound: (BleDeviceInfo) -> Unit, onScanFailed: (String) -> Unit): Boolean {
         if (!isEnabled || !isAvailable) return false
+        scanStartFailure?.let {
+            onScanFailed(it)
+            return false
+        }
         scanning = true
+        scanStarts++
         onDeviceFoundCallback = onDeviceFound
+        onScanFailedCallback = onScanFailed
         return true
     }
 
     override fun stopScan() {
+        if (scanning) scanStops++
         scanning = false
         onDeviceFoundCallback = null
+        onScanFailedCallback = null
     }
 
     override fun connect(
@@ -36,6 +56,8 @@ class FakeBleTransport : BleTransport {
         onConnected: (services: Set<BleServiceType>) -> Unit,
         onDisconnected: () -> Unit,
         onLocationData: (ByteArray) -> Unit,
+        onPositionQualityData: (ByteArray) -> Unit,
+        onLnFeatureData: (ByteArray) -> Unit,
         onNmeaData: (String) -> Unit,
         onPressureData: (Double) -> Unit,
         onTemperatureData: (Double) -> Unit,
@@ -47,6 +69,8 @@ class FakeBleTransport : BleTransport {
         onConnectedCallback = onConnected
         onDisconnectedCallback = onDisconnected
         onLocationDataCallback = onLocationData
+        onPositionQualityCallback = onPositionQualityData
+        onLnFeatureCallback = onLnFeatureData
         onNmeaDataCallback = onNmeaData
         onPressureDataCallback = onPressureData
         onTemperatureDataCallback = onTemperatureData
@@ -64,6 +88,10 @@ class FakeBleTransport : BleTransport {
         onDeviceFoundCallback?.invoke(device)
     }
 
+    fun emitScanFailure(reason: String) {
+        onScanFailedCallback?.invoke(reason)
+    }
+
     fun emitConnected(services: Set<BleServiceType>) {
         onConnectedCallback?.invoke(services)
     }
@@ -75,6 +103,14 @@ class FakeBleTransport : BleTransport {
 
     fun emitLocation(bytes: ByteArray) {
         onLocationDataCallback?.invoke(bytes)
+    }
+
+    fun emitPositionQuality(bytes: ByteArray) {
+        onPositionQualityCallback?.invoke(bytes)
+    }
+
+    fun emitLnFeature(bytes: ByteArray) {
+        onLnFeatureCallback?.invoke(bytes)
     }
 
     fun emitNmea(chunk: String) {

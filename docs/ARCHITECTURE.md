@@ -4,17 +4,17 @@
 
 | Module | Kind | Package | Contains |
 |---|---|---|---|
-| `:core` | Pure Kotlin/JVM (no Android) | `com.trailblazer.core` | All the maths and file formats. Tested on the plain JVM in seconds. |
+| `:core` | Kotlin Multiplatform: JVM, Android library, macOS and iOS (`macosArm64`, `iosArm64`, `iosSimulatorArm64`, `iosX64`) | `com.trailblazer.core` | All the maths and file formats. `commonTest` runs on the JVM in seconds, and also as Android host tests and natively on Apple targets. Each Apple target builds a static `TrailBlazerCore` framework (no Swift consumer yet). |
 | `:app` | Android application | `com.example.trailblazer` | Sensors, location, storage, the tracking service and the Compose UI. |
 
-`:core` has no Android imports, so everything that can be checked against a reference value (astronomy, geodesy, weather, GPX/KML, map links) lives there.
+`:core` has no Android imports, so everything that can be checked against a reference value (astronomy, geodesy, weather, GPX/KML, map links) lives there. Almost all of it is common Kotlin. The only platform seams are `expect`/`actual` declarations with a JVM, an Android and an Apple actual each: `PlatformTimeZone` (UTC offset and local-to-epoch conversion; `java.util.TimeZone` or `NSTimeZone`) and `io/PlatformIo` (the `Reader`/`Writer` types and gzip decompression).
 
 ### `:core` packages
 
 | Package | Responsibility |
 |---|---|
 | `math` | `mod360`, `angleDiff` (−180, 180], `crossesNorth`, `CircularLowPass`, `MedianFilter` |
-| `time` | Julian day, ΔT, civil dates, ISO-8601 (always `Locale.ROOT`) |
+| `time` | Julian day, ΔT, civil dates, ISO-8601 (`Iso8601`, hand-formatted with zero padding, so the output never depends on a locale) |
 | `astro` | Sun (NOAA/Meeus 25), moon (Meeus 47), coordinate transforms, refraction, `RiseSetFinder`, `SolarEvents`, `LunarPhase`, `LunarEvents`; planets (JPL elements), the bright-star catalogue, precession and apparent place, `NightSky` (darkness intervals, planet and Milky Way visibility, polar alignment), `MeteorShowers` (IMO list), `SkyProjection` (sky chart) |
 | `geo` | `LatLon` (validated), haversine, bearings, destination, cross-track, DMS, `CoordinateParser` |
 | `atmo` | ISA, QNH, density altitude, air density, boiling point, dew point |

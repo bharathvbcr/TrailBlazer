@@ -334,7 +334,7 @@ fun TripsScreen(nav: Navigator) {
                     ) {
                         OfflineMapCanvas(
                             tileSource = activeTileSource,
-                            stops = trips.flatMap { it.stops },
+                            routes = trips.map { it.stops },
                             waypoints = waypoints,
                             tracks = trackPaths,
                             currentLocation = (fix as? Reading.Value)?.value?.position,
