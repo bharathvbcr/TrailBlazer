@@ -111,6 +111,102 @@ class TrackRecorderTest {
     }
 
     @Test
+    fun endingATrackIsOneTransactionOfPointsAndState() = runBlocking {
+        val dao = FakeTrackDao()
+        val r = TrackRecorder(dao, clock)
+        val t = r.openOrStart("T")
+        for (i in 0 until 4) r.offer(fix(i, i * 10.0))
+
+        r.setState(TrackState.Finished)
+
+        assertEquals("one write for the points and the state together", 1, dao.appendCalls)
+        assertEquals("never a separate state write that could land without the points", 0, dao.updateCalls)
+        assertEquals(TrackState.Finished, dao.row(t.id)!!.state)
+        assertEquals(4, dao.allPoints.size)
+    }
+
+    @Test
+    fun aFailedWriteLeavesTheBufferAndTheStateForARetry() = runBlocking {
+        val dao = FakeTrackDao()
+        val r = TrackRecorder(dao, clock)
+        val t = r.openOrStart("T")
+        for (i in 0 until 4) r.offer(fix(i, i * 10.0))
+        dao.failWrites = android.database.sqlite.SQLiteFullException()
+
+        try {
+            r.setState(TrackState.Finished)
+            org.junit.Assert.fail("the write should have failed")
+        } catch (_: android.database.sqlite.SQLiteFullException) {
+        }
+        assertEquals(TrackState.Recording, dao.row(t.id)!!.state)
+        assertEquals(0, dao.allPoints.size)
+        assertEquals(TrackState.Recording, r.track!!.state)
+
+        dao.failWrites = null
+        r.setState(TrackState.Finished)
+        assertEquals(TrackState.Finished, dao.row(t.id)!!.state)
+        assertEquals("nothing was lost by the failure", 4, dao.allPoints.size)
+    }
+
+    @Test
+    fun aFlushAfterFinishingDoesNotMoveTheEndOfTheTrack() = runBlocking {
+        val dao = FakeTrackDao()
+        val r = TrackRecorder(dao, clock)
+        val t = r.openOrStart("T")
+        for (i in 0 until 3) r.offer(fix(i, i * 10.0))
+        r.setState(TrackState.Finished)
+        val ended = dao.row(t.id)!!.endedMs
+        assertEquals(now, ended)
+
+        now += 60_000
+        r.flush()
+        r.setState(TrackState.Finished)
+
+        assertEquals("endedMs is stamped once, on the transition", ended, dao.row(t.id)!!.endedMs)
+    }
+
+    /**
+     * The real Room transaction, not FakeTrackDao's imitation of it: a trigger makes the track row's update fail after
+     * the points were inserted, and nothing of the transaction may remain.
+     */
+    @Test
+    fun endingATrackRollsBackItsPointsWhenTheStateWriteFailsInRoom() = runBlocking {
+        val r = TrackRecorder(db.tracks(), clock)
+        val t = r.openOrStart("T")
+        for (i in 0 until 4) r.offer(fix(i, i * 10.0))
+        val sqlite = db.openHelper.writableDatabase
+        sqlite.execSQL("CREATE TRIGGER fail_track_update BEFORE UPDATE ON tracks BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END")
+
+        try {
+            r.setState(TrackState.Finished)
+            org.junit.Assert.fail("the update should have been aborted")
+        } catch (_: android.database.sqlite.SQLiteException) {
+        }
+        assertEquals("the inserted points were rolled back with the failed update", -1, db.tracks().maxSeq(t.id))
+        assertEquals(TrackState.Recording, db.tracks().get(t.id)!!.state)
+
+        sqlite.execSQL("DROP TRIGGER fail_track_update")
+        r.setState(TrackState.Finished)
+        assertEquals("the retry wrote everything once", 3, db.tracks().maxSeq(t.id))
+        assertEquals(TrackState.Finished, db.tracks().get(t.id)!!.state)
+    }
+
+    @Test
+    fun pointsForADeletedTrackFailLoudlyWithADatabaseException() = runBlocking {
+        val r = TrackRecorder(db.tracks(), clock)
+        val t = r.openOrStart("T")
+        for (i in 0 until 3) r.offer(fix(i, i * 10.0))
+        db.tracks().delete(t.id)
+
+        try {
+            r.flush()
+            org.junit.Assert.fail("a missing track row must not be written to silently")
+        } catch (e: android.database.sqlite.SQLiteException) {
+            // The recording service turns this into a visible pause (see RecordingSessionTest) rather than a crash.
+        }
+    }
+
+    @Test
     fun hundredThousandPointsStreamWithBoundedMemory() = runBlocking {
         val dao = db.tracks()
         val id = "big"

@@ -97,8 +97,9 @@ Rules:
    - **Wake:** the significant-motion trigger (a wake-up sensor, armed only while resting) or motion in the next samples brings the request back.
    - **Fallback:** a phone without both an accelerometer and significant motion keeps GPS on at the chosen interval, and Settings says so.
    - **Metrics:** the gap is stitched by `TrackStats` (see ALGORITHMS.md, Tracks), so it is not counted as moving time. The same applies when Battery Saver withholds fixes; the request stays registered and fixes continue in the same track.
-4. If location becomes `Unavailable`, recording pauses and records an `InterruptReason` (`LocationPermissionRevoked` or `LocationDisabled`), which the Trips tab explains.
-5. After process death, `MainActivity` calls `resumeIfInterrupted()` on start. The service reattaches to the open track and never creates a new one on its own.
+4. The lifecycle (start, pause, finish, the collector and the 5 s tick) lives in `RecordingSession`, which changes all of it under one lock. Recording needs **precise** location (`AppPermission.PreciseLocation`): approximate fixes are over 30 m wide and would all be dropped, so a start with approximate access only is refused with a reason.
+5. If location becomes `Unavailable`, or a database write fails (`SQLiteException`, a full disk), recording pauses and an `InterruptReason` is stored in DataStore (`InterruptState`). The Trips tab and a notification explain it, and the reason survives the process. A stored reason stops `resumeIfInterrupted()` from restarting behind the user's back.
+6. After process death, `MainActivity` calls `resumeIfInterrupted()` on start, which returns a typed `ResumeResult`. The service reattaches to the open track and never creates a new one on its own. It is `START_NOT_STICKY` on purpose: Android does not let a restarted service enter the foreground with the `location` type from the background without `ACCESS_BACKGROUND_LOCATION` ([restrictions](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start)).
 
 ## UI
 

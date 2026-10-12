@@ -709,26 +709,21 @@ internal fun BleSensorDialog(
 }
 
 /**
- * Scanning and connecting need the "Nearby devices" runtime permission (BLUETOOTH_SCAN and BLUETOOTH_CONNECT) on Android 12+.
- * On Android 11 and older the Bluetooth permissions are install-time, but a BLE scan returns nothing unless location is
- * allowed, so that is asked for as well. Both gates show why, and offer the app's settings after a permanent denial.
+ * Scanning and connecting need the "Nearby devices" runtime permission on Android 12+. On Android 11 and older
+ * [AppPermission.Bluetooth] is precise location instead, because a BLE scan returns nothing without it. The gate shows
+ * why, and offers the app's settings after a permanent denial.
  */
 @Composable
 private fun BleScanPermissionGate(content: @Composable () -> Unit) {
     PermissionGate(
         AppPermission.Bluetooth,
-        "To find an external sensor, Android needs the “Nearby devices” permission. TrailBlazer uses it only to scan for and connect to the sensor you pick; nothing leaves this phone.",
-    ) {
-        if (Build.VERSION.SDK_INT < 31) {
-            PermissionGate(
-                AppPermission.Location,
-                "On Android 11 and older, scanning for Bluetooth devices only works while location access is allowed. TrailBlazer does not use the scan to find your position.",
-                content = content,
-            )
+        if (Build.VERSION.SDK_INT >= 31) {
+            "To find an external sensor, Android needs the “Nearby devices” permission. TrailBlazer uses it only to scan for and connect to the sensor you pick; nothing leaves this phone."
         } else {
-            content()
-        }
-    }
+            "On Android 11 and older, scanning for Bluetooth devices only works while precise location access is allowed. TrailBlazer does not use the scan to find your position."
+        },
+        content = content,
+    )
 }
 
 private fun copy(ctx: Context, text: String) {
