@@ -1,5 +1,6 @@
 package com.trailblazer.core.plot
 
+import com.trailblazer.core.budgetMs
 import com.trailblazer.core.geo.LatLon
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -118,7 +119,7 @@ class SeriesPlotTest {
         val mark = kotlin.time.TimeSource.Monotonic.markNow()
         val f = SeriesPlot.frame(values, minSpan = 20.0)
         val ms = mark.elapsedNow().inWholeMilliseconds
-        assertTrue(ms < 2_000, "took ${ms}ms")
+        assertTrue(ms < budgetMs(2_000), "took ${ms}ms (limit ${budgetMs(2_000)})")
         assertNotNull(f)
         assertEquals(values.size, f.count)
         assertTrue(f.samples.size >= 2)

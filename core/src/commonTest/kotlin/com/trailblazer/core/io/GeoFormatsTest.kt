@@ -1,10 +1,13 @@
 package com.trailblazer.core.io
 
 import com.trailblazer.core.geo.LatLon
+import com.trailblazer.core.time.Iso8601
 import com.trailblazer.core.track.TrackPoint
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
@@ -199,6 +202,184 @@ class GeoFormatsTest {
         val doc = KmlReader.read(StringReader(sb.toString()))
         assertEquals(1, doc.routes.size)
         assertEquals(40_000, doc.routes.single().points.size)
+    }
+
+    private fun lineStringKml(tuples: Int, perTuple: (Int) -> String = { "7.0,46.0,1.0\n" }): String = buildString {
+        append("<kml><Placemark><name>Line</name><LineString><coordinates>\n")
+        for (i in 0 until tuples) append(perTuple(i))
+        append("</coordinates></LineString></Placemark></kml>")
+    }
+
+    @Test
+    fun kmlCoordinateListLongerThanTheOldTextCapIsStreamed() {
+        // 1_000 points, each followed by 5_000 spaces: five million characters in one <coordinates> element, read
+        // as a stream. (GeoFormatsStreamingJvmTest goes past 60 million, beyond the 40-million cap the reader had
+        // before it streamed coordinates.)
+        val padding = " ".repeat(5_000)
+        val doc = KmlReader.read(StringReader(lineStringKml(1_000) { "7.0,46.0,1.0$padding" }))
+        assertEquals(1_000, doc.routes.single().points.size)
+    }
+
+    @Test
+    fun kmlTuplesSplitAcrossTextChunksAreNotCorrupted() {
+        val n = 20_000 // about 400 kB of text: many 32 kB chunks, with tuples falling on the boundaries
+        val doc = KmlReader.read(StringReader(lineStringKml(n) { "${7.0 + (it % 1000) * 0.001},${46.0 + (it % 90) * 0.01},${it % 500}\n" }))
+        val pts = doc.routes.single().points
+        assertEquals(n, pts.size)
+        for (i in 0 until n) {
+            assertEquals(7.0 + (i % 1000) * 0.001, pts[i].position.lon, 1e-9, "lon of point $i")
+            assertEquals(46.0 + (i % 90) * 0.01, pts[i].position.lat, 1e-9, "lat of point $i")
+            assertEquals((i % 500).toDouble(), pts[i].elevationM!!, 1e-9, "ele of point $i")
+        }
+    }
+
+    @Test
+    fun kmlPointLimitIsExactAndFailsClosedPastIt() {
+        assertEquals(1_000, KmlReader.read(StringReader(lineStringKml(1_000)), maxPoints = 1_000).routes.single().points.size)
+        val e = assertFailsWith<XmlFormatException> { KmlReader.read(StringReader(lineStringKml(1_001)), maxPoints = 1_000) }
+        assertTrue(e.message!!.contains("more than 1000 points"), e.message)
+        // The limit counts the whole document, not each geometry.
+        val twoLines = "<kml><Placemark><MultiGeometry>" +
+            List(2) { "<LineString><coordinates>" + "7.0,46.0\n".repeat(600) + "</coordinates></LineString>" }.joinToString("") +
+            "</MultiGeometry></Placemark></kml>"
+        assertFailsWith<XmlFormatException> { KmlReader.read(StringReader(twoLines), maxPoints = 1_000) }
+        assertEquals(1_200, KmlReader.read(StringReader(twoLines), maxPoints = 1_200).routes.sumOf { it.points.size })
+    }
+
+    @Test
+    fun kmlCoordinateLongerThanAnyRealTupleIsRefused() {
+        val kml = "<kml><Placemark><LineString><coordinates>" + "7".repeat(300) + "</coordinates></LineString></Placemark></kml>"
+        assertFailsWith<XmlFormatException> { KmlReader.read(StringReader(kml)) }
+    }
+
+    @Test
+    fun kmlPointTakesOnlyItsFirstCoordinateAndOnlyValidOnesCount() {
+        val kml = """<kml><Placemark><name>P</name><Point><coordinates> 7.0,46.0,5 9.0,47.0 </coordinates></Point></Placemark>
+            <Placemark><name>Bad</name><Point><coordinates>999,999 7.0,46.0</coordinates></Point></Placemark></kml>"""
+        val doc = KmlReader.read(StringReader(kml), maxPoints = 1)
+        assertEquals(listOf("P"), doc.waypoints.map { it.name })
+        assertEquals(46.0, doc.waypoints.single().position.lat, 1e-9)
+    }
+
+    @Test
+    fun kmlTimeStampWhenIsNotATrackTime() {
+        val kml = """<kml xmlns:gx="http://www.google.com/kml/ext/2.2"><Placemark><name>T</name>
+            <TimeStamp><when>2020-06-01T00:00:00Z</when></TimeStamp>
+            <gx:Track>
+                <when>2026-01-01T00:00:00Z</when><when>2026-01-01T00:01:00Z</when>
+                <gx:coord>7.0 46.0 100</gx:coord><gx:coord>7.1 46.1 110</gx:coord>
+            </gx:Track></Placemark></kml>"""
+        val pts = KmlReader.read(StringReader(kml)).tracks.single().segments.single()
+        assertEquals(2, pts.size)
+        assertEquals(Iso8601.parse("2026-01-01T00:00:00Z"), pts[0].epochMs)
+        assertEquals(Iso8601.parse("2026-01-01T00:01:00Z"), pts[1].epochMs)
+        assertEquals(46.1, pts[1].position.lat, 1e-9)
+    }
+
+    @Test
+    fun kmlPolygonRingIsSkippedAndDoesNotLeakIntoALaterPoint() {
+        val kml = """<kml><Placemark><Polygon><outerBoundaryIs><LinearRing><coordinates>1,1 2,2 3,3 1,1</coordinates></LinearRing></outerBoundaryIs></Polygon>
+            <Point/><LineString/></Placemark></kml>"""
+        val doc = KmlReader.read(StringReader(kml))
+        assertTrue(doc.waypoints.isEmpty() && doc.routes.isEmpty(), "got $doc")
+    }
+
+    @Test
+    fun textAroundTheChunkBoundaryKeepsEntitiesSurrogatesAndCdataIntact() {
+        val chunk = XmlPull.TEXT_CHUNK
+        fun gpxName(xml: String) = GpxReader.read(StringReader("<gpx><wpt lat=\"1\" lon=\"2\"><name>$xml</name></wpt></gpx>")).waypoints.single().name
+        for (pad in chunk - 8..chunk + 3) {
+            val a = "a".repeat(pad)
+            assertEquals("$a&<>\"'z", gpxName("$a&amp;&lt;&gt;&quot;&apos;z"), "entities after $pad chars")
+            assertEquals("${a}😀z", gpxName("${a}😀z"), "emoji after $pad chars")
+            assertEquals("${a}😀", gpxName("$a&#x1F600;"), "char reference after $pad chars")
+            val x = "x".repeat(pad)
+            assertEquals("$x]", gpxName("<![CDATA[$x]]]>"), "CDATA after $pad chars")
+            assertEquals("$x]]>z", gpxName("<![CDATA[$x]]]]><![CDATA[>z]]>"), "split terminator after $pad chars")
+        }
+        assertNull(gpxName("<![CDATA[]]>"))
+    }
+
+    @Test
+    fun overlongDescriptionIsCutNotBufferedWithoutBound() {
+        val kml = "<kml><Placemark><name>D</name><description><![CDATA[" + "d".repeat(2_500_000) + "]]></description>" +
+            "<Point><coordinates>7,46</coordinates></Point></Placemark></kml>"
+        val wp = KmlReader.read(StringReader(kml)).waypoints.single()
+        assertEquals(XmlPull.MAX_TEXT, wp.description!!.length)
+        assertEquals("D", wp.name)
+    }
+
+    @Test
+    fun anOverlongValueIsAnErrorNotADroppedField() {
+        val pad = " ".repeat(XmlPull.MAX_VALUE + 10)
+        // A <time> that is cut would be read as missing and silently turn a track into a route.
+        for (field in listOf("ele", "time", "speed")) {
+            val gpx = "<gpx><wpt lat=\"1\" lon=\"2\"><$field>${pad}5</$field></wpt></gpx>"
+            val e = assertFailsWith<XmlFormatException>(field) { GpxReader.read(StringReader(gpx)) }
+            assertTrue(e.message!!.contains("<$field>"), e.message)
+        }
+        val whenKml = "<kml xmlns:gx=\"g\"><Placemark><gx:Track><when>${pad}2026-01-01T00:00:00Z</when></gx:Track></Placemark></kml>"
+        assertTrue(assertFailsWith<XmlFormatException> { KmlReader.read(StringReader(whenKml)) }.message!!.contains("<when>"))
+        val coordKml = "<kml xmlns:gx=\"g\"><Placemark><gx:Track><gx:coord>${pad}7 46</gx:coord></gx:Track></Placemark></kml>"
+        assertTrue(assertFailsWith<XmlFormatException> { KmlReader.read(StringReader(coordKml)) }.message!!.contains("<coord>"))
+        // At the limit it still reads.
+        val ok = "<gpx><wpt lat=\"1\" lon=\"2\"><ele>${" ".repeat(XmlPull.MAX_VALUE - 1)}5</ele></wpt></gpx>"
+        assertEquals(5.0, GpxReader.read(StringReader(ok)).waypoints.single().elevationM!!, 1e-9)
+    }
+
+    @Test
+    fun cuttingFreeTextNeverLeavesHalfASurrogatePair() {
+        for (before in XmlPull.MAX_TEXT - 3..XmlPull.MAX_TEXT + 1) {
+            val kml = "<kml><Placemark><name>${"n".repeat(before)}😀tail</name><Point><coordinates>7,46</coordinates></Point></Placemark></kml>"
+            val name = KmlReader.read(StringReader(kml)).waypoints.single().name!!
+            assertTrue(name.length <= XmlPull.MAX_TEXT, "length ${name.length}")
+            assertFalse(name.last().isHighSurrogate(), "ends on half a pair after $before chars")
+        }
+    }
+
+    @Test
+    fun aDocumentPastTheCharacterBudgetIsRefused() {
+        val xml = "<a>" + "x".repeat(50_000) + "</a>"
+        val e = assertFailsWith<XmlFormatException> {
+            val pull = XmlPull(StringReader(xml), maxChars = 10_000)
+            while (pull.next() !is XmlPull.Event.EndDocument) Unit
+        }
+        assertTrue(e.message!!.contains("larger than 10000 characters"), e.message)
+        // Exactly the budget is fine.
+        val pull = XmlPull(StringReader("<a>xy</a>"), maxChars = 9)
+        while (pull.next() !is XmlPull.Event.EndDocument) Unit
+    }
+
+    @Test
+    fun textEventsNeverSplitASurrogatePairInPlainTextOrCdata() {
+        for (pad in XmlPull.TEXT_CHUNK - 4..XmlPull.TEXT_CHUNK + 4) {
+            for (wrap in listOf("%s", "<![CDATA[%s]]>")) {
+                val pull = XmlPull(StringReader("<a>" + wrap.replace("%s", "x".repeat(pad) + "😀😀y") + "</a>"))
+                val texts = ArrayList<String>()
+                while (true) {
+                    when (val e = pull.next()) {
+                        is XmlPull.Event.Text -> texts += e.text
+                        is XmlPull.Event.EndDocument -> break
+                        else -> Unit
+                    }
+                }
+                for (t in texts) {
+                    assertFalse(t.isNotEmpty() && t.last().isHighSurrogate(), "chunk ends on half a pair (pad $pad, $wrap)")
+                    assertFalse(t.isNotEmpty() && t.first().isLowSurrogate(), "chunk starts on half a pair (pad $pad, $wrap)")
+                }
+                assertEquals("x".repeat(pad) + "😀😀y", texts.joinToString(""))
+            }
+        }
+    }
+
+    @Test
+    fun exportOfAnAbsurdElevationIsAPlainDecimalThatReadsBack() {
+        val w = StringWriter()
+        GpxWriter(w).apply { waypoint(NamedPoint(LatLon(1.0, 2.0), "x", elevationM = 1e25)); finish() }
+        val xml = w.toString()
+        assertTrue(xml.contains("<ele>10000000000000000000000000.0</ele>"), xml)
+        assertFalse(xml.contains("E25"), xml)
+        assertEquals(100_000.0, GpxReader.read(StringReader(xml)).waypoints.single().elevationM!!, 1e-9)
     }
 
     @Test

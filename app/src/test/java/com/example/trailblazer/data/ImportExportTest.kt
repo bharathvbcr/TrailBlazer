@@ -201,6 +201,138 @@ class ImportExportTest {
         assertTrue(tracks.isEmpty())
     }
 
+    /** [assertTrue] with the condition first, so the failure message can sit last like everywhere else. */
+    private fun check(condition: Boolean, message: String) = assertTrue(message, condition)
+
+    private suspend fun assertNothingStored() {
+        assertTrue(waypointsRepo.snapshot().isEmpty())
+        assertTrue(tripsRepo.all.first().isEmpty())
+        assertTrue(tracksRepo.all.first().isEmpty())
+    }
+
+    private val mixedGpx = """<gpx>
+        <wpt lat="46.0" lon="7.0"><name>Summit Prior</name></wpt>
+        <rte><name>Ridge</name><rtept lat="46.0" lon="7.0"/><rtept lat="46.1" lon="7.1"/></rte>
+        <trk><name>Walk</name><trkseg>
+            <trkpt lat="46.0" lon="7.0"><time>2026-01-01T00:00:00Z</time></trkpt>
+            <trkpt lat="46.1" lon="7.1"><time>2026-01-01T00:01:00Z</time></trkpt>
+        </trkseg></trk>
+    </gpx>"""
+
+    @Test
+    fun testFailureWhileWritingTheTrackRollsBackWaypointsAndRoutesToo() = runBlocking {
+        db.openHelper.writableDatabase.execSQL(
+            "CREATE TRIGGER fail_point_insert BEFORE INSERT ON track_points BEGIN SELECT RAISE(ABORT, 'disk full'); END;"
+        )
+        val result = importExport.import(writeTempFile("mixed_fail_points.gpx", mixedGpx.toByteArray()))
+        assertTrue(result is IoResult.Failed)
+        check((result as IoResult.Failed).message.startsWith("Database error"), result.message)
+        assertNothingStored()
+    }
+
+    @Test
+    fun testFailureWhileWritingARouteRollsBackTheWaypointsBeforeIt() = runBlocking {
+        db.openHelper.writableDatabase.execSQL(
+            "CREATE TRIGGER fail_stop_insert BEFORE INSERT ON stops BEGIN SELECT RAISE(ABORT, 'disk full'); END;"
+        )
+        val result = importExport.import(writeTempFile("mixed_fail_stops.gpx", mixedGpx.toByteArray()))
+        assertTrue(result is IoResult.Failed)
+        check((result as IoResult.Failed).message.startsWith("Database error"), result.message)
+        assertNothingStored()
+    }
+
+    @Test
+    fun testTheSameFileImportsFullyOnceTheFailureIsGone() = runBlocking {
+        val result = importExport.import(writeTempFile("mixed_ok.gpx", mixedGpx.toByteArray()))
+        assertTrue(result is IoResult.Ok)
+        val summary = (result as IoResult.Ok).value
+        assertEquals(1, summary.waypoints)
+        assertEquals(1, summary.trips)
+        assertEquals(1, summary.tracks)
+    }
+
+    @Test
+    fun testUnsupportedDeclaredEncodingIsRefusedNotGarbled() = runBlocking {
+        val gpx = """<?xml version="1.0" encoding="x-unknown"?><gpx><wpt lat="46.0" lon="7.0"><name>x</name></wpt></gpx>"""
+        val result = importExport.import(writeTempFile("unknown.gpx", gpx.toByteArray()))
+        assertTrue(result is IoResult.Failed)
+        check((result as IoResult.Failed).message.contains("unsupported encoding 'x-unknown'"), result.message)
+        assertNothingStored()
+    }
+
+    @Test
+    fun testOtherDeclaredEncodingsThePlatformKnowsStillImport() = runBlocking {
+        // These imported before encoding detection existed; an allowlist must not take them away.
+        val cases = listOf(
+            "KOI8-R" to "Москва",
+            "Shift_JIS" to "富士山",
+            "windows-1251" to "Київ",
+            "GB18030" to "泰山",
+            "Big5" to "玉山",
+            "EUC-JP" to "筑波山",
+        )
+        for ((i, case) in cases.withIndex()) {
+            val (encoding, name) = case
+            val gpx = """<?xml version="1.0" encoding="$encoding"?><gpx><wpt lat="${40 + i}.0" lon="7.0"><name>$name</name></wpt></gpx>"""
+            val result = importExport.import(writeTempFile("enc_$i.gpx", gpx.toByteArray(Charset.forName(encoding))))
+            check(result is IoResult.Ok, "$encoding gave $result")
+        }
+        assertEquals(cases.map { it.second }.toSet(), waypointsRepo.snapshot().map { it.name }.toSet())
+    }
+
+    @Test
+    fun testDeclaredUtf16ButStoredAsAsciiIsRefused() = runBlocking {
+        val gpx = """<?xml version="1.0" encoding="UTF-16"?><gpx><wpt lat="46.0" lon="7.0"><name>x</name></wpt></gpx>"""
+        val result = importExport.import(writeTempFile("liar16.gpx", gpx.toByteArray(Charsets.UTF_8)))
+        assertTrue(result is IoResult.Failed)
+        check((result as IoResult.Failed).message.contains("not stored in it"), result.message)
+        assertNothingStored()
+    }
+
+    @Test
+    fun testUtf16WithoutByteOrderMarkIsRecognisedFromItsMarkup() = runBlocking {
+        val gpx = """<?xml version="1.0" encoding="UTF-16"?><gpx><wpt lat="46.3" lon="7.3"><name>Gipfel Ü</name></wpt></gpx>"""
+        val result = importExport.import(writeTempFile("utf16_nobom.gpx", gpx.toByteArray(Charsets.UTF_16LE)))
+        assertTrue(result is IoResult.Ok)
+        assertEquals("Gipfel Ü", waypointsRepo.snapshot().single().name)
+    }
+
+    @Test
+    fun testWindows1252EuroSignAndAsciiDeclarationsAreHonoured() = runBlocking {
+        val gpx = """<?xml version="1.0" encoding="windows-1252"?><gpx><wpt lat="46.0" lon="7.0"><name>5€ café</name></wpt></gpx>"""
+        val result = importExport.import(writeTempFile("cp1252.gpx", gpx.toByteArray(Charset.forName("windows-1252"))))
+        assertTrue(result is IoResult.Ok)
+        assertEquals("5€ café", waypointsRepo.snapshot().single().name)
+    }
+
+    @Test
+    fun testKmlInLatin1KeepsItsAccents() = runBlocking {
+        val kml = """<?xml version="1.0" encoding="iso-8859-1"?><kml><Placemark><name>Zürich Hütte</name><Point><coordinates>8.54,47.37</coordinates></Point></Placemark></kml>"""
+        val result = importExport.import(writeTempFile("latin1.kml", kml.toByteArray(Charset.forName("ISO-8859-1"))))
+        assertTrue(result is IoResult.Ok)
+        assertEquals("Zürich Hütte", waypointsRepo.snapshot().single().name)
+    }
+
+    @Test
+    fun testRouteReductionDoesNotCareWhereOnTheGlobeTheRouteIs() = runBlocking {
+        // The same 301-point wiggle, once crossing the antimeridian and once far from it. Reducing a route to the stop
+        // limit must keep the same points either way; without longitude wrap the dateline route loses different ones.
+        val rnd = kotlin.random.Random(5)
+        val lats = List(301) { rnd.nextDouble(-0.02, 0.02) }
+        fun route(name: String, startLon: Double) = lats.withIndex().joinToString("") { (i, lat) ->
+            val lon = (startLon + i * 0.01).let { if (it > 180.0) it - 360.0 else it }
+            """<rtept lat="$lat" lon="$lon"/>"""
+        }.let { """<gpx><rte><name>$name</name>$it</rte></gpx>""" }
+
+        assertTrue(importExport.import(writeTempFile("dateline.gpx", route("Dateline", 178.5).toByteArray())) is IoResult.Ok)
+        assertTrue(importExport.import(writeTempFile("plain.gpx", route("Plain", 100.0).toByteArray())) is IoResult.Ok)
+        val trips = tripsRepo.all.first().associateBy { it.name }
+        val dateline = trips.getValue("Dateline").stops.map { it.position.lat }
+        val plain = trips.getValue("Plain").stops.map { it.position.lat }
+        check(dateline.size == com.trailblazer.core.trip.TripRules.MAX_STOPS, "kept ${dateline.size} stops")
+        assertEquals(plain, dateline)
+    }
+
     @Test
     fun testOutOfOrderTimestampsAreSortedChronologically() = runBlocking {
         // Track points written out of order: 3000ms, 1000ms, 2000ms
