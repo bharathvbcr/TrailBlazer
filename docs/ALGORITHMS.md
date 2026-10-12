@@ -1,6 +1,6 @@
 # Algorithms
 
-Everything here is in `:core` and is tested on the JVM. The sign conventions are the same everywhere:
+Everything here is in `:core` (common Kotlin Multiplatform code) and is tested by the shared `commonTest` suite on the JVM, as Android host tests and natively on Apple targets. The sign conventions are the same everywhere:
 
 - **Latitude:** degrees, north positive, in [−90, 90].
 - **Longitude:** degrees, east positive, in [−180, 180].

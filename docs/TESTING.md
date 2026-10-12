@@ -8,16 +8,37 @@ The build needs JDK 21. Robolectric's API 36 sandbox needs it, and Gradle 9.6 / 
 export JAVA_HOME=$(/usr/libexec/java_home -v 21)
 ```
 
-The full gate:
+The full gate is what CI runs (`.github/workflows/ci.yml`), in two jobs.
+
+Linux (any host with the Android SDK):
 
 ```bash
-./gradlew :core:jvmTest :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+./gradlew :core:jvmTest :core:testAndroidHostTest :app:testDebugUnitTest :app:lintDebug :app:assembleRelease
+scripts/verify-build-config.sh
 ```
 
-To also check that R8 shrinking keeps everything that serialization and Room need:
+`:app:assembleRelease` runs R8 (shrinking plus `proguard-rules.pro`) and produces the unsigned APK, so a missing keep rule or class surfaces as a build failure. `scripts/verify-build-config.sh` checks the release signing and versioning rules in `app/build.gradle.kts` (partial signing config, `-PversionCode`, shallow clones) by building throwaway clones of HEAD.
+
+macOS (needs Xcode and an iOS simulator runtime):
 
 ```bash
-./gradlew :app:assembleRelease
+./gradlew :core:allTests :core:linkDebugFrameworkMacosArm64 :core:linkDebugFrameworkIosArm64 :core:linkDebugFrameworkIosSimulatorArm64 :core:linkDebugFrameworkIosX64
+```
+
+`:core:allTests` runs the same `commonTest` suite on every `:core` target: `jvmTest`, `testAndroidHostTest`, `macosArm64Test`, `iosSimulatorArm64Test` and `iosX64Test`. The Apple test tasks only exist on a macOS host; on Linux Kotlin/Native does not build them at all.
+
+**Apple tests never skip silently.**
+- If `xcrun simctl list devices available` shows no iPhone or iPad (or `xcrun` is missing or fails), `core/build.gradle.kts` disables `iosSimulatorArm64Test` and `iosX64Test` locally. When `CI=true` it fails the build instead, so a runner without a simulator is red, not green.
+- `iosX64Test` is an Intel simulator and Kotlin does not execute it on Apple Silicon, even with a runtime installed: it is compiled and linked only. `iosSimulatorArm64Test` runs the same common code.
+- After `:core:allTests`, the task `reportAppleTestsNotRun` prints `WARNING: NOT RUN: …` for every Apple test that did not run on this host (also on Linux, where none are built). Read the end of the build output: if that warning appears, those targets are unverified on this machine.
+- `scripts/verify-build-config.sh` tests these rules with a stub `xcrun`.
+
+A green `:core:allTests` on an Apple Silicon Mac therefore means JVM, Android host, macOS native and iOS arm64 simulator ran; `iosX64Test` did not.
+
+Quick local loop on any machine:
+
+```bash
+./gradlew :core:jvmTest :app:testDebugUnitTest
 ```
 
 One class at a time:
@@ -30,9 +51,13 @@ Lint runs with `abortOnError = true`.
 
 ## Layers
 
+The `core/.../` rows live in `core/src/commonTest` and run on every `:core` target (see the gate above), although the Runner column says "JVM", which is the fast loop. The rows under `app/` run only as Android unit tests.
+
+**Wall-clock budgets** in `StressTest`, `TrackTest` and `SeriesPlotTest` exist to catch an algorithm turning quadratic, not to benchmark. They go through `budgetMs(...)` (`core/src/commonTest/.../TimingBudget.kt`), which multiplies the JVM budget by a per-platform `timingBudgetScale` (1 on the JVM and Android host, larger on the unoptimised Kotlin/Native debug binaries in `appleTest`). Use `budgetMs` for any new timing assert in `commonTest`.
+
 | Layer | Where | Runner | What it proves |
 |---|---|---|---|
-| Golden values | `core/src/test/.../astro/AstroGoldenTest.kt` | JVM | Sun, moon and phase times match the US Naval Observatory. Meeus worked examples 12.a, 25.a, 47.a, 48.a and 49.a match. |
+| Golden values | `core/src/commonTest/.../astro/AstroGoldenTest.kt` | JVM | Sun, moon and phase times match the US Naval Observatory. Meeus worked examples 12.a, 25.a, 47.a, 48.a and 49.a match. |
 | Properties / fuzz | `AstroPropertyTest.kt` | JVM, fixed seed | 5,000 random places and times give no NaN, azimuth in [0, 360), rise < transit < set, and illumination in [0, 1]. Also the poles, ±180°, DST days, 2028-02-29, 1900 and 2100. |
 | Geodesy | `GeoTest.kt`, `CoordinateParserTest.kt` | JVM | Haversine within 0.6% of a Vincenty oracle. A table of real share-link formats. Short links are refused by the parser (see Short links below). |
 | Weather / atmosphere | `WeatherTest.kt` | JVM | A 300 m descent reads Steady. A 45-minute window is `Insufficient`. A 2-hour window is scaled to hPa/3h. Density altitude is null without temperature. |
