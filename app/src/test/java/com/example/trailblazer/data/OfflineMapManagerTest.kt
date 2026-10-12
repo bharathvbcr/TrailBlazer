@@ -116,31 +116,25 @@ class OfflineMapManagerTest {
 
     @Test
     fun testPmtilesImport() = runBlocking {
-        // Build a minimal valid PMTiles v3 file
+        // A minimal PMTiles v3 archive laid out as the specification says (the previous version of this test built an
+        // invented layout - version at byte 2, zooms at 95/96 - which no real archive has).
         val tempFile = File(context.cacheDir, "test_contours.pmtiles")
-        val headerBytes = ByteArray(127)
-        headerBytes[0] = 'P'.code.toByte()
-        headerBytes[1] = 'M'.code.toByte()
-        headerBytes[2] = 3 // v3
-        // rootDirectoryOffset = 127
-        headerBytes[3] = 127
-        // rootDirectoryLength = 0 (empty directory)
-        headerBytes[11] = 0
-        // tileType = 1 (VectorMvt)
-        headerBytes[94] = 1
-        // minZoom = 8, maxZoom = 16
-        headerBytes[95] = 8
-        headerBytes[96] = 16
-
-        tempFile.writeBytes(headerBytes)
+        tempFile.writeBytes(
+            MapArchiveFixtures.pmtiles(
+                listOf(Triple(0, 0, 0) to MapArchiveFixtures.contourTile()),
+                tileType = 1,
+                minZoom = 0,
+                maxZoom = 1,
+            ),
+        )
 
         val uri = Uri.fromFile(tempFile)
         val result = mapManager.importMap(uri)
-        assertTrue(result.isSuccess)
+        assertTrue(result.exceptionOrNull()?.message, result.isSuccess)
         val info = result.getOrThrow()
         assertEquals(TileUtils.TileFormat.VectorMvt, info.format)
-        assertEquals(8, info.minZoom)
-        assertEquals(16, info.maxZoom)
+        assertEquals(0, info.minZoom)
+        assertEquals(1, info.maxZoom)
 
         val source = mapManager.openSource(info.file)
         assertNotNull(source)

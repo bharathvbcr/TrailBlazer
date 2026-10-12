@@ -23,7 +23,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,6 +50,7 @@ import com.example.trailblazer.data.GeoFormat
 import com.example.trailblazer.data.IoResult
 import com.example.trailblazer.data.Settings
 import com.example.trailblazer.data.TrackSummary
+import com.example.trailblazer.data.closeInBackground
 import com.example.trailblazer.ui.Fmt
 import com.example.trailblazer.ui.components.GlassCard
 import com.example.trailblazer.ui.components.LabelValue
@@ -201,9 +202,10 @@ fun TrackDetailScreen(nav: Navigator, trackId: String) {
                 }
                 if (showMap) {
                     item {
-                        val tileSource = remember { ctx.container.offlineMaps.openActiveSource() }
-                        DisposableEffect(tileSource) {
-                            onDispose { tileSource?.close() }
+                        // Opened off the main thread; closed when this card leaves the screen.
+                        val tileSource by produceState<com.example.trailblazer.data.OfflineTileSource?>(null) {
+                            value = ctx.container.offlineMaps.openActiveSource()
+                            awaitDispose { value?.closeInBackground() }
                         }
                         Box(modifier = Modifier.fillMaxWidth().height(320.dp).clip(RoundedCornerShape(16.dp))) {
                             OfflineMapCanvas(
