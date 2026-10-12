@@ -136,6 +136,13 @@ android {
         }
     }
 
+    sourceSets {
+        // The Room Gradle plugin only adds the exported schemas to the instrumented-test assets. A Robolectric unit test
+        // sees only the merged assets of the debug app (test_config.properties: android_merged_assets), so the schemas
+        // MigrationTestHelper reads (TrailDbMigrationTest) ride in the debug build's assets. Release builds do not get them.
+        getByName("debug").assets.srcDir("$projectDir/schemas")
+    }
+
     lint {
         abortOnError = true
         warningsAsErrors = false

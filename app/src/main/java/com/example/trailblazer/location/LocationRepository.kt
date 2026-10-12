@@ -25,6 +25,7 @@ import com.trailblazer.core.sensors.UnavailableReason
 import com.trailblazer.core.sensors.shareReading
 import com.trailblazer.core.geo.LatLon
 import com.trailblazer.core.math.mod360
+import com.trailblazer.core.track.ElevationDatum
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,6 +45,12 @@ import java.util.concurrent.Executor
 
 /** Which vertical datum [Fix.altitudeM] is in. GPS reports height above the WGS-84 ellipsoid, which can differ from sea level by ±100 m. */
 enum class AltitudeDatum { SeaLevel, Ellipsoid }
+
+/** The core's name for the same datum, as stored with a track point and compared by `TrackStats`. */
+fun AltitudeDatum.toElevationDatum(): ElevationDatum = when (this) {
+    AltitudeDatum.SeaLevel -> ElevationDatum.Msl
+    AltitudeDatum.Ellipsoid -> ElevationDatum.Ellipsoid
+}
 
 /** A position fix. Optional fields are null when the provider did not report them. */
 data class Fix(

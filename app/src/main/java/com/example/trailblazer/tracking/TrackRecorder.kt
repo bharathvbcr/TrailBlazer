@@ -7,6 +7,7 @@ import com.example.trailblazer.data.TrackState
 import com.example.trailblazer.data.forEachPoint
 import com.example.trailblazer.data.newId
 import com.example.trailblazer.location.Fix
+import com.example.trailblazer.location.toElevationDatum
 import com.example.trailblazer.sensors.Clock
 import com.trailblazer.core.geo.Geo
 import com.trailblazer.core.geo.LatLon
@@ -26,6 +27,10 @@ class TrackRecorder(private val dao: TrackDao, private val clock: Clock) {
     private var stats = TrackStats()
     private var nextSeq = 0
     private var lastKept: TrackPoint? = null
+
+    /** The segment new fixes go into. It moves on when a pause is resumed, so a pause is never bridged by `TrackStats`. */
+    private var segment = 0
+    private var segmentBreakPending = false
     private val buffer = ArrayList<TrackPointEntity>()
     private var lastFlushMs = 0L
 
@@ -34,6 +39,9 @@ class TrackRecorder(private val dao: TrackDao, private val clock: Clock) {
         val open = dao.open()
         if (open != null) {
             restore(open)
+            // Only a pause is a break. A track still Recording was cut short (process death, Battery Saver): its gap is
+            // stitched by TrackStats, as before.
+            if (open.state == TrackState.Paused) segmentBreakPending = true
             val t = open.copy(state = TrackState.Recording)
             dao.update(t)
             track = t
@@ -46,6 +54,8 @@ class TrackRecorder(private val dao: TrackDao, private val clock: Clock) {
         stats = TrackStats()
         nextSeq = 0
         lastKept = null
+        segment = 0
+        segmentBreakPending = false
         lastFlushMs = now
         return t
     }
@@ -62,6 +72,9 @@ class TrackRecorder(private val dao: TrackDao, private val clock: Clock) {
         }
         nextSeq = maxSeq + 1
         lastKept = last
+        // Carry on in the segment the stored points ended in, not segment 0.
+        segment = last?.segment ?: 0
+        segmentBreakPending = false
         lastFlushMs = clock.nowMs()
     }
 
@@ -76,10 +89,15 @@ class TrackRecorder(private val dao: TrackDao, private val clock: Clock) {
             if (fix.timeMs <= prev.epochMs) return false
             if (Geo.distanceM(prev.position, fix.position) < max(MIN_STEP_M, acc / 2)) return false
         }
-        val p = TrackPoint(fix.timeMs, fix.position, fix.altitudeM, acc, fix.speedMps)
+        // The first kept fix after a resumed pause opens the next segment (a segment with no fix is never stored).
+        if (segmentBreakPending) {
+            if (prev != null) segment++
+            segmentBreakPending = false
+        }
+        val p = TrackPoint(fix.timeMs, fix.position, fix.altitudeM, acc, fix.speedMps, segment, fix.altitudeM?.let { fix.altitudeDatum.toElevationDatum() })
         stats.add(p)
         lastKept = p
-        buffer += TrackPointEntity(t.id, nextSeq++, p.epochMs, p.position.lat, p.position.lon, p.elevationM, acc, p.speedMps)
+        buffer += TrackPointEntity(t.id, nextSeq++, p.epochMs, p.position.lat, p.position.lon, p.elevationM, acc, p.speedMps, p.segment, p.datum)
         return true
     }
 
@@ -93,8 +111,10 @@ class TrackRecorder(private val dao: TrackDao, private val clock: Clock) {
 
     /** Writes the buffered points, the statistics and the new [state] in one transaction, so a track is never ended with points missing. */
     suspend fun setState(state: TrackState) {
-        if (track == null) return
+        val t = track ?: return
         commit(state)
+        // Resuming a pause: the next kept fix starts a new segment. Set after the write, so a failed write changes nothing.
+        if (t.state == TrackState.Paused && state == TrackState.Recording) segmentBreakPending = true
     }
 
     private suspend fun commit(state: TrackState) {
