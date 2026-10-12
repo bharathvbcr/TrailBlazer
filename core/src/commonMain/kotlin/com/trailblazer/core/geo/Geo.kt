@@ -65,6 +65,36 @@ object Geo {
         return LatLon.of(p2 * RAD, l2 * RAD)!!
     }
 
+    /**
+     * The point [fraction] (0 = [a], 1 = [b]) of the way along the great circle from [a] to [b] (spherical linear
+     * interpolation), so a long leg stays on its great circle instead of drifting off a constant initial bearing.
+     * Coincident and exactly antipodal endpoints, which have no unique great circle, return [a] for fractions below
+     * one half and [b] otherwise. [fraction] is clamped to [0, 1].
+     */
+    fun intermediate(a: LatLon, b: LatLon, fraction: Double): LatLon {
+        val f = if (fraction.isFinite()) fraction.coerceIn(0.0, 1.0) else 0.0
+        if (f == 0.0) return a
+        if (f == 1.0) return b
+        val p1 = a.lat * DEG
+        val l1 = a.lon * DEG
+        val p2 = b.lat * DEG
+        val l2 = b.lon * DEG
+        val dp = p2 - p1
+        val dl = l2 - l1
+        val h = sin(dp / 2) * sin(dp / 2) + cos(p1) * cos(p2) * sin(dl / 2) * sin(dl / 2)
+        val delta = 2 * asin(sqrt(h.coerceIn(0.0, 1.0)))
+        val s = sin(delta)
+        // The haversine angle of an antipodal pair is only good to about 1e-8 rad, so "exactly antipodal" has to be a
+        // tolerance; for coincident points (under a metre apart) either end is as good as an interpolation.
+        if (s < 1e-7) return if (f < 0.5) a else b
+        val wa = sin((1 - f) * delta) / s
+        val wb = sin(f * delta) / s
+        val x = wa * cos(p1) * cos(l1) + wb * cos(p2) * cos(l2)
+        val y = wa * cos(p1) * sin(l1) + wb * cos(p2) * sin(l2)
+        val z = wa * sin(p1) + wb * sin(p2)
+        return LatLon.of(atan2(z, sqrt(x * x + y * y)) * RAD, atan2(y, x) * RAD) ?: a
+    }
+
     /** Signed distance (m) of [p] from the great circle [a]→[b]; positive means right of the path. */
     fun crossTrackM(p: LatLon, a: LatLon, b: LatLon): Double {
         val d13 = distanceM(a, p) / EARTH_RADIUS_M

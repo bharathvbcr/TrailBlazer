@@ -93,6 +93,7 @@ fun TripsScreen(nav: Navigator) {
     val fix by vm.fix.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val availableMaps by vm.availableMaps.collectAsStateWithLifecycle()
+    val demTiles by vm.demTiles.collectAsStateWithLifecycle()
     val activeTileSource by vm.activeTileSource.collectAsStateWithLifecycle()
     val trackPaths by vm.trackPaths.collectAsStateWithLifecycle()
     val granted by ctx.container.permissions.granted.collectAsStateWithLifecycle()
@@ -108,6 +109,12 @@ fun TripsScreen(nav: Navigator) {
     val mapImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let {
             vm.importMap(it)
+            segment = Segment.Map
+        }
+    }
+    val demImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) {
+            vm.importDemTiles(uris)
             segment = Segment.Map
         }
     }
@@ -142,6 +149,10 @@ fun TripsScreen(nav: Navigator) {
                 DropdownMenuItem(text = { Text("Import map tiles (.mbtiles, .pmtiles)…") }, onClick = {
                     menu = false
                     mapImporter.launch(arrayOf("application/octet-stream", "application/x-sqlite3", "application/vnd.sqlite3", "*/*"))
+                })
+                DropdownMenuItem(text = { Text("Import elevation tiles (.hgt)…") }, onClick = {
+                    menu = false
+                    demImporter.launch(arrayOf("application/octet-stream", "*/*"))
                 })
                 DropdownMenuItem(text = { Text("Export waypoints as GPX…") }, onClick = { menu = false; pendingFormat = GeoFormat.Gpx; exporter.launch("waypoints.gpx") })
                 DropdownMenuItem(text = { Text("Export waypoints as KML…") }, onClick = { menu = false; pendingFormat = GeoFormat.Kml; exporter.launch("waypoints.kml") })
@@ -344,6 +355,38 @@ fun TripsScreen(nav: Navigator) {
                     Spacer(Modifier.height(8.dp))
                     PillButton("Import map archive (.mbtiles, .pmtiles)", TrailIcons.Import) {
                         mapImporter.launch(arrayOf("application/octet-stream", "application/x-sqlite3", "application/vnd.sqlite3", "*/*"))
+                    }
+                }
+                item {
+                    Spacer(Modifier.height(8.dp))
+                    PillButton("Import elevation tiles (.hgt)", TrailIcons.Import) {
+                        demImporter.launch(arrayOf("application/octet-stream", "*/*"))
+                    }
+                    Text(
+                        if (demTiles.isEmpty()) "Elevation profiles for planned trips need SRTM 1 or 3 arc-second tiles. Unzip them first: only .hgt files import."
+                        else "${demTiles.size} elevation ${if (demTiles.size == 1) "tile" else "tiles"} installed",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+                items(demTiles, key = { it.file.absolutePath }) { tile ->
+                    GlassCard {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(tile.id.fileName.removeSuffix(".hgt"), style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    "${tile.label} · ${tile.sizeBytes / (1024 * 1024)} MB",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            IconButton(onClick = {
+                                confirmDelete = "Delete elevation tile ${tile.id.fileName.removeSuffix(".hgt")}?" to { vm.deleteDemTile(tile.id); Unit }
+                            }) {
+                                Icon(TrailIcons.Delete, "Delete elevation tile")
+                            }
+                        }
                     }
                 }
                 if (availableMaps.isNotEmpty()) {

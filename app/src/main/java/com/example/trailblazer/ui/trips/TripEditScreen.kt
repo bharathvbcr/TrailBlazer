@@ -93,6 +93,10 @@ fun TripEditScreen(nav: Navigator, tripId: String?, seed: List<SeedPlace> = empt
     val dirty by vm.dirty.collectAsStateWithLifecycle()
     val problems by vm.problems.collectAsStateWithLifecycle()
     val daylight by vm.daylight.collectAsStateWithLifecycle()
+    val elevation by vm.elevation.collectAsStateWithLifecycle()
+    val demImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) vm.importDemTiles(uris)
+    }
     val message by vm.message.collectAsStateWithLifecycle()
     val removed by vm.lastRemoved.collectAsStateWithLifecycle()
     var picking by rememberSaveable { mutableStateOf(false) }
@@ -161,6 +165,10 @@ fun TripEditScreen(nav: Navigator, tripId: String?, seed: List<SeedPlace> = empt
                 }
             } else {
                 item { GlassCard(padding = 8.dp) { RouteSketch(stops, { fmt.distance(it) }) } }
+            }
+            if (stops.size >= 2) {
+                item { SectionTitle("Elevation") }
+                item { ElevationSection(elevation, fmt, onImportTiles = { demImporter.launch(arrayOf("application/octet-stream", "*/*")) }) }
             }
         }
         (message ?: info)?.let { m -> item { GlassCard(onClick = { vm.message.value = null; info = null }, onClickLabel = "Dismiss") { Text(m) } } }

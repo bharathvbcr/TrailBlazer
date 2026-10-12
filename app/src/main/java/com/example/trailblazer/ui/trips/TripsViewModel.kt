@@ -44,7 +44,26 @@ class TripsViewModel(private val c: AppContainer) : ViewModel() {
 
     private val mapsLock = Mutex()
 
+    /** Installed SRTM elevation tiles (`.hgt`), used for the elevation profile of a planned trip. */
+    val demTiles = MutableStateFlow<List<com.example.trailblazer.data.DemTileInfo>>(emptyList())
+
+    private suspend fun refreshDemTiles() {
+        demTiles.value = withContext(Dispatchers.IO) { c.demTiles.listTiles() }
+    }
+
+    fun importDemTiles(uris: List<Uri>) = viewModelScope.launch {
+        message.value = c.demTiles.importAll(uris)
+        refreshDemTiles()
+    }
+
+    fun deleteDemTile(id: com.trailblazer.core.geo.DemTileId) = viewModelScope.launch {
+        c.demTiles.deleteTile(id)
+        message.value = "Deleted elevation tile ${id.fileName}"
+        refreshDemTiles()
+    }
+
     init {
+        viewModelScope.launch { refreshDemTiles() }
         viewModelScope.launch { refreshMaps() }
         viewModelScope.launch {
             tracks.collect { summaries ->
