@@ -43,6 +43,36 @@ class CoordinateParserTest {
     }
 
     @Test
+    fun trailingSIsSecondsAfterDegreesOrMinutesAndSouthOtherwise() {
+        // Seconds marker, no hemisphere: the latitude stays north (this was read as south).
+        assertAt("40d26m46s 74d0m0s", 40.446111, 74.0)
+        assertAt("40d26m46s, 74d0m0s", 40.446111, 74.0)
+        assertAt("-40d26m46s, 74d0m0s", -40.446111, 74.0)
+        assertAt("40d26m46s,74d0m0s", 40.446111, 74.0)
+        // Seconds marker followed by a hemisphere letter, with and without a gap, either axis order.
+        assertAt("40d26m46sN 74d0m0sW", 40.446111, -74.0)
+        assertAt("40d26m46sN, 74d0m0sW", 40.446111, -74.0)
+        assertAt("40d26m46s S 74d0m0s E", -40.446111, 74.0)
+        assertAt("40d26m46sS 74d0m0sE", -40.446111, 74.0)
+        assertAt("74d0m0sW 40d26m46sN", 40.446111, -74.0)
+        assertAt("40d26m46s S, 74d0m0s W", -40.446111, -74.0)
+        // Case does not matter.
+        assertAt("40d26m46sn 74d0m0sw", 40.446111, -74.0)
+        assertAt("40D26M46S 74D0M0S", 40.446111, 74.0)
+        // 'S' as a hemisphere stays south: leading, trailing, after decimals, after minutes without seconds.
+        assertAt("S 33 52, E 151 12", -33.866667, 151.2)
+        assertAt("S 33 52 E 151 12", -33.866667, 151.2)
+        assertAt("33.5S, 151.2E", -33.5, 151.2)
+        assertAt("33.5S 151.2E", -33.5, 151.2)
+        assertAt("33d52mS 151d12mE", -33.866667, 151.2)
+        assertAt("33 52 S 151 12 E", -33.866667, 151.2)
+        // A single axis is not a position, whichever way 'S' would be read.
+        assertEquals(CoordinateParse.NotRecognized, CoordinateParser.parse("46S"))
+        assertEquals(CoordinateParse.NotRecognized, CoordinateParser.parse("40d26m46s"))
+        assertEquals(CoordinateParse.NotRecognized, CoordinateParser.parse("S 46"))
+    }
+
+    @Test
     fun geoUris() {
         assertAt("geo:37.786971,-122.399677", 37.786971, -122.399677)
         assertAt("geo:37.786971,-122.399677;u=35", 37.786971, -122.399677)

@@ -28,8 +28,70 @@ private fun local(name: String) = name.substringAfter(':')
 private fun f6(v: Double) = formatDecimals(v, 7).trimEnd('0').let { if (it.endsWith('.')) it + "0" else it }
 private fun f1(v: Double) = formatDecimals(v, 1)
 
-private val COMMA_REGEX = Regex(",")
 private val WHITESPACE_REGEX = Regex("\\s+")
+
+/** GPX elements whose text is read; the text of every other element is skipped, not buffered. */
+private val GPX_TEXT = setOf("name", "desc", "cmt", "ele", "time", "speed")
+
+/** KML elements whose text is read as a buffered value. `coordinates` is not here: it is streamed token by token. */
+private val KML_TEXT = setOf("name", "description", "when", "coord")
+
+private const val MAX_COORD_TOKEN = 256
+
+/** A `lon,lat[,ele]` KML tuple. Out-of-range or non-numeric coordinates give null rather than a fabricated point. */
+private fun parseKmlTuple(parts: List<String>): Pair<LatLon, Double?>? {
+    if (parts.size < 2) return null
+    val lon = parts[0].toDoubleOrNull() ?: return null
+    val lat = parts[1].toDoubleOrNull() ?: return null
+    if (kotlin.math.abs(lon) > 180) return null
+    val pos = LatLon.of(lat, lon) ?: return null
+    val ele = parts.getOrNull(2)?.toDoubleOrNull()?.takeIf { it.isFinite() }?.coerceIn(-11_000.0, 100_000.0)
+    return Pair(pos, ele)
+}
+
+/**
+ * Splits a KML `<coordinates>` list into whitespace-separated tuples as its text arrives in chunks, holding only the
+ * unfinished tuple between chunks. Memory is proportional to the points kept, never to the text length.
+ */
+private class CoordinateStream(
+    private val maxPoints: Int,
+    private var used: Int,
+    /** A `Point` takes only its first tuple; a `LineString` takes them all. */
+    private val firstOnly: Boolean,
+) {
+    val points = ArrayList<NamedPoint>()
+    private val carry = StringBuilder()
+    private var done = false
+
+    /** Points counted against the document's [maxPoints] so far, including those before this list. */
+    val total: Int get() = used
+
+    fun feed(chunk: String) {
+        for (ch in chunk) {
+            if (done) return
+            if (ch.isWhitespace()) {
+                finishToken()
+            } else {
+                if (carry.length >= MAX_COORD_TOKEN) throw XmlFormatException("coordinate longer than $MAX_COORD_TOKEN characters")
+                carry.append(ch)
+            }
+        }
+    }
+
+    fun finish() = finishToken()
+
+    private fun finishToken() {
+        if (carry.isEmpty() || done) return
+        val parsed = parseKmlTuple(carry.toString().split(','))
+        carry.setLength(0)
+        if (firstOnly) done = true
+        // A LineString counts every tuple, valid or not; a Point only counts the one it keeps.
+        if (!firstOnly || parsed != null) {
+            if (++used > maxPoints) throw XmlFormatException("more than $maxPoints points")
+        }
+        parsed?.let { (p, ele) -> points += NamedPoint(p, elevationM = ele) }
+    }
+}
 
 /** Reads GPX 1.0/1.1 waypoints, routes and tracks. Points with invalid coordinates are skipped, not fabricated. */
 object GpxReader {
@@ -61,7 +123,7 @@ object GpxReader {
         while (true) {
             when (val e = xml.next()) {
                 is XmlPull.Event.EndDocument -> break
-                is XmlPull.Event.Text -> text.append(e.text)
+                is XmlPull.Event.Text -> if (stack.lastOrNull() in GPX_TEXT) XmlPull.appendBounded(text, e.text)
                 is XmlPull.Event.Start -> {
                     val n = local(e.name)
                     stack += n
@@ -197,30 +259,24 @@ object KmlReader {
         var total = 0
         var pmName: String? = null
         var pmDesc: String? = null
-        val pmPoints = ArrayList<Pair<LatLon, Double?>>()
+        val pmPoints = ArrayList<NamedPoint>()
         val pmRoutes = ArrayList<List<NamedPoint>>()
         val pmTrackSegments = ArrayList<List<TrackPoint>>()
-        var coords: String? = null
+        // The `<coordinates>` list being streamed, and the finished list waiting for its Point or LineString to close.
+        var stream: CoordinateStream? = null
+        var finishedCoords: List<NamedPoint>? = null
         val whens = ArrayList<Long?>()
         val gxCoords = ArrayList<String>()
         val text = StringBuilder()
         val stack = ArrayList<String>()
 
-        fun parseCoord(tuple: String, sep: Regex): Pair<LatLon, Double?>? {
-            val parts = tuple.trim().split(sep)
-            if (parts.size < 2) return null
-            val lon = parts[0].toDoubleOrNull() ?: return null
-            val lat = parts[1].toDoubleOrNull() ?: return null
-            if (kotlin.math.abs(lon) > 180) return null
-            val pos = LatLon.of(lat, lon) ?: return null
-            val ele = parts.getOrNull(2)?.toDoubleOrNull()?.takeIf { it.isFinite() }?.coerceIn(-11_000.0, 100_000.0)
-            return Pair(pos, ele)
-        }
-
         while (true) {
             when (val e = xml.next()) {
                 is XmlPull.Event.EndDocument -> break
-                is XmlPull.Event.Text -> text.append(e.text)
+                is XmlPull.Event.Text -> {
+                    val top = stack.lastOrNull()
+                    if (top == "coordinates") stream?.feed(e.text) else if (top in KML_TEXT) XmlPull.appendBounded(text, e.text)
+                }
                 is XmlPull.Event.Start -> {
                     val n = local(e.name)
                     stack += n
@@ -233,9 +289,15 @@ object KmlReader {
                             pmPoints.clear()
                             pmRoutes.clear()
                             pmTrackSegments.clear()
-                            coords = null
+                            finishedCoords = null
                             whens.clear()
                             gxCoords.clear()
+                        }
+                        // Only the coordinates of a Point or LineString are read; a Polygon ring's are skipped.
+                        "coordinates" -> {
+                            val owner = stack.getOrNull(stack.size - 2)
+                            stream = if (owner == "Point" || owner == "LineString") CoordinateStream(maxPoints, total, owner == "Point") else null
+                            finishedCoords = null
                         }
                     }
                 }
@@ -246,34 +308,28 @@ object KmlReader {
                     when (n) {
                         "name" -> if (parent == "Placemark") pmName = value.ifEmpty { null }
                         "description" -> if (parent == "Placemark") pmDesc = value.ifEmpty { null }
-                        "coordinates" -> coords = value
-                        "when" -> whens += Iso8601.parse(value)
-                        "coord" -> gxCoords += value
+                        "coordinates" -> stream?.let { s ->
+                            s.finish()
+                            total = s.total
+                            finishedCoords = s.points
+                            stream = null
+                        }
+                        // A `when` under TimeStamp or TimeSpan is not a track time.
+                        "when" -> if (parent == "Track") {
+                            if (total + whens.size >= maxPoints) throw XmlFormatException("more than $maxPoints points")
+                            whens += Iso8601.parse(value)
+                        }
+                        "coord" -> {
+                            if (total + gxCoords.size >= maxPoints) throw XmlFormatException("more than $maxPoints points")
+                            gxCoords += value
+                        }
                         "Point" -> {
-                            coords?.let { c ->
-                                val firstToken = WHITESPACE_REGEX.splitToSequence(c).firstOrNull { it.isNotEmpty() }
-                                if (firstToken != null) {
-                                    parseCoord(firstToken, COMMA_REGEX)?.let { (p, ele) ->
-                                        if (++total > maxPoints) throw XmlFormatException("more than $maxPoints points")
-                                        pmPoints += Pair(p, ele)
-                                    }
-                                }
-                            }
-                            coords = null
+                            finishedCoords?.firstOrNull()?.let { pmPoints += it }
+                            finishedCoords = null
                         }
                         "LineString" -> {
-                            coords?.let { c ->
-                                val pts = ArrayList<NamedPoint>()
-                                for (token in WHITESPACE_REGEX.splitToSequence(c)) {
-                                    if (token.isEmpty()) continue
-                                    if (++total > maxPoints) throw XmlFormatException("more than $maxPoints points")
-                                    parseCoord(token, COMMA_REGEX)?.let { (p, ele) ->
-                                        pts += NamedPoint(p, elevationM = ele)
-                                    }
-                                }
-                                if (pts.isNotEmpty()) pmRoutes += pts
-                            }
-                            coords = null
+                            finishedCoords?.takeIf { it.isNotEmpty() }?.let { pmRoutes += it }
+                            finishedCoords = null
                         }
                         "Track" -> {
                             val pts = ArrayList<TrackPoint>()
@@ -281,7 +337,7 @@ object KmlReader {
                                 val time = whens.getOrNull(i) ?: continue
                                 val t = gxCoords[i]
                                 if (++total > maxPoints) throw XmlFormatException("more than $maxPoints points")
-                                parseCoord(t, WHITESPACE_REGEX)?.let { (p, ele) ->
+                                parseKmlTuple(t.split(WHITESPACE_REGEX))?.let { (p, ele) ->
                                     pts += TrackPoint(time, p, ele)
                                 }
                             }
@@ -290,8 +346,8 @@ object KmlReader {
                             gxCoords.clear()
                         }
                         "Placemark" -> {
-                            for ((p, ele) in pmPoints) {
-                                wpts += NamedPoint(p, pmName, pmDesc, ele)
+                            for (p in pmPoints) {
+                                wpts += p.copy(name = pmName, description = pmDesc)
                             }
                             for (pts in pmRoutes) {
                                 routes += Route(pmName, pts)

@@ -269,7 +269,10 @@ class StressTest {
                 assertTrue(g.contains("(%F0%9F%98%80)"), "expected %F0%9F%98%80 in $g")
                 val parsed = CoordinateParser.parse(g)
                 assertTrue(parsed is CoordinateParse.Found && parsed.places.single().label == "😀")
+                // Exact bytes (one four-byte UTF-8 sequence, not two garbled surrogates) and a lossless round trip.
+                assertEquals("%F0%9F%98%80", urlEncode("😀"))
                 assertEquals("😀", urlDecode(urlEncode("😀")))
+                assertTrue(g.endsWith("(%F0%9F%98%80)"), "label is the last part of $g")
             }
         }
 
