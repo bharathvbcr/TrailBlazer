@@ -2,6 +2,7 @@ package com.example.trailblazer.data
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
@@ -67,10 +68,17 @@ data class Settings(
     val activeOfflineMapPath: String? = null,
 )
 
-private val Context.store: DataStore<Preferences> by preferencesDataStore(name = "settings")
+/**
+ * A settings file that cannot be parsed (a torn write, a full disk, storage corruption) is replaced by empty
+ * preferences, so every setting falls back to its default. Without this, DataStore rethrows the corruption on
+ * every read and every [edit], and the first settings change crashes the app.
+ */
+internal val settingsCorruptionHandler = ReplaceFileCorruptionHandler<Preferences> { emptyPreferences() }
+
+private val Context.store: DataStore<Preferences> by preferencesDataStore(name = "settings", corruptionHandler = settingsCorruptionHandler)
 
 /** Settings in DataStore. Unknown or corrupt values fall back to the defaults above, field by field. */
-class PrefsRepository(private val context: Context) {
+class PrefsRepository(context: Context, private val store: DataStore<Preferences> = context.store) {
     private object K {
         val units = stringPreferencesKey("units")
         val speedUnit = stringPreferencesKey("speed_unit")
@@ -101,12 +109,12 @@ class PrefsRepository(private val context: Context) {
     private inline fun <reified E : Enum<E>> Preferences.enum(key: Preferences.Key<String>, default: E): E =
         this[key]?.let { v -> enumValues<E>().firstOrNull { it.name == v } } ?: default
 
-    val settings: Flow<Settings> = context.store.data
+    val settings: Flow<Settings> = store.data
         .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
         .map { readFrom(it) }
 
     suspend fun update(transform: (Settings) -> Settings) {
-        context.store.edit { p ->
+        store.edit { p ->
             // Compute the new state from the stored one, then write every field so the store stays complete.
             val n = transform(readFrom(p))
             p[K.units] = n.units.name
@@ -169,6 +177,6 @@ class PrefsRepository(private val context: Context) {
     }
 
     suspend fun clear() {
-        context.store.edit { it.clear() }
+        store.edit { it.clear() }
     }
 }

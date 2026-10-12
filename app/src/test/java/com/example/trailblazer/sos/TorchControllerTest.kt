@@ -6,6 +6,7 @@ import android.hardware.camera2.CameraManager
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.trailblazer.core.sos.Morse
+import com.trailblazer.core.sos.Pulse
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
@@ -60,5 +61,20 @@ class TorchControllerTest {
         runCurrent()
         assertFalse("torch must be off after cancellation", shadowOf(manager).getTorchMode("0"))
         assertFalse(pulses.last())
+    }
+
+    @Test
+    fun aTimelineThatNeverSwitchesOnIsRefusedInsteadOfLoopingInTheDark() = runTest {
+        addBackCameraWithFlash()
+        val t = TorchController(context)
+        for (silent in listOf(Morse.timeline("!!"), listOf(Pulse(false, 500L)), listOf(Pulse(true, 0L), Pulse(false, 500L)))) {
+            var result: Boolean? = null
+            val job = launch { result = t.play(silent) }
+            runCurrent()
+            val finished = job.isCompleted
+            job.cancel()
+            assertTrue("play must return at once, not loop over $silent", finished)
+            assertEquals(false, result)
+        }
     }
 }
