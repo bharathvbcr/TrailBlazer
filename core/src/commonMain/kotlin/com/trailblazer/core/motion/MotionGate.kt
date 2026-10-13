@@ -1,5 +1,6 @@
 package com.trailblazer.core.motion
 
+import kotlin.math.pow
 import kotlin.math.sqrt
 
 /**
@@ -11,7 +12,8 @@ class MotionGate(
     private val stillForNs: Long = STILL_FOR_NS,
     private val thresholdMps2: Double = 0.5,
     private val maxSampleGapNs: Long = 5_000_000_000L,
-    gravityAlpha: Double = GRAVITY_ALPHA,
+    private val gravityAlpha: Double = GRAVITY_ALPHA,
+    private val nominalSampleNs: Long = NOMINAL_SAMPLE_NS,
 ) {
     var stationary = false
         private set
@@ -40,7 +42,12 @@ class MotionGate(
         val dy = y - g.y
         val dz = z - g.z
         val moved = sqrt(dx * dx + dy * dy + dz * dz) > thresholdMps2
-        filter.update(x, y, z)
+        // [gravityAlpha] is the step for one sample [nominalSampleNs] after the last. Scaling it by the real spacing keeps
+        // the gravity tracking's time constant fixed whatever the rate: a faster stream (another listener holding the
+        // accelerometer at 200 Hz) must not make it follow a walker's sway and read it as stillness. A gap, or a
+        // timestamp going backwards, takes the nominal step.
+        val weight = if (prev == null || gap) gravityAlpha else 1.0 - (1.0 - gravityAlpha).pow((timestampNs - prev).toDouble() / nominalSampleNs)
+        filter.update(x, y, z, weight)
 
         when {
             moved -> { stationary = false; stillSinceNs = timestampNs }
@@ -64,5 +71,8 @@ class MotionGate(
     companion object {
         const val STILL_FOR_NS = 5 * 60 * 1_000_000_000L
         const val GRAVITY_ALPHA = 0.1
+
+        /** The sample spacing [GRAVITY_ALPHA] was tuned for: the 2 Hz the duty cycle asks for. */
+        const val NOMINAL_SAMPLE_NS = 500_000_000L
     }
 }

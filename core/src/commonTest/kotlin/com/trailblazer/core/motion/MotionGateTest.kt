@@ -1,5 +1,7 @@
 package com.trailblazer.core.motion
 
+import kotlin.math.PI
+import kotlin.math.sin
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -55,6 +57,30 @@ class MotionGateTest {
 
         t += 4_000_000_000L
         assertFalse(gate.onSample(t, floatArrayOf(0f, 9.81f, 0f)), "turning the phone over is")
+    }
+
+    @Test
+    fun gravityTrackingFollowsTimeNotSampleCount() {
+        // A walker's 1 Hz, 1.2 m/s² sway sampled at 200 Hz: gravity tracking tuned for 2 Hz samples must not speed up
+        // a hundredfold and follow the sway, which would read a walking user as still.
+        val gate = MotionGate(stillForNs = 10_000_000_000L)
+        var t = 0L
+        repeat(60 * 200) { i ->
+            t += 5_000_000L
+            val sway = 1.2 * sin(2 * PI * i * 0.005)
+            gate.onSample(t, 0.0, sway, 9.81)
+            assertFalse(gate.stationary, "a minute of swaying is never stillness (sample $i)")
+        }
+    }
+
+    @Test
+    fun aRestSampledFastIsStillAfterTheSameTime() {
+        val gate = MotionGate(stillForNs = 10_000_000_000L)
+        var t = 0L
+        repeat(9 * 200) { t += 5_000_000L; gate.onSample(t, 0.02, -0.02, 9.81) }
+        assertFalse(gate.stationary)
+        repeat(2 * 200) { t += 5_000_000L; gate.onSample(t, 0.02, -0.02, 9.81) }
+        assertTrue(gate.stationary)
     }
 
     @Test

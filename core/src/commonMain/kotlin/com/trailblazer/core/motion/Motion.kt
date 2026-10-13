@@ -23,13 +23,16 @@ class GravityLowPass(val alpha: Double = 0.1) {
     var gravity: Vec3? = null
         private set
 
-    fun update(x: Double, y: Double, z: Double): Vec3 {
+    fun update(x: Double, y: Double, z: Double): Vec3 = update(x, y, z, alpha)
+
+    /** Moves the estimate [weight] (0..1) of the way towards the sample, for callers that scale the step by time. */
+    fun update(x: Double, y: Double, z: Double, weight: Double): Vec3 {
         val curr = Vec3(x, y, z)
         val prev = gravity ?: return curr.also { gravity = it }
         val next = Vec3(
-            prev.x + alpha * (x - prev.x),
-            prev.y + alpha * (y - prev.y),
-            prev.z + alpha * (z - prev.z),
+            prev.x + weight * (x - prev.x),
+            prev.y + weight * (y - prev.y),
+            prev.z + weight * (z - prev.z),
         )
         gravity = next
         return next

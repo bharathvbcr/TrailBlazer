@@ -137,6 +137,25 @@ class GnssDutyCycleTest {
     }
 
     @Test
+    fun aShortKnockInAFastStreamRestartsTheStillnessCount() = runTest {
+        // Every sample of a fast stream reaches the gate: a 150 ms knock 4 min 50 s into a rest must restart the
+        // five-minute count, so 20 s after it the receiver is still on. (Thinning the stream to 2.5 Hz dropped it.)
+        collect(MutableStateFlow(TrackingMode.Balanced))
+        val stepNs = 5_000_000L // 200 Hz
+        val knockAt = 290 * 200
+        for (i in 0 until 310 * 200) { // 5 min 10 s
+            nowNs += stepNs
+            val k = i - knockAt
+            // 3 m/s² on x, well above the 0.5 m/s² threshold, for 30 samples (150 ms)
+            val x = if (k in 10 until 40) 3f else 0.02f
+            sensors.emit(accel, x, 0f, 9.81f, timestampNs = nowNs)
+            if (i % 100 == 0) runCurrent()
+        }
+        runCurrent()
+        assertEquals("20 s after a knock the phone has not been still for 5 minutes", listOf(15_000L), requests)
+    }
+
+    @Test
     fun unobservedTimeIsNeverCountedAsStillness() = runTest {
         collect(MutableStateFlow(TrackingMode.Balanced))
         still(180)
