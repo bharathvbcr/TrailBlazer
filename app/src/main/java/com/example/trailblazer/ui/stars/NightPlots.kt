@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -38,6 +39,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.trailblazer.ui.Fmt
+import com.example.trailblazer.ui.components.ScrubAdjust
 import com.example.trailblazer.ui.components.scrubX
 import com.example.trailblazer.ui.theme.LocalStatusColors
 import com.trailblazer.core.astro.Interval
@@ -173,11 +175,25 @@ fun NightPlot(plan: NightPlan, series: List<PlotSeries>, nowMs: Long?, fmt: Fmt,
         if (best == null || best.value < 0f) "${s.name} stays below the horizon"
         else "${s.name} highest ${best.value.roundToInt()} degrees at ${fmt.time(s.track.startMs + best.index * s.track.stepMs)}"
     }
+    val readout = cursor?.let { i ->
+        val t = series[0].track.startMs + i * series[0].track.stepMs
+        fmt.time(t) + " · " + series.joinToString(" · ") { s ->
+            val alt = s.track.altitudesDeg.getOrNull(i)
+            if (alt == null || alt < 0f) "${s.name} down" else "${s.name} ${alt.roundToInt()}°"
+        }
+    } ?: "Tap or drag the plot to read altitudes."
     Column(Modifier.fillMaxWidth()) {
         Canvas(
             Modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(14.dp))
                 .semantics { contentDescription = "Altitude through the night. $summary" }
-                .scrubX(count) { f -> if (count >= 2) cursor = SeriesPlot.scrubIndex(f, count) },
+                .scrubX(
+                    count,
+                    adjust = if (count < 2) null else ScrubAdjust(
+                        fraction = (cursor ?: 0) / (count - 1f),
+                        stateText = if (cursor == null) "No time selected" else readout,
+                        steps = count - 2,
+                    ),
+                ) { f -> if (count >= 2) cursor = SeriesPlot.scrubIndex(f, count) },
         ) {
             fun x(ms: Long) = timeX(plan, ms)
             val top = 8.dp.toPx()
@@ -224,14 +240,6 @@ fun NightPlot(plan: NightPlan, series: List<PlotSeries>, nowMs: Long?, fmt: Fmt,
             }
         }
         HourTicks(plan.windowStartMs, plan.windowEndMs, fmt)
-        val i = cursor
-        val readout = if (i == null) "Tap or drag the plot to read altitudes." else {
-            val t = series[0].track.startMs + i * series[0].track.stepMs
-            fmt.time(t) + " · " + series.joinToString(" · ") { s ->
-                val alt = s.track.altitudesDeg.getOrNull(i)
-                if (alt == null || alt < 0f) "${s.name} down" else "${s.name} ${alt.roundToInt()}°"
-            }
-        }
         Text(readout, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
     }
 }
@@ -253,8 +261,13 @@ fun RateBar(fraction: Float, potential: Float, color: Color) {
 fun AdaptRing(progress: Float, done: Boolean, centre: String) {
     val cs = MaterialTheme.colorScheme
     val fill = if (done) LocalStatusColors.current.good else cs.primary
-    Box(Modifier.size(150.dp), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.size(150.dp).semantics { contentDescription = "Dark adaptation ${(progress * 100).roundToInt()} percent" }) {
+    // One node for the whole ring: the arc and the centre text would otherwise be read as two things.
+    val percent = (progress.coerceIn(0f, 1f) * 100).roundToInt()
+    Box(
+        Modifier.size(150.dp).clearAndSetSemantics { contentDescription = "Dark adaptation $percent percent, $centre" },
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(150.dp)) {
             val w = 12.dp.toPx()
             val inset = w / 2
             val arcSize = Size(size.width - w, size.height - w)

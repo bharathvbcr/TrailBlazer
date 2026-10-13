@@ -55,14 +55,24 @@ fun RangeBars(
     val grid = MaterialTheme.colorScheme.outlineVariant
     val measurer = rememberTextMeasurer()
     val labelStyle = MaterialTheme.typography.labelSmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val readout = caption(bar.index, bar)
     Column(modifier) {
-        Text(caption(bar.index, bar), style = MaterialTheme.typography.labelLarge, color = color, modifier = Modifier.padding(bottom = 4.dp))
+        Text(readout, style = MaterialTheme.typography.labelLarge, color = color, modifier = Modifier.padding(bottom = 4.dp))
         Canvas(
             Modifier
                 .fillMaxWidth()
                 .height(if (valueLabel != null) 128.dp else 96.dp)
                 .semantics { contentDescription = "Temperature range, ${bars.size} days" }
-                .scrubX(frame.count, bars) { f ->
+                .scrubX(
+                    frame.count, bars,
+                    // A screen reader steps over the days that have data, one bar at a time.
+                    adjust = if (bars.size < 2) null else ScrubAdjust(
+                        fraction = bars.indexOf(bar) / (bars.size - 1f),
+                        stateText = readout,
+                        steps = bars.size - 2,
+                        onAdjust = { f -> selected = bars[SeriesPlot.scrubIndex(f, bars.size)].index },
+                    ),
+                ) { f ->
                     if (frame.count <= 0) return@scrubX
                     val i = SeriesPlot.scrubIndex(f, frame.count)
                     if (bars.any { it.index == i }) selected = i

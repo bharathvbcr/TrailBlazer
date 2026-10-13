@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
@@ -40,8 +41,22 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.isTraversalGroup
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.traversalIndex
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.IntOffset
+import com.example.trailblazer.ui.components.currentWindowSize
+import com.example.trailblazer.ui.components.skyChartSide
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -136,7 +151,7 @@ fun StargazeScreen(nav: Navigator, lat: Double?, lon: Double?, label: String?) {
                     Text("Working out the sky…")
                 } else {
                     val effectiveFacing = if (follow) (facing ?: SkyProjection.defaultFacing(p.position.lat)) else SkyProjection.defaultFacing(p.position.lat)
-                    SkyChart(c, effectiveFacing, picked, { picked = it }, Modifier.widthIn(max = 420.dp).fillMaxWidth().aspectRatio(1f))
+                    SkyChart(c, effectiveFacing, picked, fmt, { picked = it }, Modifier.widthIn(max = skyChartSide(currentWindowSize().height)).fillMaxWidth().aspectRatio(1f))
                     Spacer(Modifier.height(8.dp))
                     PickedLine(c, picked, fmt)
                     Text(
@@ -217,10 +232,11 @@ private fun TonightCard(plan: NightPlan?, fmt: Fmt, nowMs: Long?) {
 
 /** The Moon's lit fraction as a filled ring, since moonlight is what decides a dark-sky night. */
 @Composable
-private fun MoonBadge(illumination: Double) {
+internal fun MoonBadge(illumination: Double) {
     val cs = MaterialTheme.colorScheme
     val pct = (illumination.coerceIn(0.0, 1.0) * 100).roundToInt()
-    Box(Modifier.size(56.dp).semantics { contentDescription = "Moon $pct percent lit" }, contentAlignment = Alignment.Center) {
+    // One node for the whole badge: its "N%" and "Moon" texts would otherwise be read again after the description.
+    Box(Modifier.size(56.dp).clearAndSetSemantics { contentDescription = "Moon $pct percent lit" }, contentAlignment = Alignment.Center) {
         Canvas(Modifier.size(56.dp)) {
             val w = 5.dp.toPx()
             val tl = Offset(w / 2, w / 2)
@@ -236,7 +252,7 @@ private fun MoonBadge(illumination: Double) {
 }
 
 @Composable
-private fun SkyChart(state: ChartState, facingDeg: Double, picked: String?, onPick: (String?) -> Unit, modifier: Modifier) {
+internal fun SkyChart(state: ChartState, facingDeg: Double, picked: String?, fmt: Fmt, onPick: (String?) -> Unit, modifier: Modifier) {
     val cs = MaterialTheme.colorScheme
     val status = LocalStatusColors.current
     val night = status.isNight
@@ -262,50 +278,103 @@ private fun SkyChart(state: ChartState, facingDeg: Double, picked: String?, onPi
             o.label?.let { text -> o to measurer.measure(text, small) }
         }.toMap()
     }
-    Canvas(
-        modifier.semantics { contentDescription = "Sky chart, $visible objects above the horizon. Tap an object to name it." }
-            .onSizeChanged { sizePx = it }
-            // Tap names an object; press and hold, then slide, to sweep the pick across the sky without scrolling the page.
-            .pickPoint(state, facingDeg) { tap ->
-                val r = sizePx.width.coerceAtMost(sizePx.height) / 2f * 0.92f
-                if (r <= 0f) return@pickPoint
-                val ux = (tap.x - sizePx.width / 2f) / r
-                val uy = (tap.y - sizePx.height / 2f) / r
-                // A finger covers ~7 % of a phone-sized chart; that is the pick radius.
-                onPick(identify(state.objects, facingDeg, ux.toDouble(), uy.toDouble(), maxDistance = 0.09)?.name)
-            },
-    ) {
-        val r = size.minDimension / 2 * 0.92f
-        val c = Offset(size.width / 2, size.height / 2)
-        drawCircle(sky, r, c)
-        for (alt in listOf(30.0, 60.0)) drawCircle(grid, (r * (90 - alt) / 90).toFloat(), c, style = Stroke(1f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))))
-        drawCircle(grid, r, c, style = Stroke(1.5f))
-        fun at(az: Double, alt: Double): Offset? = SkyProjection.project(az, alt, facingDeg)?.let { Offset(c.x + (it.x * r).toFloat(), c.y + (it.y * r).toFloat()) }
-        for ((az, l) in cardinalLayouts) {
-            val rel = Math.toRadians(az - facingDeg)
-            val q = Offset(c.x + (sin(rel) * (r + 1)).toFloat(), c.y + (cos(rel) * (r + 1)).toFloat())
-            val out = Offset(c.x + (sin(rel) * (r + l.size.height * 0.75f)).toFloat(), c.y + (cos(rel) * (r + l.size.height * 0.75f)).toFloat())
-            drawCircle(grid, 2f, q)
-            drawText(l, topLeft = Offset(out.x - l.size.width / 2f, out.y - l.size.height / 2f))
+    Box(modifier) {
+        Canvas(
+            Modifier.fillMaxSize().semantics { contentDescription = "Sky chart, $visible objects above the horizon. Tap an object to name it." }
+                .onSizeChanged { sizePx = it }
+                // Tap names an object; press and hold, then slide, to sweep the pick across the sky without scrolling the page.
+                .pickPoint(state, facingDeg) { tap ->
+                    val r = sizePx.width.coerceAtMost(sizePx.height) / 2f * 0.92f
+                    if (r <= 0f) return@pickPoint
+                    val ux = (tap.x - sizePx.width / 2f) / r
+                    val uy = (tap.y - sizePx.height / 2f) / r
+                    // A finger covers ~7 % of a phone-sized chart; that is the pick radius.
+                    onPick(identify(state.objects, facingDeg, ux.toDouble(), uy.toDouble(), maxDistance = 0.09)?.name)
+                },
+        ) {
+            val r = size.minDimension / 2 * 0.92f
+            val c = Offset(size.width / 2, size.height / 2)
+            drawCircle(sky, r, c)
+            for (alt in listOf(30.0, 60.0)) drawCircle(grid, (r * (90 - alt) / 90).toFloat(), c, style = Stroke(1f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))))
+            drawCircle(grid, r, c, style = Stroke(1.5f))
+            fun at(az: Double, alt: Double): Offset? = chartPoint(size.width, size.height, facingDeg, az, alt)
+            for ((az, l) in cardinalLayouts) {
+                val rel = Math.toRadians(az - facingDeg)
+                val q = Offset(c.x + (sin(rel) * (r + 1)).toFloat(), c.y + (cos(rel) * (r + 1)).toFloat())
+                val out = Offset(c.x + (sin(rel) * (r + l.size.height * 0.75f)).toFloat(), c.y + (cos(rel) * (r + l.size.height * 0.75f)).toFloat())
+                drawCircle(grid, 2f, q)
+                drawText(l, topLeft = Offset(out.x - l.size.width / 2f, out.y - l.size.height / 2f))
+            }
+            for (o in state.objects) {
+                val p = at(o.azimuthDeg, o.altitudeDeg) ?: continue
+                when (o.kind) {
+                    ChartKind.Star -> drawCircle(starColor, (2.8f - 0.5f * o.magnitude.toFloat()).coerceIn(0.7f, 3.6f).dp.toPx(), p)
+                    ChartKind.Planet -> drawCircle(planetColor, 3.2.dp.toPx(), p)
+                    ChartKind.Moon -> drawCircle(moonColor, 6.dp.toPx(), p)
+                    ChartKind.GalacticCentre -> drawCircle(grid, 5.dp.toPx(), p, style = Stroke(1.2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f))))
+                }
+                if (o.name == picked) drawCircle(ring, 11.dp.toPx(), p, style = Stroke(2.dp.toPx()))
+                objectLayouts[o]?.let { l ->
+                    // The core sits among Scorpius and Sagittarius; label it underneath so it does not cover their stars.
+                    val topLeft = if (o.kind == ChartKind.GalacticCentre) Offset(p.x - l.size.width / 2f, p.y + 6.dp.toPx())
+                    else Offset(p.x + 5.dp.toPx(), p.y - l.size.height / 2f)
+                    drawText(l, topLeft = topLeft)
+                }
+            }
         }
-        for (o in state.objects) {
-            val p = at(o.azimuthDeg, o.altitudeDeg) ?: continue
-            when (o.kind) {
-                ChartKind.Star -> drawCircle(starColor, (2.8f - 0.5f * o.magnitude.toFloat()).coerceIn(0.7f, 3.6f).dp.toPx(), p)
-                ChartKind.Planet -> drawCircle(planetColor, 3.2.dp.toPx(), p)
-                ChartKind.Moon -> drawCircle(moonColor, 6.dp.toPx(), p)
-                ChartKind.GalacticCentre -> drawCircle(grid, 5.dp.toPx(), p, style = Stroke(1.2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f))))
-            }
-            if (o.name == picked) drawCircle(ring, 11.dp.toPx(), p, style = Stroke(2.dp.toPx()))
-            objectLayouts[o]?.let { l ->
-                // The core sits among Scorpius and Sagittarius; label it underneath so it does not cover their stars.
-                val topLeft = if (o.kind == ChartKind.GalacticCentre) Offset(p.x - l.size.width / 2f, p.y + 6.dp.toPx())
-                else Offset(p.x + 5.dp.toPx(), p.y - l.size.height / 2f)
-                drawText(l, topLeft = topLeft)
-            }
+        ChartObjectTargets(state, facingDeg, picked, sizePx, fmt, onPick)
+    }
+}
+
+/** Where an object is on a chart of [width] x [height] px, or null when it is off the projection. */
+private fun chartPoint(width: Float, height: Float, facingDeg: Double, azimuthDeg: Double, altitudeDeg: Double): Offset? {
+    val r = minOf(width, height) / 2 * 0.92f
+    return SkyProjection.project(azimuthDeg, altitudeDeg, facingDeg)?.let { Offset(width / 2 + (it.x * r).toFloat(), height / 2 + (it.y * r).toFloat()) }
+}
+
+/** The finger-sized target a screen reader can land on for each named object above the horizon. */
+private val ObjectTarget = 36.dp
+
+/**
+ * The sky chart's objects as a list a screen reader can walk. The chart is pixels with a tap handler, so TalkBack sees
+ * one picture and nothing to pick; this lays an invisible, focusable target over each named object above the horizon
+ * (brightest first, which is the order swiping visits them), and activating one picks it exactly as a tap does.
+ */
+@Composable
+private fun ChartObjectTargets(state: ChartState, facingDeg: Double, picked: String?, sizePx: IntSize, fmt: Fmt, onPick: (String?) -> Unit) {
+    if (sizePx.width <= 0 || sizePx.height <= 0) return
+    val half = with(LocalDensity.current) { ObjectTarget.roundToPx() / 2 }
+    val targets = remember(state, facingDeg, sizePx) {
+        state.objects
+            .filter { it.label != null && it.altitudeDeg >= 0 }
+            .sortedBy { it.magnitude }
+            .mapNotNull { o -> chartPoint(sizePx.width.toFloat(), sizePx.height.toFloat(), facingDeg, o.azimuthDeg, o.altitudeDeg)?.let { o to it } }
+    }
+    Box(Modifier.fillMaxSize().semantics { isTraversalGroup = true }) {
+        targets.forEachIndexed { rank, (o, p) ->
+            Box(
+                Modifier
+                    .offset { IntOffset(p.x.roundToInt() - half, p.y.roundToInt() - half) }
+                    .size(ObjectTarget)
+                    .semantics {
+                        traversalIndex = rank.toFloat()
+                        contentDescription = objectDescription(o, fmt)
+                        selected = o.name == picked
+                        role = Role.Button
+                        onClick(label = "Show details") { onPick(o.name); true }
+                    },
+            )
         }
     }
 }
+
+/** An object in words: name, height, direction and brightness. */
+internal fun objectDescription(o: ChartObject, fmt: Fmt): String = listOfNotNull(
+    o.name,
+    "${o.altitudeDeg.roundToInt()}° up",
+    fmt.bearing(o.azimuthDeg),
+    o.magnitude.takeIf { it < 50 && o.kind != ChartKind.Moon }?.let { "mag ${fmt.num(it, 1)}" },
+).joinToString(" · ")
 
 @Composable
 private fun PlanetsCard(t: Tonight, fmt: Fmt, nowMs: Long?) {
@@ -436,24 +505,20 @@ private fun PolarCard(pa: PolarAlignment, fmt: Fmt) {
 
 /** What a tap on the chart found: name, height, direction and brightness, following the time slider. */
 @Composable
-private fun PickedLine(c: ChartState, picked: String?, fmt: Fmt) {
+internal fun PickedLine(c: ChartState, picked: String?, fmt: Fmt) {
     val o = picked?.let { name -> c.objects.firstOrNull { it.name == name } }
     val text = when {
         picked == null -> "Tap a dot to name it"
         o == null || o.altitudeDeg < 0 -> "$picked is below the horizon"
-        else -> listOfNotNull(
-            o.name,
-            "${o.altitudeDeg.roundToInt()}° up",
-            fmt.bearing(o.azimuthDeg),
-            o.magnitude.takeIf { it < 50 && o.kind != ChartKind.Moon }?.let { "mag ${fmt.num(it, 1)}" },
-        ).joinToString(" · ")
+        else -> objectDescription(o, fmt)
     }
     Text(
         text,
         style = if (o != null) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodySmall,
         color = if (o != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
         textAlign = TextAlign.Center,
-        modifier = Modifier.fillMaxWidth(),
+        // Picking an object (by touch or from the object list) is announced without moving the screen reader's focus.
+        modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
     )
 }
 

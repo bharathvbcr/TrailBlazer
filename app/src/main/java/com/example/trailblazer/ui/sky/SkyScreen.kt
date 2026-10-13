@@ -55,6 +55,8 @@ import com.example.trailblazer.ui.components.RangeBars
 import com.example.trailblazer.ui.components.ScreenScaffold
 import com.example.trailblazer.ui.components.HereOption
 import com.example.trailblazer.ui.components.PlacePicker
+import com.example.trailblazer.ui.components.ScrubAdjust
+import com.example.trailblazer.ui.components.adjustable
 import com.example.trailblazer.ui.components.scrubX
 import com.example.trailblazer.ui.components.SectionTitle
 import com.example.trailblazer.ui.components.Sparkline
@@ -235,8 +237,9 @@ private fun SunCard(s: SkyState, fmt: Fmt) {
             path = s.sunPath, sunPath = s.sunPath, windowStartMs = sun.windowStartMs, stepMs = PATH_STEP_MS, atMs = at, fmt = fmt,
             lineColor = colors.sun, golden = colors.golden,
             description = "Sun's height through the day, highest ${sun.noonAltitudeDeg?.roundToInt() ?: 0} degrees",
-            modifier = Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(16.dp))
-                .scrubX(sun.windowStartMs, sun.windowEndMs) { f -> at = SeriesPlot.fractionToEpoch(f, sun.windowStartMs, sun.windowEndMs) },
+            modifier = Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(16.dp)),
+            windowEndMs = sun.windowEndMs,
+            onAtMs = { at = it },
         ) { p, r, below -> sunGlyph(p, r, colors, dim = below) }
         Spacer(Modifier.height(8.dp))
         DayPlot(sun, s.moon, marker, at, { at = it }, fmt, heightAt = { t -> altitudeAt(s.sunPath, sun.windowStartMs, t) })
@@ -252,7 +255,10 @@ private fun SunCard(s: SkyState, fmt: Fmt) {
                     sun.sunriseAzimuthDeg?.let { "Rises in the ${cardinal16(it)}" },
                     sun.sunsetAzimuthDeg?.let { "sets in the ${cardinal16(it)}" },
                 ).joinToString(", ").ifEmpty { "Sun's path" },
-                modifier = Modifier.size(132.dp),
+                // Not a touch target, but the same chosen time: a screen reader can step it through the day here too.
+                modifier = Modifier.size(132.dp).adjustable(
+                    skyTimeAdjust(s.sunPath, sun.windowStartMs, sun.windowEndMs, PATH_STEP_MS, at, fmt, withDirection = true),
+                ) { at = SeriesPlot.fractionToEpoch(it, sun.windowStartMs, sun.windowEndMs) },
             ) { p, r, below -> sunGlyph(p, r, colors, dim = below) }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -371,9 +377,11 @@ private fun DayPlot(sun: SolarDay, moon: LunarDay, markerMs: Long?, at: Long, on
     val naut = if (night) cs.primary.copy(alpha = 0.25f) else Color(0xFF4F6FA8)
     val astro = if (night) cs.primary.copy(alpha = 0.15f) else Color(0xFF2B3B66)
     val dark = if (night) Color.Black else Color(0xFF141A2E)
+    val readout = listOfNotNull(fmt.time(at), sliceLabel(SolarEvents.slice(sun, at)), heightAt(at)?.let { "Sun ${it.roundToInt()}°" }).joinToString(" · ")
+    val hours = ((sun.windowEndMs - sun.windowStartMs) / 3_600_000.0).roundToInt().coerceAtLeast(1)
     Column {
         Text(
-            listOfNotNull(fmt.time(at), sliceLabel(SolarEvents.slice(sun, at)), heightAt(at)?.let { "Sun ${it.roundToInt()}°" }).joinToString(" · "),
+            readout,
             style = MaterialTheme.typography.labelLarge,
             color = cs.primary,
         )
@@ -384,7 +392,14 @@ private fun DayPlot(sun: SolarDay, moon: LunarDay, markerMs: Long?, at: Long, on
                 .height(40.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .semantics { contentDescription = "Daylight timeline" }
-                .scrubX(sun.windowStartMs, sun.windowEndMs) { f -> onAt(SeriesPlot.fractionToEpoch(f, sun.windowStartMs, sun.windowEndMs)) },
+                .scrubX(
+                    sun.windowStartMs, sun.windowEndMs,
+                    adjust = ScrubAdjust(
+                        fraction = ((at - sun.windowStartMs).toDouble() / (sun.windowEndMs - sun.windowStartMs).coerceAtLeast(1L)).coerceIn(0.0, 1.0).toFloat(),
+                        stateText = readout,
+                        steps = hours - 1,
+                    ),
+                ) { f -> onAt(SeriesPlot.fractionToEpoch(f, sun.windowStartMs, sun.windowEndMs)) },
         ) {
             val span = (sun.windowEndMs - sun.windowStartMs).toFloat().coerceAtLeast(1f)
             fun x(ms: Long?) = ms?.let { ((it - sun.windowStartMs) / span * size.width).coerceIn(0f, size.width) }
@@ -481,8 +496,9 @@ private fun MoonCompass(s: SkyState, fmt: Fmt) {
         lineColor = moonColor,
         fillAlpha = 0.18f,
         description = "Moon's height through the day" + (s.moonTransitAltDeg?.let { ", highest ${it.roundToInt()} degrees" } ?: ""),
-        modifier = Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(16.dp))
-            .scrubX(start, end) { f -> at = SeriesPlot.fractionToEpoch(f, start, end) },
+        modifier = Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(16.dp)),
+        windowEndMs = end,
+        onAtMs = { at = it },
     ) { c, r, below ->
         drawCircle(Brush.radialGradient(listOf(moonColor.copy(alpha = if (below) 0.1f else 0.35f), Color.Transparent), c, r * 2.8f), r * 2.8f, c)
         drawMoon(c, r * 1.2f, s.phase.illumination, lit, moonColor, shade, alpha = if (below) 0.5f else 1f)
@@ -500,7 +516,9 @@ private fun MoonCompass(s: SkyState, fmt: Fmt) {
                 s.moonsetAzDeg?.let { "sets in the ${cardinal16(it)}" },
                 now?.let { "now ${it.altitudeDeg.roundToInt()} degrees ${if (it.altitudeDeg >= 0) "up" else "below the horizon"} in the ${cardinal16(it.azimuthDeg)}" },
             ).joinToString(", ").ifEmpty { "Moon's path" },
-            modifier = Modifier.size(132.dp),
+            modifier = Modifier.size(132.dp).adjustable(
+                skyTimeAdjust(s.moonPath, start, end, PATH_STEP_MS, at, fmt, withDirection = true),
+            ) { at = SeriesPlot.fractionToEpoch(it, start, end) },
         ) { c, r, below ->
             drawCircle(Brush.radialGradient(listOf(moonColor.copy(alpha = if (below) 0.15f else 0.4f), Color.Transparent), c, r * 2.6f), r * 2.6f, c)
             drawMoon(c, r * 1.25f, s.phase.illumination, lit, moonColor, shade, alpha = if (below) 0.5f else 1f)

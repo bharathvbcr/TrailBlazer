@@ -31,11 +31,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.trailblazer.ui.Fmt
 import com.example.trailblazer.ui.theme.LocalStatusColors
+import com.example.trailblazer.ui.components.ScrubAdjust
+import com.example.trailblazer.ui.components.scrubX
 import com.trailblazer.core.astro.Horizontal
+import com.trailblazer.core.math.cardinal16
+import com.trailblazer.core.plot.SeriesPlot
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /** The colours of the Sun and its sky, or the red night palette. */
@@ -135,6 +140,34 @@ internal fun DrawScope.drawMoon(c: Offset, r: Float, illumination: Double, litOn
 }
 
 /**
+ * How a screen reader moves the chosen time [atMs] along a day's window: an hour at a time, hearing the clock time
+ * and where the body is then (with its compass direction when [withDirection] is set). The pointer path of the same
+ * plots scrubs continuously; this is the same readout, reachable without a touch.
+ */
+internal fun skyTimeAdjust(
+    path: List<Horizontal>,
+    windowStartMs: Long,
+    windowEndMs: Long,
+    stepMs: Long,
+    atMs: Long,
+    fmt: Fmt,
+    withDirection: Boolean = false,
+): ScrubAdjust {
+    val span = (windowEndMs - windowStartMs).coerceAtLeast(1L).toDouble()
+    val hours = (span / 3_600_000.0).roundToInt().coerceAtLeast(1)
+    val at = path.getOrNull(((atMs - windowStartMs) / stepMs.toDouble()).roundToInt().coerceIn(0, (path.size - 1).coerceAtLeast(0)))
+    val where = at?.let {
+        if (it.altitudeDeg >= 0) "${it.altitudeDeg.roundToInt()} degrees up" + if (withDirection) " in the ${cardinal16(it.azimuthDeg)}" else ""
+        else "below the horizon"
+    }
+    return ScrubAdjust(
+        fraction = ((atMs - windowStartMs) / span).coerceIn(0.0, 1.0).toFloat(),
+        stateText = listOfNotNull(fmt.time(atMs), where).joinToString(", "),
+        steps = hours - 1,
+    )
+}
+
+/**
  * A body's height through the day: the sky coloured by where the Sun is at each moment (day, sunset glow, twilight,
  * night with stars), a ridge on the horizon, the body's path (solid above the horizon, dashed below, gold in the
  * golden hour when [golden] is set), hour ticks, and the body drawn where it is at [atMs].
@@ -152,6 +185,9 @@ internal fun SkyArc(
     modifier: Modifier = Modifier,
     golden: Color? = null,
     fillAlpha: Float = 0.35f,
+    /** The end of the day's window; with [onAtMs] set, a tap or sideways drag, or a screen reader's adjustment, sets the time. */
+    windowEndMs: Long = windowStartMs + stepMs * (path.size - 1),
+    onAtMs: ((Long) -> Unit)? = null,
     body: DrawScope.(Offset, Float, Boolean) -> Unit,
 ) {
     if (path.size < 2) return
@@ -176,8 +212,13 @@ internal fun SkyArc(
     val skies = remember(sunPath, colors.night, colors.accent) {
         List(n) { i -> skyFor(sunPath.getOrNull(i)?.altitudeDeg ?: -90.0, colors.night, colors.accent) }
     }
+    val scrub = if (onAtMs == null) Modifier else Modifier.scrubX(
+        windowStartMs, windowEndMs,
+        adjust = skyTimeAdjust(path, windowStartMs, windowEndMs, stepMs, atMs, fmt),
+    ) { f -> onAtMs(SeriesPlot.fractionToEpoch(f, windowStartMs, windowEndMs)) }
     Spacer(
         modifier.semantics { contentDescription = description }
+            .then(scrub)
             .drawWithCache {
                 fun y(alt: Double) = (size.height * ((top - alt.coerceIn(bottom, top)) / (top - bottom))).toFloat()
                 fun x(i: Double) = (size.width * i / (n - 1)).toFloat()
