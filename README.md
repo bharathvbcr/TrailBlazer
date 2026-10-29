@@ -194,7 +194,10 @@ Full architectural specifications are included in the repository and bundled dir
 
 ---
 
-## Weather Attribution & License
+## Weather Attribution, Acknowledgements & License
 
-- Online forecast data provided by [Open-Meteo](https://open-meteo.com/) under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Free tier for non-commercial use.
-- The previous React/WebView prototype is archived under the git tag [`web-final`](https://github.com/bharathvbcr/TrailBlazer/tree/web-final).
+- **Source License**: Released under the [MIT License](LICENSE).
+- **Weather Forecasts**: Online forecast data provided by [Open-Meteo](https://open-meteo.com/) under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Free tier for non-commercial use.
+- **Geophysical & Map Data**: Geomagnetic declination uses the [NOAA / NCEI World Magnetic Model (WMM)](https://www.ncei.noaa.gov/products/world-magnetic-model), terrain elevation uses [NASA SRTM](https://www.earthdata.nasa.gov/sensors/srtm) tiles, and offline vector maps are rendered with [MapLibre Native](https://github.com/maplibre/maplibre-native) (`BSD-2-Clause`).
+- **UI Libraries**: Frosted-glass surfaces use [chrisbanes/haze](https://github.com/chrisbanes/haze) (`Chris Banes`, Apache-2.0).
+- **Historical Prototype**: The previous React/WebView prototype is archived under the git tag [`web-final`](https://github.com/bharathvbcr/TrailBlazer/tree/web-final).
